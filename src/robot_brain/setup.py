@@ -15,8 +15,8 @@ setup(
     zip_safe=True,
     maintainer='rakhi24',
     maintainer_email='rakhi24@todo.todo',
-    description='TODO: Package description',
-    license='TODO: License declaration',
+    description='Cognitive brain and control for the distributed robot',
+    license='Apache-2.0',
     extras_require={
         'test': [
             'pytest',
@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'chassis_pilot = robot_brain.chassis_pilot:main',
         ],
     },
 )

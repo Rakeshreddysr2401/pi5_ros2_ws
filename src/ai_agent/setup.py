@@ -15,16 +15,11 @@ setup(
     zip_safe=True,
     maintainer='rakhi24',
     maintainer_email='rakhi24@todo.todo',
-    description='TODO: Package description',
-    license='TODO: License declaration',
-    extras_require={
-        'test': [
-            'pytest',
+    description='AI Agent for the distributed robot',
+    license='Apache-2.0',
+    entry_points={
+        'console_scripts': [
+            'agent_node = ai_agent.agent_node:main',
         ],
     },
-   entry_points={
-    'console_scripts': [
-        'agent_node = ai_agent.agent_node:main',
-    ],
-},
 )

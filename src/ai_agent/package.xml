@@ -3,12 +3,13 @@
 <package format="3">
   <name>ai_agent</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>AI Agent and Brain for the distributed robot</description>
   <maintainer email="rakhi24@todo.todo">rakhi24</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
+  <depend>robot_interfaces</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
