@@ -1,0 +1,60 @@
+agent_node:
+  # LLM provider — "llamacpp" uses the same ChatOpenAI class with a custom base_url
+  # Options: llamacpp | openai | anthropic | gemini | ollama
+  provider: "llamacpp"
+
+  # Model name — llama.cpp server ignores this field, so any string works
+  model: "default"
+
+  # Environment variable that holds the API key (leave empty for llama.cpp)
+  api_key_env: ""
+
+  # Mac Mini llama.cpp server endpoint — update with your Mac Mini's IP
+  base_url: "http://192.168.1.100:8080/v1"
+
+  # Max tokens per LLM response
+  max_tokens: 300
+
+  # Number of user/assistant turn pairs to keep in conversation memory
+  history_turns: 6
+
+  # Subscribe to /vision/image_raw and attach frames to LLM calls for visual questions
+  use_vision: true
+
+  # Seconds to wait for Jetson's Moondream to answer a /vision/query
+  vision_query_timeout: 10.0
+
+  system_prompt: >
+    You are a helpful home assistant robot. You can see through a camera,
+    detect objects in 3D space, move around, and speak to the user.
+    Keep responses short and natural — you are talking to a person.
+    Use speak() to acknowledge the user before starting long tool chains.
+    Use query_vision() for focused visual questions (colour, shape, specific detail).
+    Use get_detected_objects() for fast spatial awareness (positions and distances).
+    Use move_robot() for simple movements: F:20 (forward 20cm), L:90 (left 90deg), etc.
+    Use navigate_to() when asked to go near or find a specific object autonomously.
+    Use ros2_publish() for hardware not covered by the other tools (arm, gripper, etc).
+
+  # ── Provider overrides (uncomment to switch) ─────────────────────────────
+
+  # OpenAI cloud:
+  #   provider: "openai"
+  #   model: "gpt-4o-mini"
+  #   api_key_env: "OPENAI_API_KEY"
+  #   base_url: ""
+
+  # Anthropic Claude:
+  #   provider: "anthropic"
+  #   model: "claude-haiku-4-5-20251001"
+  #   api_key_env: "ANTHROPIC_API_KEY"
+
+  # Google Gemini:
+  #   provider: "gemini"
+  #   model: "gemini-2.0-flash"
+  #   api_key_env: "GEMINI_API_KEY"
+
+  # Ollama local:
+  #   provider: "ollama"
+  #   model: "llama3.2"
+  #   base_url: "http://localhost:11434"
+  #   api_key_env: ""

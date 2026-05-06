@@ -3,13 +3,14 @@
 <package format="3">
   <name>ai_agent</name>
   <version>0.0.0</version>
-  <description>AI Agent and Brain for the distributed robot</description>
+  <description>LangGraph ReAct brain for the distributed robot (runs on Pi5)</description>
   <maintainer email="rakhi24@todo.todo">rakhi24</maintainer>
   <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
-  <depend>robot_interfaces</depend>
+  <depend>sensor_msgs</depend>
+  <depend>cv_bridge</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
