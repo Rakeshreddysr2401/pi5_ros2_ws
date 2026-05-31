@@ -12,7 +12,7 @@ setup(
         ('share/' + package_name + '/config', ['config/agent_params.yaml']),
         ('share/' + package_name + '/launch', ['launch/agent.launch.py']),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'langchain-mcp-adapters'],
     zip_safe=True,
     maintainer='rakhi24',
     maintainer_email='rakhi24@todo.todo',

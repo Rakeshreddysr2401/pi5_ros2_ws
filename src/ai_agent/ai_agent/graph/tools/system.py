@@ -1,6 +1,21 @@
+from typing import Optional
+
 from langchain_core.tools import tool
 
 from . import _bridge
+
+
+@tool
+def set_active_order(order_id: Optional[str]) -> str:
+    """Store or clear the active Swiggy order ID for background delivery polling.
+
+    Call with the order_id string after placing an order so the robot monitors
+    delivery status every 2 minutes. Call with None once the order is delivered
+    to stop polling."""
+    _bridge.get().set_active_order(order_id)
+    if order_id:
+        return f"Now monitoring order {order_id} for delivery"
+    return "Order monitoring cleared"
 
 
 @tool

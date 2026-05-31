@@ -36,6 +36,10 @@ class ROS2Bridge:
         self._vision_event  = threading.Event()
         self._vision_result: str | None = None
 
+        # ── Active Swiggy order (for background delivery polling) ─────────────
+        self._order_lock       = threading.Lock()
+        self._active_order_id: str | None = None
+
         # ── Lazy client registries ─────────────────────────────────────────
         self._dynamic_pubs:    dict = {}   # topic name → Publisher
         self._service_clients: dict = {}   # service name → Client
@@ -87,6 +91,16 @@ class ROS2Bridge:
             with self._vision_lock:
                 return self._vision_result or "No answer received"
         return "Vision query timed out — moondream node may not be running"
+
+    # ── Active order ──────────────────────────────────────────────────────
+
+    def set_active_order(self, order_id: str | None) -> None:
+        with self._order_lock:
+            self._active_order_id = order_id
+
+    def get_active_order(self) -> str | None:
+        with self._order_lock:
+            return self._active_order_id
 
     # ── Publishers ─────────────────────────────────────────────────────────
 
