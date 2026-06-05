@@ -230,10 +230,20 @@ tracker: order delivered?
 | `/vision/query` | Pi5 → Jetson | `String` | Question for Moondream VLM |
 | `/vision/query_result` | Jetson → Pi5 | `String` | Moondream answer |
 | `/voice/robot_speech` | Pi5 → Jetson | `String` | TTS text |
-| `/movement_cmd` | Pi5 internal | `String` | `F:20`, `L:90`, `S` to chassis_pilot |
-| `/cmd_vel` | Pi5 → ESP32 | `Twist` | Wheel velocity (micro-ROS2) |
+| `/movement_cmd` | Pi5 internal | `String` | `F:20`, `L:90`, `S` — LangGraph → chassis_pilot |
+| `/cmd_vel` | Pi5 → ESP32 | `Twist` | Wheel velocities via micro-ROS2 WiFi UDP. Nav2 publishes here directly in future |
+| `/ir_obstacle` | ESP32 → Pi5 | `Bool` | IR sensor — `true` = obstacle. chassis_pilot hard-stops on this |
+| `/servo_angle` | Pi5 → ESP32 | `UInt16` | Head servo angle 0–180° |
 | `/brain/thinking` | Pi5 internal | `Bool` | `true` while LLM is running |
 | `/robot/get_status` | Pi5 service | `Trigger` | Battery + hardware state |
+
+### micro-ROS2 Transport
+
+ESP32 connects to Pi5 over **WiFi UDP** (port 8888).
+Pi5 runs `micro_ros_agent udp4 --port 8888` (started automatically by `brain_launch.py`).
+All topics above prefixed `/cmd_vel`, `/ir_obstacle`, `/servo_angle` are bridged through this agent.
+
+For wiring, flashing, and troubleshooting see [INTEGRATION.md](INTEGRATION.md).
 
 ---
 

@@ -1,104 +1,111 @@
+import time
+
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32, String
+from std_msgs.msg import Bool, String
 from geometry_msgs.msg import Twist
-import time
 
 
 class ChassisPilot(Node):
     """
-    Enhanced Chassis Pilot (Pi 5)
-    - Mode 1: Visual Servoing (P-Control based on /target_error)
-    - Mode 2: Duration-based Movement (F, B, L, R, S based on /movement_cmd)
+    Translates /movement_cmd String commands → /cmd_vel Twist for ESP32.
+
+    Command format  (published by LangGraph move_robot tool):
+        F:<cm>   forward N centimetres
+        B:<cm>   backward N centimetres
+        L:<deg>  rotate left N degrees
+        R:<deg>  rotate right N degrees
+        S        stop immediately
+
+    /ir_obstacle (Bool) from ESP32 hard-stops all motion.
+
+    /cmd_vel Twist is also accepted directly so Nav2 can drive the robot
+    in the future without any changes here — chassis_pilot just republishes
+    whatever Twist it receives on that topic.
     """
 
     def __init__(self):
         super().__init__('chassis_pilot')
 
-        # --- Parameters (Calibrated from your old project) ---
-        self.declare_parameter('kp_yaw', 0.5)
-        self.declare_parameter('forward_speed_cm_s', 12.0)
-        self.declare_parameter('turn_speed_deg_s', 180.0)
+        self.declare_parameter('forward_speed_cms',  12.0)   # cm/s
+        self.declare_parameter('turn_speed_degs',   120.0)   # deg/s
+        self.declare_parameter('linear_vel_ms',       0.12)  # m/s sent in Twist
+        self.declare_parameter('angular_vel_rads',    1.2)   # rad/s sent in Twist
 
-        self.kp_yaw = self.get_parameter('kp_yaw').value
-        self.speed_fwd = self.get_parameter('forward_speed_cm_s').value / 100.0  # Convert to m/s
-        self.speed_turn = self.get_parameter('turn_speed_deg_s').value * (3.14159 / 180.0)  # Rad/s
+        self._fwd_cms  = self.get_parameter('forward_speed_cms').value
+        self._turn_dgs = self.get_parameter('turn_speed_degs').value
+        self._lin_vel  = self.get_parameter('linear_vel_ms').value
+        self._ang_vel  = self.get_parameter('angular_vel_rads').value
 
-        # --- State ---
-        self.current_mode = "IDLE"  # IDLE, TRACKING, MANUAL
-        self.manual_end_time = 0.0
+        self._obstacle     = False
+        self._mode         = 'IDLE'     # IDLE | TIMED
+        self._timed_twist  = Twist()
+        self._timed_end_t  = 0.0
 
-        # --- Subscriptions ---
-        self.error_sub = self.create_subscription(Float32, '/target_error', self._error_cb, 10)
-        self.cmd_sub = self.create_subscription(String, '/movement_cmd', self._manual_cb, 10)
+        # /movement_cmd: LangGraph agent string commands
+        self.create_subscription(String, '/movement_cmd', self._on_cmd,      10)
+        # /ir_obstacle: ESP32 IR sensor emergency stop
+        self.create_subscription(Bool,   '/ir_obstacle',  self._on_obstacle, 10)
 
-        # --- Publishers ---
-        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self._pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.create_timer(0.05, self._loop)   # 20 Hz
 
-        # Main Control Loop (20Hz)
-        self.timer = self.create_timer(0.05, self._control_loop)
+        self.get_logger().info('Chassis Pilot ready — publishing /cmd_vel Twist')
 
-        self.get_logger().info("🏎️ Enhanced Chassis Pilot Ready (Hybrid Control)")
+    # ── Callbacks ────────────────────────────────────────────────────────────
 
-    def _manual_cb(self, msg):
-        """
-        Handles commands like 'F:20' (Forward 20cm) or 'L:90' (Left 90 deg)
-        """
-        try:
-            parts = msg.data.upper().split(':')
-            cmd = parts[0]
-            val = float(parts[1]) if len(parts) > 1 else 0.0
+    def _on_cmd(self, msg: String):
+        raw   = msg.data.strip().upper()
+        parts = raw.split(':')
+        cmd   = parts[0]
+        val   = float(parts[1]) if len(parts) > 1 else 0.0
 
-            self.get_logger().info(f"Manual Command: {cmd} with value {val}")
+        if cmd == 'S':
+            self._mode = 'IDLE'
+            self._pub.publish(Twist())   # immediate zero
+            return
 
-            duration = 0.0
-            if cmd in ['F', 'B']:
-                duration = val / (self.speed_fwd * 100.0)
-            elif cmd in ['L', 'R']:
-                duration = val / (self.get_parameter('turn_speed_deg_s').value)
-
-            if cmd == 'S':
-                self.current_mode = "IDLE"
-            else:
-                self.current_mode = "MANUAL"
-                self.active_cmd = cmd
-                self.manual_end_time = time.time() + duration
-
-        except Exception as e:
-            self.get_logger().error(f"Error parsing manual command: {e}")
-
-    def _error_cb(self, msg):
-        # Only switch to tracking if we aren't in a manual move
-        if self.current_mode != "MANUAL":
-            self.current_mode = "TRACKING"
-            self.latest_error = msg.data
-
-    def _control_loop(self):
         twist = Twist()
+        duration = 0.0
 
-        if self.current_mode == "MANUAL":
-            if time.time() < self.manual_end_time:
-                if self.active_cmd == 'F':
-                    twist.linear.x = self.speed_fwd
-                elif self.active_cmd == 'B':
-                    twist.linear.x = -self.speed_fwd
-                elif self.active_cmd == 'L':
-                    twist.angular.z = self.speed_turn
-                elif self.active_cmd == 'R':
-                    twist.angular.z = -self.speed_turn
+        if cmd == 'F':
+            twist.linear.x  =  self._lin_vel
+            duration = val / self._fwd_cms
+        elif cmd == 'B':
+            twist.linear.x  = -self._lin_vel
+            duration = val / self._fwd_cms
+        elif cmd == 'L':
+            twist.angular.z =  self._ang_vel
+            duration = val / self._turn_dgs
+        elif cmd == 'R':
+            twist.angular.z = -self._ang_vel
+            duration = val / self._turn_dgs
+        else:
+            return
+
+        self._timed_twist = twist
+        self._timed_end_t = time.time() + duration
+        self._mode        = 'TIMED'
+
+    def _on_obstacle(self, msg: Bool):
+        self._obstacle = msg.data
+        if self._obstacle:
+            self._mode = 'IDLE'
+            self._pub.publish(Twist())   # immediate zero
+
+    # ── 20 Hz control loop ────────────────────────────────────────────────────
+
+    def _loop(self):
+        if self._obstacle:
+            return   # already published zero in callback
+
+        if self._mode == 'TIMED':
+            if time.time() < self._timed_end_t:
+                self._pub.publish(self._timed_twist)
             else:
-                self.current_mode = "IDLE"
-
-        elif self.current_mode == "TRACKING":
-            # Visual Servoing Logic
-            twist.angular.z = -1.0 * self.latest_error * self.kp_yaw
-            if abs(self.latest_error) < 0.2:
-                twist.linear.x = 0.1  # Move forward when centered
-
-            # Timeout for tracking
-            self.current_mode = "IDLE"  # Reset and wait for next /target_error
-
-        self.cmd_pub.publish(twist)
+                self._mode = 'IDLE'
+                self._pub.publish(Twist())   # stop after timed move
+        # IDLE: publish nothing — ESP32 watchdog handles it
 
 
 def main(args=None):

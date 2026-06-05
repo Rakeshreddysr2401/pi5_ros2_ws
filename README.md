@@ -21,6 +21,9 @@ ESP32     ──────  4-wheel drive chassis (micro-ROS2)
 # ROS2 Humble (or Iron)
 sudo apt install ros-humble-desktop
 
+# micro-ROS2 agent (bridges Pi5 ↔ ESP32 over WiFi UDP)
+sudo apt install ros-$ROS_DISTRO-micro-ros-agent
+
 # Python dependencies
 pip install langgraph langchain-core langchain-openai langchain-anthropic \
             langchain-google-genai langchain-ollama langchain-community \
@@ -42,6 +45,10 @@ See [speech_vision repo](https://github.com/Rakeshreddysr2401/speech_vision) —
 # llama.cpp example
 ./llama-server -m your-model.gguf --port 8080 -ngl 99
 ```
+
+### ESP32 firmware
+
+See [INTEGRATION.md](INTEGRATION.md) for wiring, Arduino IDE setup, and flashing instructions.
 
 ---
 
@@ -83,7 +90,7 @@ agent_node:
 ## Launch
 
 ```bash
-# Full system (brain + chassis pilot)
+# Full system (brain + chassis pilot + micro-ROS2 agent)
 ros2 launch robot_brain brain_launch.py
 
 # Custom LLM server IP
@@ -94,9 +101,12 @@ ros2 launch ai_agent agent.launch.py
 ```
 
 **Start order:**
-1. Jetson: `ros2 launch robot_bringup_pkg robot.launch.py mode:=visual_assistant`
-2. Pi5: `ros2 launch robot_brain brain_launch.py`
-3. ESP32: power on (micro-ROS2 auto-connects)
+1. Mac Mini: `./llama-server -m model.gguf --port 8080 -ngl 99`
+2. Jetson: `ros2 launch robot_bringup_pkg robot.launch.py mode:=visual_assistant`
+3. Pi5: `ros2 launch robot_brain brain_launch.py`
+4. ESP32: power on — auto-connects to Pi5 micro-ROS2 agent over WiFi
+
+For full wiring, flashing and troubleshooting details see [INTEGRATION.md](INTEGRATION.md).
 
 ---
 
