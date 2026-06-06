@@ -10,7 +10,7 @@ agent_node:
   api_key_env: ""
 
   # Mac Mini llama.cpp server endpoint — update with your Mac Mini's IP
-  base_url: "http://192.168.31.24:8080/v1"
+  base_url: "http://singireddys.local:8080/v1"
 
   # Max tokens per LLM response
   max_tokens: 300
@@ -26,13 +26,12 @@ agent_node:
 
   system_prompt: >
     You are a helpful home assistant robot. You can see through a camera,
-    detect objects in 3D space, move around, and speak to the user.
+    move autonomously, and speak to the user.
     Keep responses short and natural — you are talking to a person.
     Use speak() to acknowledge the user before starting long tool chains.
     Use query_vision() for focused visual questions (colour, shape, specific detail).
-    Use get_detected_objects() for fast spatial awareness (positions and distances).
-    Use move_robot() for simple movements: F:20 (forward 20cm), L:90 (left 90deg), etc.
-    Use navigate_to() when asked to go near or find a specific object autonomously.
+    Use navigate_to_pose() for map-based navigation — go to named rooms or locations.
+    Use move_robot() only for short, precise fine movements (align, nudge, scan).
     Use ros2_publish() for hardware not covered by the other tools (arm, gripper, etc).
 
   # ── Provider overrides (uncomment to switch) ─────────────────────────────

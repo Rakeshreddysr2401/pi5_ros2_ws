@@ -12,24 +12,25 @@ graph.tools._bridge.get() which returns this object.
 import threading
 from typing import Callable, Optional
 
+import math
+
+from geometry_msgs.msg import PoseStamped, Twist
 from std_msgs.msg import String
 
 
 class ROS2Bridge:
 
-    def __init__(self, node):
+    def __init__(self, node, known_locations: dict = None):
         self._node = node
+
+        # Named map locations: {name: (x, y, yaw_deg)} — populated from nav_params
+        self._known_locations: dict = known_locations or {}
 
         # Locks
         self._frame_lock   = threading.Lock()
-        self._objects_lock = threading.Lock()
         self._pub_lock     = threading.Lock()
         self._svc_lock     = threading.Lock()
         self._act_lock     = threading.Lock()
-
-        # ── Sensor cache ───────────────────────────────────────────────────
-        self._latest_frame:  bytes | None = None
-        self._objects_json:  str          = "[]"
 
         # ── Vision query blocking sync ─────────────────────────────────────
         self._vision_lock   = threading.Lock()
@@ -48,7 +49,8 @@ class ROS2Bridge:
         # ── Fixed publishers (pre-created so tools never block on first call)
         self._speech_pub       = node.create_publisher(String, "/voice/robot_speech", 10)
         self._vision_query_pub = node.create_publisher(String, "/vision/query", 10)
-        self._movement_pub     = node.create_publisher(String, "/movement_cmd", 10)
+        self._twist_pub        = node.create_publisher(Twist, "/cmd_vel", 10)
+        self._goal_pub         = node.create_publisher(PoseStamped, "/goal_pose", 10)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 1 — Topics
@@ -59,10 +61,6 @@ class ROS2Bridge:
     def on_image(self, frame_bytes: bytes) -> None:
         with self._frame_lock:
             self._latest_frame = frame_bytes
-
-    def on_objects(self, msg) -> None:
-        with self._objects_lock:
-            self._objects_json = msg.data
 
     def on_query_result(self, msg) -> None:
         with self._vision_lock:
@@ -75,9 +73,8 @@ class ROS2Bridge:
         with self._frame_lock:
             return self._latest_frame
 
-    def get_objects_json(self) -> str:
-        with self._objects_lock:
-            return self._objects_json
+    def get_known_locations(self) -> dict:
+        return self._known_locations
 
     # ── Blocking VLM query (topic-pair) ───────────────────────────────────
 
@@ -107,9 +104,21 @@ class ROS2Bridge:
     def publish_speech(self, text: str) -> None:
         self._speech_pub.publish(String(data=text))
 
-    def publish_movement(self, command: str) -> None:
-        """command format: 'F:20' | 'B:10' | 'L:90' | 'R:45' | 'S'"""
-        self._movement_pub.publish(String(data=command))
+    def publish_twist(self, twist: Twist) -> None:
+        """Publish Twist directly to /cmd_vel → micro-ROS agent → ESP32."""
+        self._twist_pub.publish(twist)
+
+    def publish_goal_pose(self, x: float, y: float, yaw_deg: float) -> None:
+        """Publish PoseStamped to /goal_pose → Jetson Nav2 for map-based navigation."""
+        msg = PoseStamped()
+        msg.header.frame_id = "map"
+        msg.header.stamp = self._node.get_clock().now().to_msg()
+        msg.pose.position.x = x
+        msg.pose.position.y = y
+        yaw_rad = math.radians(yaw_deg)
+        msg.pose.orientation.z = math.sin(yaw_rad / 2.0)
+        msg.pose.orientation.w = math.cos(yaw_rad / 2.0)
+        self._goal_pub.publish(msg)
 
     def publish_to_topic(self, topic: str, data: str) -> None:
         """Publish a String to any topic, creating the publisher lazily."""

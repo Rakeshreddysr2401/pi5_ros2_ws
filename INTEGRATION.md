@@ -1,6 +1,6 @@
 # ESP32 + Pi5 Integration Guide
 
-Step-by-step to get the rover moving over WiFi using micro-ROS2.
+Step-by-step to get the rover moving over WiFi using micro-ROS.
 
 ---
 
@@ -11,9 +11,10 @@ Step-by-step to get the rover moving over WiFi using micro-ROS2.
 | ESP32 Dev Module | Any 38-pin variant |
 | L298N motor driver | Dual H-bridge |
 | 4-wheel chassis + DC motors | |
-| IR obstacle sensor | Active LOW output |
-| Servo (optional) | Head pan, GPIO 18 |
-| PoE switch or WiFi router | All devices on same network |
+| PoE switch or WiFi router | All devices on same subnet |
+| RealSense D555 (PoE) | Connects to Jetson via PoE, not Pi5 |
+
+> **No IR sensor** — obstacle detection is handled by the D555 depth camera + nvblox on Jetson.
 
 ---
 
@@ -31,9 +32,6 @@ IN3     ──►  33
 IN4     ──►  32
 ENB     ──►  12   ← remove jumper, connect here
 GND     ──►  GND
-
-IR sensor OUT ──►  34  (sensor GND → ESP32 GND, VCC → 3.3V)
-Servo signal  ──►  18  (optional)
 ```
 
 > **Why ENA/ENB matter:** Without PWM on ENA/ENB the motors run full speed only.
@@ -58,11 +56,11 @@ In Arduino IDE → Library Manager, install:
 
 | Library | Version |
 |---------|---------|
-| `micro_ros_arduino` | latest |
-| `ESP32Servo` | latest |
+| `micro_ros_arduino` | Jazzy release |
+| `ESP32Servo` | latest (optional, for head servo) |
 
-> `micro_ros_arduino` must match your ROS2 distro (Humble/Iron/Jazzy).
-> Download the correct `.zip` from:
+> `micro_ros_arduino` must match your ROS2 distro.
+> Download the **Jazzy** `.zip` from:
 > https://github.com/micro-ROS/micro_ros_arduino/releases
 > Then: Sketch → Include Library → Add .ZIP Library
 
@@ -96,23 +94,44 @@ If your wiring differs from the defaults, also edit the pin defines:
 #define IN3  33
 #define IN4  32
 #define ENB  12
-#define IR_PIN    34
-#define SERVO_PIN 18
+// No IR_PIN — obstacle detection handled by D555 + nvblox on Jetson
 ```
 
 Flash to ESP32. Open Serial Monitor at 115200 baud — you should see:
 ```
 === Rover ESP32 starting ===
-[INIT] Motors, PWM, servo ready
+[INIT] Motors, PWM ready
 [WiFi] Connecting to agent at 192.168.1.100:8888
 ```
-The ESP32 will keep retrying WiFi connection until the Pi5 agent is running.
+The ESP32 will keep retrying until the Pi5 micro-ROS agent is running.
 
 ---
 
 ## Pi5 Setup
 
-### 1. Set a static IP on Pi5
+### 1. ROS2 Jazzy
+
+```bash
+sudo apt update
+sudo apt install ros-jazzy-desktop
+echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc
+source ~/.bashrc
+```
+
+### 2. micro-ROS agent
+
+```bash
+sudo apt install ros-jazzy-micro-ros-agent
+```
+
+If not available in apt, build from source:
+```bash
+cd ~/pi5_ros2_ws
+git clone https://github.com/micro-ROS/micro_ros_agent src/micro_ros_agent
+colcon build --packages-select micro_ros_agent
+```
+
+### 3. Set a static IP on Pi5
 
 Edit `/etc/dhcpcd.conf` (or use your router's DHCP reservation):
 ```
@@ -122,19 +141,14 @@ static routers=192.168.1.1
 ```
 This must match `AGENT_IP` in the firmware.
 
-### 2. Install micro-ROS2 agent
+> On Ubuntu 24.04 without dhcpcd, use NetworkManager:
+> ```bash
+> nmcli con mod "WiFi-connection-name" ipv4.addresses 192.168.1.100/24
+> nmcli con mod "WiFi-connection-name" ipv4.method manual
+> nmcli con up "WiFi-connection-name"
+> ```
 
-```bash
-sudo apt install ros-$ROS_DISTRO-micro-ros-agent
-```
-Or build from source if not available for your distro:
-```bash
-cd ~/pi5_ros2_ws
-git clone https://github.com/micro-ROS/micro_ros_agent src/micro_ros_agent
-colcon build --packages-select micro_ros_agent
-```
-
-### 3. Build the workspace
+### 4. Build the workspace
 
 ```bash
 cd ~/pi5_ros2_ws
@@ -146,19 +160,23 @@ source install/setup.bash
 
 ## Launch
 
-### Full system (brain + chassis + micro-ROS2 agent)
+### Full system (micro-ROS agent + LangGraph brain)
 
 ```bash
 ros2 launch robot_brain brain_launch.py
 ```
 
+This starts:
+1. `micro_ros_agent` — UDP transport on port 8888, bridges Pi5 ↔ ESP32
+2. `agent_node` — LangGraph brain, subscribes to `/voice/user_input`, publishes to `/goal_pose` and `/cmd_vel`
+
 ### Custom options
 
 ```bash
-# Different LLM server
-ros2 launch robot_brain brain_launch.py base_url:=http://192.168.1.50:8080/v1
+# Different LLM endpoint
+ros2 launch robot_brain brain_launch.py base_url:=http://singireddys.local:8080/v1
 
-# Different micro-ROS2 agent port
+# Different micro-ROS agent port
 ros2 launch robot_brain brain_launch.py agent_port:=9999
 # (update AGENT_PORT in firmware to match)
 ```
@@ -166,9 +184,9 @@ ros2 launch robot_brain brain_launch.py agent_port:=9999
 ### Start order
 
 1. **Mac Mini:** `./llama-server -m model.gguf --port 8080 -ngl 99`
-2. **Jetson:** `ros2 launch robot_bringup_pkg robot.launch.py mode:=visual_assistant`
+2. **Jetson:** `docker compose up` (isaac_ros + ai_stack containers)
 3. **Pi5:** `ros2 launch robot_brain brain_launch.py`
-4. **ESP32:** power on — it auto-connects to Pi5 agent over WiFi
+4. **ESP32:** power on — auto-connects to Pi5 micro-ROS agent over WiFi
 
 ---
 
@@ -177,23 +195,41 @@ ros2 launch robot_brain brain_launch.py agent_port:=9999
 After launching, confirm the ESP32 is connected:
 
 ```bash
-# Should show /cmd_vel, /ir_obstacle, /servo_angle
+# Should show /cmd_vel among others
 ros2 topic list
 
-# Watch IR sensor
-ros2 topic echo /ir_obstacle
-
-# Manual test: drive forward for ~1 second
-ros2 topic pub --once /movement_cmd std_msgs/msg/String "data: 'F:12'"
+# Manual test: drive forward ~20 cm
+ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist \
+  "{linear: {x: 0.2}, angular: {z: 0.0}}"
 
 # Stop
-ros2 topic pub --once /movement_cmd std_msgs/msg/String "data: 'S'"
+ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist \
+  "{linear: {x: 0.0}, angular: {z: 0.0}}"
+
+# Check Pi5 ↔ Jetson topics are visible
+ros2 topic list | grep -E "voice|vision|goal_pose|camera"
 ```
 
 Serial Monitor on ESP32 should show:
 ```
-[READY] Rover micro-ROS2 ready
+[READY] Rover micro-ROS ready
 ```
+
+---
+
+## Network Topology
+
+```
+192.168.1.x subnet (all devices same router)
+
+Mac Mini  (singireddys.local)   :8080  llama.cpp HTTP
+Jetson    (static or DHCP)      :0     ROS2 DDS (ROS_DOMAIN_ID=0)
+Pi5       192.168.1.100         :8888  micro-ROS UDP agent
+D555      192.168.1.100 (PoE)   —      publishes ROS2 topics natively to Jetson
+ESP32     DHCP                  —      connects to Pi5:8888 via WiFi UDP
+```
+
+All ROS2 devices must be on the same subnet with `ROS_DOMAIN_ID=0`.
 
 ---
 
@@ -201,15 +237,24 @@ Serial Monitor on ESP32 should show:
 
 | Topic | Type | Direction | Description |
 |-------|------|-----------|-------------|
-| `/cmd_vel` | `geometry_msgs/Twist` | Pi5 → ESP32 | Wheel velocities. `linear.x` m/s, `angular.z` rad/s |
-| `/ir_obstacle` | `std_msgs/Bool` | ESP32 → Pi5 | `true` = obstacle within IR range |
-| `/servo_angle` | `std_msgs/UInt16` | Pi5 → ESP32 | Head servo angle 0–180° |
-| `/movement_cmd` | `std_msgs/String` | LangGraph → chassis_pilot | `F:30`, `B:20`, `L:90`, `R:45`, `S` |
+| `/cmd_vel` | `geometry_msgs/Twist` | Pi5 → ESP32 | Wheel velocities: `linear.x` m/s, `angular.z` rad/s |
+| `/goal_pose` | `geometry_msgs/PoseStamped` | Pi5 → Jetson Nav2 | Map-based navigation goal |
 | `/voice/user_input` | `std_msgs/String` | Jetson → Pi5 | STT transcription (triggers LangGraph) |
-| `/voice/robot_speech` | `std_msgs/String` | Pi5 → Jetson | TTS text |
-| `/vision/query` | `std_msgs/String` | Pi5 → Jetson | VLM question |
-| `/vision/query_result` | `std_msgs/String` | Jetson → Pi5 | VLM answer |
-| `/vision/objects_3d` | `std_msgs/String` | Jetson → Pi5 | JSON: YOLO detections + distance |
+| `/voice/robot_speech` | `std_msgs/String` | Pi5 → Jetson | TTS text to Kokoro |
+| `/camera/color/image_raw` | `sensor_msgs/Image` | D555 → Pi5 | Camera frames for LLM context |
+| `/vision/query` | `std_msgs/String` | Pi5 → Jetson | Moondream VLM question |
+| `/vision/query_result` | `std_msgs/String` | Jetson → Pi5 | Moondream VLM answer |
+| `/visual_slam/tracking/odometry` | `nav_msgs/Odometry` | Jetson → Pi5 | Robot pose from Isaac ROS SLAM |
+| `/brain/thinking` | `std_msgs/Bool` | Pi5 internal | True while LLM running |
+
+**Removed topics:**
+
+| Topic | Reason removed |
+|-------|----------------|
+| `/movement_cmd` | `chassis_pilot` removed — Pi5 publishes Twist directly |
+| `/ir_obstacle` | IR sensor removed — D555 + nvblox handles obstacle detection |
+| `/vision/objects_3d` | `spatial_node` removed — nvblox covers 3D mapping |
+| `/vision/image_raw` | Replaced by D555 native topic `/camera/color/image_raw` |
 
 ---
 
@@ -217,22 +262,26 @@ Serial Monitor on ESP32 should show:
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| ESP32 Serial shows `[EXECUTOR ERROR]` repeatedly | micro-ROS2 agent not running | Start Pi5 launch first, then power ESP32 |
+| ESP32 Serial shows `[EXECUTOR ERROR]` repeatedly | micro-ROS agent not running | Start Pi5 launch first, then power ESP32 |
 | Motors don't move but Serial shows commands | ENA/ENB jumpers still on | Remove jumpers, wire ENA→GPIO14, ENB→GPIO12 |
 | Robot goes in circles instead of straight | Left/right motor wires swapped | Swap IN1↔IN3 or reverse one motor's wires |
-| IR sensor always true | Wrong pin or sensor logic inverted | Check GPIO 34 with `ros2 topic echo /ir_obstacle`, adjust `IR_PIN` |
 | `ros2 topic list` doesn't show `/cmd_vel` | ESP32 not connected to agent | Check WiFi SSID/password and `AGENT_IP` in firmware |
 | Robot stops mid-move | CMD_TIMEOUT_MS watchdog firing | Normal — ESP32 stops if no Twist received in 500ms |
+| `/voice/user_input` not visible on Pi5 | Jetson containers not running | Start both docker containers on Jetson first |
+| Nav2 goal published but robot doesn't move | Isaac ROS not running or SLAM not initialised | Check Jetson isaac_ros container, run SLAM test first |
+| LLM calls failing | Wrong endpoint | Verify `singireddys.local` resolves: `ping singireddys.local` |
 
 ---
 
-## Nav2 / SLAM (Future)
+## Nav2 / SLAM Notes
 
-When you add Nav2 on Jetson, it will publish `/cmd_vel` Twist directly.
-`chassis_pilot` already subscribes to `/cmd_vel` and forwards it to the ESP32 —
-**no firmware or chassis_pilot changes needed.**
+Isaac ROS SLAM (visual SLAM) runs in Container 1 on Jetson.
+Nav2 runs inside the same container and publishes `/cmd_vel` Twist when navigating.
+Those Twist messages travel over DDS to Pi5, then through micro-ROS agent to ESP32.
 
-The only addition will be:
-- RTAB-Map on Jetson consuming D555 depth + IMU → publishing `/odom`
-- Nav2 consuming `/odom` → publishing `/cmd_vel`
-- Two new LangGraph tools: `save_waypoint(name)` and `navigate_to_waypoint(name)`
+**To build a SLAM map:**
+1. Launch Jetson containers (isaac_ros must be running)
+2. Launch Pi5: `ros2 launch robot_brain brain_launch.py`
+3. Drive the robot manually using direct `/cmd_vel` publishes or voice commands
+4. Save map when done (Nav2 map server — see Jetson SETUP.md)
+5. Record (x, y, yaw) of each named location and update `agent_params.yaml`

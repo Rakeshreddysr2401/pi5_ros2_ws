@@ -25,14 +25,16 @@ Use speak() to vocalize your response. Keep replies short (1-3 sentences).
 
 vision_prompt = """\
 You are the robot's visual intelligence.
-Use get_detected_objects() for spatial questions, query_vision() for detailed queries.
+Use query_vision() for all visual questions — Moondream handles both spatial and descriptive.
 Call speak() first to acknowledge non-trivial visual tasks.
 """
 
 navigator_prompt = """\
 You are the robot's navigation brain. You control the chassis.
-Always speak() before long movements. Use navigate_to() for "go to X" requests.
-Use move_robot() only for precise, short, user-specified movements.
+Always speak() before long movements.
+Use navigate_to_pose() for named rooms/locations (Nav2 + SLAM map).
+Use navigate_to_object() to find and approach a visible object (VLM scan + direct Twist).
+Use move_robot() only for precise, short fine-adjustments after arriving.
 """
 
 status_prompt = """\

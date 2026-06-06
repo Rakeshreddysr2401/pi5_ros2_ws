@@ -7,14 +7,32 @@ How the system works, how the pieces fit together, and how to extend it.
 ## System Overview
 
 ```
-Mac Mini          llama.cpp server — Gemma 4 or any GGUF (OpenAI-compatible HTTP)
-Jetson Orin 8GB   STT · TTS · Camera · YOLO · Moondream VLM  [speech_vision repo]
-Pi 5  [this repo] LangGraph supervisor + agents + chassis motor control
-ESP32             4-wheel drive chassis (micro-ROS2)
+Mac Mini          llama.cpp at singireddys.local:8080 — any GGUF (OpenAI-compatible HTTP)
+Jetson Orin 8GB   Isaac ROS (SLAM, Nav2, nvblox) · STT · TTS · YOLO · Moondream VLM
+Pi 5  [this repo] LangGraph supervisor + agents + micro-ROS agent (ESP32 bridge)
+ESP32             4-wheel drive chassis (micro-ROS over WiFi UDP port 8888)
 ```
 
 The Pi5 receives speech from Jetson, runs the LangGraph decision graph, and publishes
-responses back to Jetson (TTS) and to the ESP32 (motor commands).
+responses back to Jetson (TTS text, Nav2 goals) and to ESP32 (fine movement via micro-ROS).
+
+---
+
+## Data Flows
+
+```
+Jetson STT (Whisper small)
+    │  /voice/user_input
+    ▼
+Pi5 LangGraph brain
+    │  /voice/robot_speech     → Jetson tts_node (Kokoro) → USB speaker
+    │  /vision/query           → Jetson moondream_node
+    │  /goal_pose              → Jetson Nav2 → /cmd_vel → Pi5 micro-ROS → ESP32
+    │  /cmd_vel (direct)       → Pi5 micro-ROS → ESP32 (fine movement only)
+    ↑  /camera/color/image_raw ← D555 PoE camera (attached to LLM calls)
+    ↑  /vision/query_result    ← Jetson moondream_node
+    ↑  /visual_slam/tracking/odometry ← Jetson Isaac ROS SLAM
+```
 
 ---
 
@@ -32,28 +50,28 @@ src/
 │   │       ├── llm.py           LLM factory (provider-agnostic)
 │   │       ├── prompts.py       Prompt reference (prompts live inline in each node)
 │   │       ├── nodes/
-│   │       │   ├── turn_entry.py    Resets loop guard, routes to supervisor
+│   │       │   ├── turn_entry.py       Resets loop guard, routes to supervisor
 │   │       │   ├── handle_handover.py  Resolves handover: chain vs sticky, loop guard
-│   │       │   ├── supervisor.py    Pure router — calls handover(), never speaks
-│   │       │   ├── chat.py          General conversation + web search
-│   │       │   ├── vision.py        Visual reasoning
-│   │       │   ├── navigate.py      Movement + navigation
-│   │       │   ├── status.py        Robot operational state
-│   │       │   ├── swiggy.py        Food ordering
-│   │       │   └── tracker.py       Delivery tracking + door navigation
+│   │       │   ├── supervisor.py       Pure router — calls handover(), never speaks
+│   │       │   ├── chat.py             General conversation + web search
+│   │       │   ├── vision.py           Visual reasoning via Moondream
+│   │       │   ├── navigate.py         Map nav (Nav2) + object nav (VLM + Twist)
+│   │       │   ├── status.py           Robot operational state
+│   │       │   ├── swiggy.py           Food ordering
+│   │       │   └── tracker.py          Delivery tracking + door navigation
 │   │       ├── tools/
 │   │       │   ├── _bridge.py       Module-level bridge accessor (injected at startup)
 │   │       │   ├── handover.py      handover() tool — the routing mechanism
 │   │       │   ├── speech.py        speak()
-│   │       │   ├── vision.py        query_vision(), get_detected_objects()
-│   │       │   ├── movement.py      move_robot(), navigate_to()
+│   │       │   ├── vision.py        query_vision()
+│   │       │   ├── movement.py      move_robot(), navigate_to_pose(), navigate_to_object()
 │   │       │   ├── system.py        get_robot_status(), ros2_publish(), set_active_order()
 │   │       │   ├── swiggy_mcp.py    Loads Swiggy MCP tools at startup
 │   │       │   └── __init__.py      Named tool sets per agent
 │   │       └── utils/
 │   │           └── message_utils.py  prepare_messages_for_agent(), safe_invoke()
 │   └── config/agent_params.yaml
-├── robot_brain/        Muscles — chassis_pilot node (motor control)
+├── robot_brain/        Launch only — micro_ros_agent + agent_node (no chassis_pilot)
 └── robot_interfaces/   Custom ROS2 messages (RobotStatus.msg)
 ```
 
@@ -81,21 +99,6 @@ ROS2 spin thread (main)           worker thread (daemon)
 ```
 
 The spin thread never blocks on LLM work. The worker thread never touches ROS2 directly.
-
----
-
-## State
-
-```python
-class AgentState(TypedDict):
-    messages:          Annotated[list, add_messages]  # full conversation, managed by LangGraph
-    active_agent:      str                            # which agent handled the last turn
-    agent_turn_visits: dict                           # loop guard: visits per agent per turn
-    always_speak:      Optional[bool]                 # True = agents always call speak()
-```
-
-`MemorySaver` is used as the checkpointer — conversation history persists across turns
-within a session and resets when the node restarts.
 
 ---
 
@@ -131,35 +134,121 @@ supervisor  ──► supervisor_tools  ──► handle_handover
 
 ---
 
-## How Handover Works
+## Navigation: Two Modes
 
-Every agent (except `turn_entry` and `handle_handover`) has the `handover` tool.
-When an agent calls `handover(next_agent, reason, chain)`:
+### Map-based (Nav2 via /goal_pose)
 
-1. The tool returns JSON: `{"next_agent": "...", "reason": "...", "chain": bool}`
-2. The agent's ToolNode executes it and adds a `ToolMessage` to state
-3. `_route_after_tools()` detects the handover ToolMessage → routes to `handle_handover`
-4. `handle_handover` decides:
-   - **chain=True or agent was silent** → `Command(goto=next_agent)` — next agent responds *this turn*
-   - **chain=False and agent spoke** → state update + `END` — next agent picks up *next turn* (sticky)
+```
+navigate_to_pose("kitchen")
+  → bridge.publish_goal_pose(x, y, yaw_deg)
+  → /goal_pose (PoseStamped, frame=map)
+  → Jetson Nav2 plans path using nvblox 3D map
+  → Nav2 publishes /cmd_vel
+  → Pi5 micro-ROS agent → WiFi UDP 8888 → ESP32 → wheels
+```
 
-The **loop guard** tracks `agent_turn_visits`. If any agent is visited more than 3 times per turn,
-it breaks the cycle and redirects to `chat`.
+Obstacle avoidance handled automatically by nvblox + Nav2.
 
-**Message hygiene:** `prepare_messages_for_agent()` strips handover `ToolMessages` and empty
-routing `AIMessages` before each LLM call so agents see a clean conversation history.
+### Object-based (VLM + direct Twist)
+
+```
+navigate_to_object("the blue bottle")
+  → 360° scan via query_vision() + Moondream
+  → bridge.publish_twist() directly to /cmd_vel for each rotation + approach step
+  → Pi5 micro-ROS agent → WiFi UDP 8888 → ESP32 → wheels
+```
+
+Used when the target is not a named map location. No Nav2 involvement.
+
+### Fine adjustment (direct Twist)
+
+```
+move_robot("F:20")      # 20 cm forward
+move_robot("L:90")      # 90° left rotate
+move_robot("S")         # stop
+```
+
+Publishes Twist directly to `/cmd_vel`. For small precise corrections after arriving.
+
+---
+
+## ROS2 Topic Reference
+
+| Topic | Type | Direction | Notes |
+|-------|------|-----------|-------|
+| `/voice/user_input` | String | Jetson → Pi5 | STT output — triggers graph.invoke() |
+| `/voice/robot_speech` | String | Pi5 → Jetson | TTS text for Kokoro |
+| `/camera/color/image_raw` | Image | D555 → Pi5 | Camera frames — cached, attached to LLM calls |
+| `/vision/query` | String | Pi5 → Jetson | Question for Moondream VLM |
+| `/vision/query_result` | String | Jetson → Pi5 | Moondream answer |
+| `/visual_slam/tracking/odometry` | Odometry | Jetson → Pi5 | Robot pose from Isaac ROS SLAM |
+| `/goal_pose` | PoseStamped | Pi5 → Jetson | Map-based navigation goal for Nav2 |
+| `/cmd_vel` | Twist | Pi5 → ESP32 | Wheel velocities via micro-ROS agent |
+| `/brain/thinking` | Bool | Pi5 internal | True while LLM running |
+
+**Removed (vs previous architecture):**
+
+| Topic | Reason |
+|-------|--------|
+| `/movement_cmd` | Replaced by direct Twist to `/cmd_vel` |
+| `/vision/objects_3d` | `spatial_node` removed — nvblox handles 3D mapping, Moondream handles object queries |
+| `/vision/image_raw` | Replaced by `/camera/color/image_raw` (D555 native topic) |
+| `/ir_obstacle` | IR sensor removed — D555 + nvblox handles all obstacle detection |
+
+---
+
+## Tool Reference
+
+| Tool | File | Does |
+|------|------|------|
+| `handover(next_agent, reason, chain)` | `tools/handover.py` | Routes to another agent |
+| `speak(text)` | `tools/speech.py` | Publishes to `/voice/robot_speech` |
+| `query_vision(question)` | `tools/vision.py` | Publishes to `/vision/query`, blocks on `/vision/query_result` |
+| `navigate_to_pose(location)` | `tools/movement.py` | Publishes PoseStamped to `/goal_pose` → Jetson Nav2 |
+| `navigate_to_object(target)` | `tools/movement.py` | VLM 360° scan + direct Twist approach |
+| `move_robot(command)` | `tools/movement.py` | Fine Twist: `F:20` / `L:90` / `S` — direct to `/cmd_vel` |
+| `get_robot_status()` | `tools/system.py` | Calls `/robot/get_status` service |
+| `ros2_publish(topic, data)` | `tools/system.py` | Generic String publisher |
+| `set_active_order(order_id)` | `tools/system.py` | Stores/clears Swiggy order ID for polling |
+| Swiggy MCP tools | `tools/swiggy_mcp.py` | Food ordering via `https://mcp.swiggy.com/food` |
+
+---
+
+## Per-agent Tool Sets
+
+| Agent | Tool Set |
+|-------|----------|
+| `supervisor` | `handover` |
+| `chat` | `CHAT_TOOLS`: `speak`, `query_vision`, `get_robot_status` |
+| `vision` | `VISION_TOOLS`: `speak`, `query_vision` |
+| `navigate` | `NAVIGATE_TOOLS`: `speak`, `move_robot`, `navigate_to_pose`, `navigate_to_object`, `query_vision`, `ros2_publish` |
+| `status` | `STATUS_TOOLS`: `speak`, `get_robot_status`, `ros2_publish` |
+| `swiggy` | Swiggy MCP tools + `speak` |
+| `tracker` | Swiggy MCP tools + `navigate_to_pose` + `speak` |
+
+---
+
+## micro-ROS (Pi5 ↔ ESP32)
+
+- **Agent:** `micro_ros_agent` — started automatically by `brain_launch.py`
+- **Transport:** WiFi UDP port 8888
+- **Install:** `sudo apt install ros-jazzy-micro-ros-agent`
+- **ESP32 subscribes:** `/cmd_vel` (Twist) — wheel motor velocities
+- **ESP32 publishes:** nothing (IR sensor removed)
+
+The micro-ROS agent transparently bridges the ROS2 graph on Pi5 to micro-ROS nodes on ESP32.
+Nav2 (on Jetson) and LangGraph tools (on Pi5) both publish to `/cmd_vel` — the micro-ROS agent
+forwards all Twist messages to ESP32 without any routing logic.
 
 ---
 
 ## Supervisor Routing
 
-The supervisor's system prompt maps intents to agents:
-
 | User says | Routes to |
 |-----------|-----------|
-| General question, web search, small talk | `chat` |
+| General question, small talk | `chat` |
 | "what do you see", "describe", "is there a..." | `vision` |
-| "go to", "move forward", "find the chair" | `navigate` |
+| "go to [room]", "find [object]", "move forward" | `navigate` |
 | "battery", "status", "what are you doing" | `status` |
 | "order food", "search restaurants", "add to cart" | `swiggy` |
 | "where's my order", "delivery ETA", "track" | `tracker` |
@@ -176,135 +265,76 @@ User: "order biryani"
     ▼  supervisor → handover("swiggy")
 swiggy agent: search → browse → confirm → place order
     │
-    ├── calls set_active_order(order_id)   [stores on bridge for polling timer]
+    ├── calls set_active_order(order_id)
     └── handover("tracker", chain=True)
             │
-            ▼
 tracker agent: checks status immediately, reports ETA
     │
-    └── handover("supervisor", reason="tracking_done")
+    └── handover("supervisor")
 
 --- 2 minutes later ---
 
 ROS2 timer fires, reads bridge.active_order_id
     │
-    ▼  injects "[SYSTEM] Check if order {id} has been delivered" into input_queue
+    ▼  injects "[SYSTEM] Check if order {id} has been delivered"
 supervisor → handover("tracker")
     │
 tracker: order delivered?
     ├── YES: speak("Your order has arrived!")
-    │         navigate_to("door")
-    │         set_active_order(None)       [clears polling]
-    │         handover("chat", chain=True)
-    │              │
-    │         chat: greets delivery / assists user
+    │         navigate_to_pose("entrance")   ← Nav2 navigates to door
+    │         set_active_order(None)
+    │         handover("chat")
     └── NO: report new ETA, handover("supervisor")
 ```
 
 ---
 
-## Tool Reference
+## LLM Configuration
 
-| Tool | File | Does |
-|------|------|------|
-| `handover(next_agent, reason, chain)` | `tools/handover.py` | Routes to another agent |
-| `speak(text)` | `tools/speech.py` | Publishes to `/voice/robot_speech` |
-| `query_vision(question)` | `tools/vision.py` | Publishes to `/vision/query`, blocks on `/vision/query_result` |
-| `get_detected_objects()` | `tools/vision.py` | Returns cached YOLO detections |
-| `move_robot(command)` | `tools/movement.py` | Sends `F:20` / `L:90` / `S` to chassis_pilot |
-| `navigate_to(target)` | `tools/movement.py` | 360° scan + autonomous approach |
-| `get_robot_status()` | `tools/system.py` | Calls `/robot/get_status` service |
-| `ros2_publish(topic, data)` | `tools/system.py` | Generic String publisher |
-| `set_active_order(order_id)` | `tools/system.py` | Stores/clears Swiggy order ID for polling |
-| Swiggy MCP tools | `tools/swiggy_mcp.py` | Food ordering via `https://mcp.swiggy.com/food` |
+Edit `config/agent_params.yaml` — no code changes:
+
+```yaml
+agent_node:
+  provider: "llamacpp"                              # llamacpp | openai | anthropic | gemini | ollama
+  model: "default"                                  # llama.cpp ignores model name
+  base_url: "http://singireddys.local:8080/v1"      # Mac Mini llama.cpp
+  api_key_env: ""                                   # env var name holding the API key
+  max_tokens: 3000
+```
+
+Or override at launch:
+```bash
+ros2 launch robot_brain brain_launch.py base_url:=http://singireddys.local:8080/v1
+```
 
 ---
 
-## ROS2 Topic Reference
+## Adding Named Locations
 
-| Topic | Direction | Type | Purpose |
-|-------|-----------|------|---------|
-| `/voice/user_input` | Jetson → Pi5 | `String` | STT output — triggers graph.invoke() |
-| `/vision/image_raw` | Jetson → Pi5 | `Image` | Camera frames — cached, attached to LLM calls |
-| `/vision/objects_3d` | Jetson → Pi5 | `String` (JSON) | YOLO + depth detections |
-| `/vision/query` | Pi5 → Jetson | `String` | Question for Moondream VLM |
-| `/vision/query_result` | Jetson → Pi5 | `String` | Moondream answer |
-| `/voice/robot_speech` | Pi5 → Jetson | `String` | TTS text |
-| `/movement_cmd` | Pi5 internal | `String` | `F:20`, `L:90`, `S` — LangGraph → chassis_pilot |
-| `/cmd_vel` | Pi5 → ESP32 | `Twist` | Wheel velocities via micro-ROS2 WiFi UDP. Nav2 publishes here directly in future |
-| `/ir_obstacle` | ESP32 → Pi5 | `Bool` | IR sensor — `true` = obstacle. chassis_pilot hard-stops on this |
-| `/servo_angle` | Pi5 → ESP32 | `UInt16` | Head servo angle 0–180° |
-| `/brain/thinking` | Pi5 internal | `Bool` | `true` while LLM is running |
-| `/robot/get_status` | Pi5 service | `Trigger` | Battery + hardware state |
+After building a SLAM map on Jetson, update `agent_params.yaml` with the real coordinates:
 
-### micro-ROS2 Transport
+```yaml
+agent_node:
+  locations.kitchen:     [2.5,  1.0,  0.0]     # [x_meters, y_meters, yaw_degrees]
+  locations.bedroom:     [-2.0, 2.0, 180.0]
+  locations.living_room: [0.0,  3.0,  90.0]
+  locations.entrance:    [0.0,  0.0,   0.0]
+```
 
-ESP32 connects to Pi5 over **WiFi UDP** (port 8888).
-Pi5 runs `micro_ros_agent udp4 --port 8888` (started automatically by `brain_launch.py`).
-All topics above prefixed `/cmd_vel`, `/ir_obstacle`, `/servo_angle` are bridged through this agent.
-
-For wiring, flashing, and troubleshooting see [INTEGRATION.md](INTEGRATION.md).
+To get coordinates: drive the robot to each location after SLAM is running, then read pose from:
+```bash
+ros2 topic echo /visual_slam/tracking/odometry --once
+```
 
 ---
 
 ## How to Add a New Agent
 
-Example: adding an `arm` agent for robot arm control.
-
-**1. Add tools** (`graph/tools/system.py` or new file):
-```python
-@tool
-def move_arm(joint: str, angle: float) -> str:
-    """Move a robot arm joint to the given angle in degrees."""
-    _bridge.get().publish_to_topic("/arm/joint_goal", f'{{"joint": "{joint}", "angle": {angle}}}')
-    return f"Moving {joint} to {angle}°"
-```
-
-**2. Add to tool sets** (`graph/tools/__init__.py`):
-```python
-from .system import ..., move_arm
-
-ARM_TOOLS = [speak, move_arm, ros2_publish, handover]
-```
-
-**3. Create the node** (`graph/nodes/arm.py`):
-```python
-from langchain_core.messages import SystemMessage
-from ..llm import get_llm
-from ..state import AgentState
-from ..tools import ARM_TOOLS
-from ..utils.message_utils import prepare_messages_for_agent, safe_invoke
-import logging
-
-logger = logging.getLogger(__name__)
-
-_PROMPT = """You control the robot arm. Use move_arm() for joint control..."""
-
-def arm_node(state: AgentState) -> dict:
-    llm = get_llm().bind_tools(ARM_TOOLS)
-    clean = prepare_messages_for_agent(state["messages"])
-    response = safe_invoke(llm, [SystemMessage(content=_PROMPT)] + clean, logger)
-    return {"messages": [response], "active_agent": "arm"}
-```
-
-**4. Wire into graph** (`graph/graph.py`):
-```python
-from .nodes.arm import arm_node
-from .tools import ARM_TOOLS
-
-# Add to _AGENTS list
-_AGENTS = ["supervisor", "chat", "vision", "navigate", "status", "swiggy", "tracker", "arm"]
-
-# Add nodes
-builder.add_node("arm", arm_node)
-builder.add_node("arm_tools", ToolNode(tools=ARM_TOOLS))
-```
-
-**5. Update supervisor prompt** (`graph/nodes/supervisor.py`):
-```python
-# Add to _PROMPT:
-# - "arm": robot arm control, joint movement, pick and place
-```
+1. **Add tools** in `graph/tools/` using `@tool` and `_bridge.get()`
+2. **Create the node** in `graph/nodes/` (copy `vision.py` as template)
+3. **Add to tool sets** in `graph/tools/__init__.py`
+4. **Wire into graph** in `graph/graph.py` — add node + ToolNode, add to `_AGENTS`
+5. **Update supervisor prompt** — add new agent name + description of when to route to it
 
 ---
 
@@ -315,23 +345,3 @@ builder.add_node("arm_tools", ToolNode(tools=ARM_TOOLS))
 3. Mention it in that agent's system prompt
 
 No other changes needed — the per-agent ToolNode picks it up automatically.
-
----
-
-## How to Change the LLM
-
-Edit `config/agent_params.yaml` — no code changes:
-
-```yaml
-agent_node:
-  provider: "llamacpp"                        # llamacpp | openai | anthropic | gemini | ollama
-  model: "default"                            # llama.cpp ignores model name
-  base_url: "http://192.168.31.24:8080/v1"    # your LLM server IP
-  api_key_env: ""                             # env var name holding the API key
-  max_tokens: 300
-```
-
-Or override at launch:
-```bash
-ros2 launch robot_brain brain_launch.py base_url:=http://192.168.1.50:8080/v1 provider:=openai
-```

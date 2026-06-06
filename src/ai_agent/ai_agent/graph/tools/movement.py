@@ -1,104 +1,125 @@
-import json
+import math
 import time
 
 from langchain_core.tools import tool
 
 from . import _bridge
 
-# Must match chassis_pilot parameters
-_FWD_CM_S    = 12.0
-_TURN_DEG_S  = 180.0
-_CMD_BUFFER  = 0.3   # extra sleep after each command (seconds)
+# Fine-movement Twist parameters (direct /cmd_vel, bypasses Nav2)
+_LINEAR_VEL_MS  = 0.12   # m/s forward/backward
+_ANGULAR_VEL_RS = 1.2    # rad/s rotation
+_CMD_BUFFER     = 0.2    # extra sleep after each command (seconds)
 
 
 def _duration(cmd: str, val: float) -> float:
     if cmd in ("F", "B"):
-        return val / _FWD_CM_S + _CMD_BUFFER
+        return (val / 100.0) / _LINEAR_VEL_MS + _CMD_BUFFER   # cm → m
     if cmd in ("L", "R"):
-        return val / _TURN_DEG_S + _CMD_BUFFER
+        return math.radians(val) / _ANGULAR_VEL_RS + _CMD_BUFFER
     return 0.0
 
 
 @tool
 def move_robot(command: str) -> str:
-    """Send a timed movement command to the robot chassis and block until done.
+    """Send a short, precise movement command directly to the wheels via /cmd_vel.
 
-    Format — DIRECTION:VALUE  or  'S' to stop immediately:
-      F:30   forward 30 cm
-      B:20   backward 20 cm
+    Use for fine adjustments — aligning, nudging, short scans.
+    Do NOT use for room-to-room navigation — use navigate_to_pose() instead.
+
+    Format — DIRECTION:VALUE  or  'S' to stop:
+      F:20   forward 20 cm
+      B:10   backward 10 cm
       L:90   rotate left 90 degrees
       R:45   rotate right 45 degrees
-      S      stop"""
+      S      stop immediately"""
     bridge = _bridge.get()
-    bridge.publish_movement(command)
     parts = command.upper().split(":")
-    cmd   = parts[0]
-    val   = float(parts[1]) if len(parts) > 1 else 0.0
-    dur   = _duration(cmd, val)
+    cmd = parts[0]
+    val = float(parts[1]) if len(parts) > 1 else 0.0
+
+    from geometry_msgs.msg import Twist
+    twist = Twist()
+
+    if cmd == "F":
+        twist.linear.x = _LINEAR_VEL_MS
+    elif cmd == "B":
+        twist.linear.x = -_LINEAR_VEL_MS
+    elif cmd == "L":
+        twist.angular.z = _ANGULAR_VEL_RS
+    elif cmd == "R":
+        twist.angular.z = -_ANGULAR_VEL_RS
+    elif cmd == "S":
+        pass  # zero Twist = stop
+
+    bridge.publish_twist(twist)
+    dur = _duration(cmd, val)
     if dur > 0:
         time.sleep(dur)
+        bridge.publish_twist(Twist())  # stop after duration
+
     return f"Movement done: {command}"
 
 
 @tool
-def navigate_to(target: str) -> str:
-    """Autonomously navigate the robot to a named object.
+def navigate_to_pose(location: str) -> str:
+    """Send the robot to a named location using Jetson Nav2 map-based navigation.
 
-    Phase 1 — Scan: rotate 45° at a time (max 360°) using YOLO + Moondream VLM
-               to find the target.
-    Phase 2 — Approach: align left/right, step forward 20 cm, check proximity.
-               Repeat up to 6 times.
+    Nav2 handles obstacle avoidance, path planning, and localisation automatically.
+    Use for room-to-room or area navigation: 'kitchen', 'bedroom', 'entrance', etc.
 
-    Use for 'go to X', 'find and approach X', 'bring yourself near X'."""
+    The robot will navigate autonomously — call speak() first to acknowledge the user."""
+    bridge = _bridge.get()
+
+    known = bridge.get_known_locations()
+    loc = location.lower().strip()
+
+    if loc not in known:
+        available = ", ".join(known.keys()) if known else "none configured yet"
+        return f"Unknown location '{location}'. Available: {available}"
+
+    x, y, yaw_deg = known[loc]
+    bridge.publish_goal_pose(x, y, yaw_deg)
+    return f"Nav2 goal sent: navigating to '{location}' ({x:.1f}, {y:.1f})"
+
+
+@tool
+def navigate_to_object(target: str) -> str:
+    """Scan for a named object and approach it using Moondream VLM + fine movement.
+
+    Use when the object is not on the map — e.g. 'the blue bottle', 'the person'.
+    Performs a 360° scan then approaches step by step.
+
+    For named rooms or map locations use navigate_to_pose() instead."""
     bridge = _bridge.get()
     bridge.publish_speech(f"Looking for the {target}, scanning around.")
 
-    # ── Phase 1: Scan 360° ─────────────────────────────────────────────────
-    direction: str | None  = None
-    distance:  float | None = None
+    from geometry_msgs.msg import Twist
 
+    direction = None
+
+    # Phase 1: Scan 360° via Moondream VLM
     for step in range(8):  # 8 × 45° = 360°
-
-        # Fast path: YOLO detections (no VLM roundtrip)
-        try:
-            objects = json.loads(bridge.get_objects_json())
-        except Exception:
-            objects = []
-
-        for obj in objects:
-            if target.lower() in obj.get("class", "").lower():
-                direction = obj.get("direction", "center")
-                distance  = obj.get("distance_m")
-                break
-
-        if direction:
-            break
-
-        # Slow path: ask Moondream VLM
         answer = bridge.query_vision(
             f"Do you see a {target}? "
-            f"If yes reply: YES <left|center|right> <metres>. "
+            f"If yes reply: YES <left|centre|right> <metres>. "
             f"If no reply: NO."
         )
         ans = answer.lower()
         if ans.startswith("yes"):
             parts = ans.split()
-            direction = "center"
+            direction = "centre"
             for word in parts:
-                if word in ("left", "center", "right"):
-                    direction = word
+                if word in ("left", "centre", "center", "right"):
+                    direction = word.replace("center", "centre")
                     break
-            for word in parts:
-                try:
-                    distance = float(word.rstrip("m"))
-                    break
-                except ValueError:
-                    pass
             break
 
         bridge.publish_speech(f"Not found yet, rotating… ({step + 1}/8)")
-        bridge.publish_movement("L:45")
+        twist = Twist()
+        twist.angular.z = _ANGULAR_VEL_RS
+        bridge.publish_twist(twist)
         time.sleep(_duration("L", 45))
+        bridge.publish_twist(Twist())
 
     if direction is None:
         bridge.publish_speech(f"I couldn't find the {target} after a full scan.")
@@ -106,18 +127,26 @@ def navigate_to(target: str) -> str:
 
     bridge.publish_speech(f"Found the {target}, approaching now.")
 
-    # ── Phase 2: Approach ──────────────────────────────────────────────────
+    # Phase 2: Approach step by step
     for _ in range(6):  # max 6 × 20 cm = 1.2 m
-
         if direction == "left":
-            bridge.publish_movement("L:20")
+            twist = Twist()
+            twist.angular.z = _ANGULAR_VEL_RS
+            bridge.publish_twist(twist)
             time.sleep(_duration("L", 20))
+            bridge.publish_twist(Twist())
         elif direction == "right":
-            bridge.publish_movement("R:20")
+            twist = Twist()
+            twist.angular.z = -_ANGULAR_VEL_RS
+            bridge.publish_twist(twist)
             time.sleep(_duration("R", 20))
+            bridge.publish_twist(Twist())
 
-        bridge.publish_movement("F:20")
+        fwd = Twist()
+        fwd.linear.x = _LINEAR_VEL_MS
+        bridge.publish_twist(fwd)
         time.sleep(_duration("F", 20))
+        bridge.publish_twist(Twist())
 
         close = bridge.query_vision(
             f"Am I now close to the {target} (within 30 cm)? Reply YES or NO."
@@ -125,16 +154,16 @@ def navigate_to(target: str) -> str:
         if "yes" in close.lower():
             break
 
-        # Re-detect for next alignment
-        try:
-            objects = json.loads(bridge.get_objects_json())
-        except Exception:
-            objects = []
-        direction = "center"
-        for obj in objects:
-            if target.lower() in obj.get("class", "").lower():
-                direction = obj.get("direction", "center")
-                break
+        answer = bridge.query_vision(
+            f"Where is the {target} now — left, centre, or right?"
+        )
+        ans = answer.lower()
+        if "left" in ans:
+            direction = "left"
+        elif "right" in ans:
+            direction = "right"
+        else:
+            direction = "centre"
 
     bridge.publish_speech(f"I've reached the {target}.")
     return f"Navigation complete: reached the {target}."

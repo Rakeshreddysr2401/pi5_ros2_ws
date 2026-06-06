@@ -1,28 +1,28 @@
 # Pi5 Robot Brain — Quick Start
 
-The **brain and muscles** of a distributed home assistant robot.
-The Pi5 handles all reasoning (LangGraph + LLM) and motor control.
-The Jetson Orin handles sensing (STT, camera, YOLO, Moondream TTS).
+The **brain and motor bridge** of a distributed home assistant robot.
+Pi5 handles all reasoning (LangGraph + LLM) and routes motor commands via micro-ROS.
+Jetson Orin handles perception (STT, TTS, camera, YOLO, Moondream, SLAM, Nav2).
 
 ```
-Mac Mini  ──────  llama.cpp / LLM server  (OpenAI-compatible HTTP)
-Jetson    ──────  STT · TTS · Camera · YOLO · Moondream VLM
-Pi 5      ──────  THIS REPO — LangGraph brain + chassis control
-ESP32     ──────  4-wheel drive chassis (micro-ROS2)
+Mac Mini  ──────  llama.cpp at singireddys.local:8080  (OpenAI-compatible HTTP)
+Jetson    ──────  Isaac ROS (SLAM, Nav2, nvblox) · STT · TTS · YOLO · Moondream
+Pi 5      ──────  THIS REPO — LangGraph brain + micro-ROS agent (ESP32 bridge)
+ESP32     ──────  4-wheel drive chassis (micro-ROS over WiFi UDP)
 ```
 
 ---
 
 ## Prerequisites
 
-### On the Pi5
+### On the Pi5 (Ubuntu 24.04, ROS2 Jazzy)
 
 ```bash
-# ROS2 Humble (or Iron)
-sudo apt install ros-humble-desktop
+# ROS2 Jazzy
+sudo apt install ros-jazzy-desktop
 
-# micro-ROS2 agent (bridges Pi5 ↔ ESP32 over WiFi UDP)
-sudo apt install ros-$ROS_DISTRO-micro-ros-agent
+# micro-ROS agent — bridges Pi5 ↔ ESP32 over WiFi UDP
+sudo apt install ros-jazzy-micro-ros-agent
 
 # Python dependencies
 pip install langgraph langchain-core langchain-openai langchain-anthropic \
@@ -35,15 +35,25 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-### On the Jetson
+### On the Jetson Orin Nano (JetPack 7.2, ROS2 Jazzy)
 
-See [speech_vision repo](https://github.com/Rakeshreddysr2401/speech_vision) — launch it before starting the Pi5.
+Start both containers before the Pi5:
+```bash
+# Container 1: Isaac ROS (SLAM, Nav2, nvblox)
+cd ~/robot && docker compose up isaac_ros
 
-### LLM server (Mac Mini or any machine on the network)
+# Container 2: AI stack (STT, TTS, YOLO, Moondream)
+cd ~/robot && docker compose up ai_stack
+```
+
+See `SETUP.md` (Jetson repo) for full container build and launch instructions.
+
+### LLM server (Mac Mini)
 
 ```bash
-# llama.cpp example
+# llama.cpp — serves any GGUF model on the local network
 ./llama-server -m your-model.gguf --port 8080 -ngl 99
+# Access via http://singireddys.local:8080/v1
 ```
 
 ### ESP32 firmware
@@ -75,14 +85,20 @@ cp example.env .env
 
 ## Configuration
 
-Edit `src/ai_agent/config/agent_params.yaml` to set your LLM provider and Mac Mini IP:
+Edit `src/ai_agent/config/agent_params.yaml`:
 
 ```yaml
 agent_node:
-  provider: "llamacpp"                      # llamacpp | openai | anthropic | gemini | ollama
-  base_url: "http://192.168.31.24:8080/v1"  # your Mac Mini IP
-  max_tokens: 300
+  provider: "llamacpp"                              # llamacpp | openai | anthropic | gemini | ollama
+  base_url: "http://singireddys.local:8080/v1"      # Mac Mini llama.cpp endpoint
+  max_tokens: 3000
   use_vision: true
+  # Named map locations (x, y, yaw_deg) in SLAM map frame
+  # Update these after building a SLAM map on Jetson
+  locations.kitchen:     [2.5,  1.0,  0.0]
+  locations.living_room: [0.0,  3.0, 90.0]
+  locations.bedroom:     [-2.0, 2.0, 180.0]
+  locations.entrance:    [0.0,  0.0,  0.0]
 ```
 
 ---
@@ -90,23 +106,23 @@ agent_node:
 ## Launch
 
 ```bash
-# Full system (brain + chassis pilot + micro-ROS2 agent)
+# Full system (micro-ROS agent + LangGraph brain)
 ros2 launch robot_brain brain_launch.py
 
-# Custom LLM server IP
-ros2 launch robot_brain brain_launch.py base_url:=http://192.168.1.50:8080/v1
+# Override LLM endpoint
+ros2 launch robot_brain brain_launch.py base_url:=http://singireddys.local:8080/v1
 
-# Brain only (no motor control)
+# Brain only (no micro-ROS agent — for testing without ESP32)
 ros2 launch ai_agent agent.launch.py
 ```
 
 **Start order:**
-1. Mac Mini: `./llama-server -m model.gguf --port 8080 -ngl 99`
-2. Jetson: `ros2 launch robot_bringup_pkg robot.launch.py mode:=visual_assistant`
-3. Pi5: `ros2 launch robot_brain brain_launch.py`
-4. ESP32: power on — auto-connects to Pi5 micro-ROS2 agent over WiFi
+1. **Mac Mini:** `./llama-server -m model.gguf --port 8080 -ngl 99`
+2. **Jetson:** `docker compose up` (both containers)
+3. **Pi5:** `ros2 launch robot_brain brain_launch.py`
+4. **ESP32:** power on — auto-connects to Pi5 micro-ROS agent over WiFi
 
-For full wiring, flashing and troubleshooting details see [INTEGRATION.md](INTEGRATION.md).
+For full wiring, flashing, and troubleshooting see [INTEGRATION.md](INTEGRATION.md).
 
 ---
 
@@ -115,9 +131,9 @@ For full wiring, flashing and troubleshooting details see [INTEGRATION.md](INTEG
 ```
 User speaks
     │
-    ▼  /voice/user_input (String)
+    ▼  /voice/user_input (String)    [Jetson STT → Pi5]
 agent_node (ROS2 spin thread)
-    │  puts text into input_queue
+    │  puts text + cached camera frame into input_queue
     ▼
 worker thread
     │  graph.invoke()
@@ -135,14 +151,14 @@ turn_entry  ──►  supervisor (routes via handover)
                              handle_handover
                           (chain or sticky next turn)
                                     │
-                     ┌──────────────┴──────────────┐
-                     ▼                             ▼
-           /voice/robot_speech         /movement_cmd
-           (Jetson speaks)             (chassis_pilot → ESP32)
+               ┌────────────────────┼────────────────────┐
+               ▼                    ▼                    ▼
+    /voice/robot_speech         /goal_pose           /cmd_vel
+    (Jetson Kokoro TTS)     (Jetson Nav2 → ESP32) (Pi5 → ESP32 direct)
 ```
 
 Every 2 minutes a ROS2 timer checks if a Swiggy order is active.
-If the order arrives, the tracker agent speaks, drives the robot to the door, then hands off to chat.
+If the order arrives, the tracker agent speaks, navigates to the door via Nav2, then hands off to chat.
 
 ---
 
@@ -151,23 +167,21 @@ If the order arrives, the tracker agent speaks, drives the robot to the door, th
 | Package | Purpose |
 |---------|---------|
 | `ai_agent` | LangGraph supervisor + 7 agents + all tools |
-| `robot_brain` | `chassis_pilot` node — motor control, visual servoing |
-| `robot_interfaces` | Custom `RobotStatus.msg` shared with Jetson |
+| `robot_brain` | Launch only — starts micro-ROS agent + agent_node |
+| `robot_interfaces` | Custom `RobotStatus.msg` |
 
 ---
 
 ## Agents
 
-| Agent | Handles | Tools |
-|-------|---------|-------|
+| Agent | Handles | Key Tools |
+|-------|---------|-----------|
 | `supervisor` | Routes every request — never speaks | `handover` |
-| `chat` | General questions, web search, small talk | `speak`, `query_vision`, `get_detected_objects`, `get_robot_status`, `tavily_search`*, `handover` |
-| `vision` | What the robot sees, object detection | `speak`, `query_vision`, `get_detected_objects`, `handover` |
-| `navigate` | Movement, go-to, find-and-approach | `speak`, `move_robot`, `navigate_to`, `query_vision`, `get_detected_objects`, `ros2_publish`, `handover` |
-| `status` | Battery, hardware, operational state | `speak`, `get_robot_status`, `ros2_publish`, `handover` |
-| `swiggy` | Food ordering, cart, place orders | Swiggy MCP tools*, `handover` |
-| `tracker` | Delivery tracking, door navigation on arrival | Swiggy MCP tools*, `set_active_order`, `speak`, `navigate_to`, `handover` |
-
-`*` = requires env var / MCP server
+| `chat` | General questions, small talk | `speak`, `query_vision`, `get_robot_status` |
+| `vision` | What the robot sees | `speak`, `query_vision` |
+| `navigate` | Movement, go-to rooms, find objects | `speak`, `navigate_to_pose`, `navigate_to_object`, `move_robot`, `query_vision` |
+| `status` | Battery, hardware, operational state | `speak`, `get_robot_status`, `ros2_publish` |
+| `swiggy` | Food ordering, cart, place orders | Swiggy MCP tools |
+| `tracker` | Delivery tracking, door navigation on arrival | Swiggy MCP tools, `navigate_to_pose` |
 
 For full architecture details see [ARCHITECTURE.md](ARCHITECTURE.md).

@@ -33,7 +33,7 @@ class AgentNode(Node):
         self.declare_parameter("provider",   "llamacpp")
         self.declare_parameter("model",      "default")
         self.declare_parameter("api_key_env", "")
-        self.declare_parameter("base_url",   "http://192.168.31.24:8080/v1")
+        self.declare_parameter("base_url",   "http://singireddys.local:8080/v1")
         self.declare_parameter("max_tokens", 3000)
         self.declare_parameter("history_turns", 20)
         self.declare_parameter("use_vision",  True)
@@ -50,8 +50,20 @@ class AgentNode(Node):
 
         api_key = os.environ.get(api_key_env, "") if api_key_env else "none"
 
+        # ── Known map locations for Nav2 goal publishing ──────────────────
+        # Populated from nav_params.yaml once SLAM map is built
+        # Format: {name: [x, y, yaw_deg]}
+        self.declare_parameter("locations.kitchen",     [2.5,  1.0,  0.0])
+        self.declare_parameter("locations.living_room", [0.0,  3.0, 90.0])
+        self.declare_parameter("locations.bedroom",     [-2.0, 2.0, 180.0])
+        self.declare_parameter("locations.entrance",    [0.0,  0.0,  0.0])
+        known_locations = {
+            name: tuple(self.get_parameter(f"locations.{name}").value)
+            for name in ("kitchen", "living_room", "bedroom", "entrance")
+        }
+
         # ── Inject config into graph layer ────────────────────────────────
-        self._bridge = ROS2Bridge(self)
+        self._bridge = ROS2Bridge(self, known_locations=known_locations)
         bridge_module.init(self._bridge)
         llm_module.configure(provider, model, base_url, api_key, max_tokens)
 
@@ -71,10 +83,11 @@ class AgentNode(Node):
             from cv_bridge import CvBridge
             from sensor_msgs.msg import Image
             self._cv_bridge = CvBridge()
-            self.create_subscription(Image,  "/vision/image_raw",    self._on_image,                    1)
-            self.create_subscription(String, "/vision/objects_3d",   self._bridge.on_objects,           1)
-            self.create_subscription(String, "/vision/query_result", self._bridge.on_query_result,     10)
-            self.get_logger().info("Vision enabled — image_raw + objects_3d + query_result")
+            # /camera/color/image_raw — D555 native topic (no camera_node needed)
+            self.create_subscription(Image,  "/camera/color/image_raw", self._on_image,              1)
+            # /vision/query_result — Moondream VLM response from Jetson ai_stack container
+            self.create_subscription(String, "/vision/query_result",    self._bridge.on_query_result, 10)
+            self.get_logger().info("Vision enabled — /camera/color/image_raw + /vision/query_result")
 
         # ── Worker thread ─────────────────────────────────────────────────
         threading.Thread(target=self._worker_loop, daemon=True).start()

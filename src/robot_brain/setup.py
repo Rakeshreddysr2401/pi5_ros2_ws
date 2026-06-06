@@ -15,11 +15,9 @@ setup(
     zip_safe=True,
     maintainer='rakhi24',
     maintainer_email='rakhi24@todo.todo',
-    description='Chassis motor control for the distributed robot',
+    description='Launch package for the Pi5 robot brain (micro-ROS agent + LangGraph node)',
     license='Apache-2.0',
     entry_points={
-        'console_scripts': [
-            'chassis_pilot = robot_brain.chassis_pilot:main',
-        ],
+        'console_scripts': [],
     },
 )
