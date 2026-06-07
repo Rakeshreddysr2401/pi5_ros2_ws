@@ -67,7 +67,8 @@ def navigate_to_pose(location: str) -> str:
     Nav2 handles obstacle avoidance, path planning, and localisation automatically.
     Use for room-to-room or area navigation: 'kitchen', 'bedroom', 'entrance', etc.
 
-    The robot will navigate autonomously — call speak() first to acknowledge the user."""
+    Returns immediately — the robot moves in the background. A system message will
+    arrive when navigation completes or fails. Call speak() first to acknowledge."""
     bridge = _bridge.get()
 
     known = bridge.get_known_locations()
@@ -78,26 +79,62 @@ def navigate_to_pose(location: str) -> str:
         return f"Unknown location '{location}'. Available: {available}"
 
     x, y, yaw_deg = known[loc]
-    bridge.publish_goal_pose(x, y, yaw_deg)
-    return f"Nav2 goal sent: navigating to '{location}' ({x:.1f}, {y:.1f})"
+    bridge.start_nav_to_pose(x, y, yaw_deg, label=loc)
+    return f"Navigation started: heading to '{location}' ({x:.1f}, {y:.1f}). I will report when I arrive."
 
 
 @tool
-def navigate_to_object(target: str) -> str:
-    """Scan for a named object and approach it using Moondream VLM + fine movement.
+def navigate_to_visible_object(target: str) -> str:
+    """Find a visible object using the Jetson depth camera + VLM, then navigate to it via Nav2.
 
-    Use when the object is not on the map — e.g. 'the blue bottle', 'the person'.
-    Performs a 360° scan then approaches step by step.
+    This is the preferred way to approach objects seen in the camera feed:
+    1. Calls the Jetson /vision/find_object_pose service (VLM bbox + RealSense depth → 3D pose)
+    2. Passes the pose to Nav2 for obstacle-aware navigation
 
-    For named rooms or map locations use navigate_to_pose() instead."""
+    Use when: "go near the chair", "approach the bottle", "go to that person"
+    Falls back to navigate_to_object() if the Jetson service is unavailable.
+
+    Returns immediately — navigation runs in background."""
     bridge = _bridge.get()
-    bridge.publish_speech(f"Looking for the {target}, scanning around.")
 
+    try:
+        from robot_interfaces.srv import FindObjectPose
+        req = FindObjectPose.Request()
+        req.object_description = target
+        resp = bridge.call_service("/vision/find_object_pose", FindObjectPose, req, timeout=15.0)
+
+        if not resp.found:
+            reason = resp.reason or "object not visible in camera"
+            bridge.publish_speech(f"I couldn't find the {target} — {reason}. Let me try scanning.")
+            return _fallback_scan(target, bridge)
+
+        pose = resp.pose
+        x = pose.pose.position.x
+        y = pose.pose.position.y
+
+        import math as _math
+        q = pose.pose.orientation
+        yaw_rad = _math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        yaw_deg = _math.degrees(yaw_rad)
+
+        bridge.start_nav_to_pose(x, y, yaw_deg, label=target)
+        return f"Found {target} in camera view. Navigating to it via Nav2. I'll report when I arrive."
+
+    except TimeoutError:
+        bridge.publish_speech(f"Jetson vision service unavailable. Scanning for {target} manually.")
+        return _fallback_scan(target, bridge)
+    except Exception as e:
+        bridge.publish_speech(f"Vision service error: {e}. Trying manual scan.")
+        return _fallback_scan(target, bridge)
+
+
+def _fallback_scan(target: str, bridge) -> str:
+    """VLM 360° scan + direct approach — used when Jetson service is unavailable."""
     from geometry_msgs.msg import Twist
 
+    bridge.publish_speech(f"Looking for the {target}, scanning around.")
     direction = None
 
-    # Phase 1: Scan 360° via Moondream VLM
     for step in range(8):  # 8 × 45° = 360°
         answer = bridge.query_vision(
             f"Do you see a {target}? "
@@ -127,7 +164,6 @@ def navigate_to_object(target: str) -> str:
 
     bridge.publish_speech(f"Found the {target}, approaching now.")
 
-    # Phase 2: Approach step by step
     for _ in range(6):  # max 6 × 20 cm = 1.2 m
         if direction == "left":
             twist = Twist()
@@ -167,3 +203,15 @@ def navigate_to_object(target: str) -> str:
 
     bridge.publish_speech(f"I've reached the {target}.")
     return f"Navigation complete: reached the {target}."
+
+
+@tool
+def navigate_to_object(target: str) -> str:
+    """Fallback: scan 360° using Moondream VLM and approach object with direct wheel control.
+
+    Use only if navigate_to_visible_object() fails or the Jetson service is unavailable.
+    No obstacle avoidance — drives directly toward detected object.
+
+    For named rooms use navigate_to_pose(). For objects with Jetson running use navigate_to_visible_object()."""
+    bridge = _bridge.get()
+    return _fallback_scan(target, bridge)

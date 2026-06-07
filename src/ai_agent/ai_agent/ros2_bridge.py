@@ -15,7 +15,7 @@ from typing import Callable, Optional
 import math
 
 from geometry_msgs.msg import PoseStamped, Twist
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 
 
 class ROS2Bridge:
@@ -26,34 +26,52 @@ class ROS2Bridge:
         # Named map locations: {name: (x, y, yaw_deg)} — populated from nav_params
         self._known_locations: dict = known_locations or {}
 
-        # Locks
+        # ── Locks ─────────────────────────────────────────────────────────────
         self._frame_lock   = threading.Lock()
         self._pub_lock     = threading.Lock()
         self._svc_lock     = threading.Lock()
         self._act_lock     = threading.Lock()
 
-        # ── Vision query blocking sync ─────────────────────────────────────
+        # ── Vision query blocking sync ─────────────────────────────────────────
         self._vision_lock   = threading.Lock()
         self._vision_event  = threading.Event()
         self._vision_result: str | None = None
 
-        # ── Latest camera frame (bytes, JPEG-encoded) ─────────────────────
+        # ── Latest camera frame (bytes, JPEG-encoded) ─────────────────────────
         self._latest_frame: bytes | None = None
 
         # ── Active Swiggy order (for background delivery polling) ─────────────
         self._order_lock       = threading.Lock()
         self._active_order_id: str | None = None
 
-        # ── Lazy client registries ─────────────────────────────────────────
+        # ── Speech queue + back-pressure against Kokoro TTS ───────────────────
+        self._speech_lock    = threading.Lock()
+        self._speech_queue:  list[str] = []
+        self._is_speaking    = False   # updated by /voice/speaking subscription
+
+        # ── Active navigation state ────────────────────────────────────────────
+        self._nav_lock      = threading.Lock()
+        self._nav_cancel_event: threading.Event | None = None
+        self._nav_thread:       threading.Thread | None = None
+
+        # ── Lazy client registries ─────────────────────────────────────────────
         self._dynamic_pubs:    dict = {}   # topic name → Publisher
         self._service_clients: dict = {}   # service name → Client
         self._action_clients:  dict = {}   # action name → ActionClient
 
-        # ── Fixed publishers (pre-created so tools never block on first call)
+        # ── Registered callback for navigation completion ──────────────────────
+        self._nav_done_callback: Callable[[bool, str], None] | None = None
+
+        # ── Fixed publishers (pre-created so tools never block on first call) ──
         self._speech_pub       = node.create_publisher(String, "/voice/robot_speech", 10)
         self._vision_query_pub = node.create_publisher(String, "/vision/query", 10)
         self._twist_pub        = node.create_publisher(Twist, "/cmd_vel", 10)
-        self._goal_pub         = node.create_publisher(PoseStamped, "/goal_pose", 10)
+
+        # Subscribe to Kokoro speaking status for back-pressure
+        node.create_subscription(Bool, "/voice/speaking", self._on_speaking, 10)
+
+        # Drain speech queue every 300ms
+        node.create_timer(0.3, self._drain_speech_queue)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 1 — Topics
@@ -69,6 +87,10 @@ class ROS2Bridge:
         with self._vision_lock:
             self._vision_result = msg.data
             self._vision_event.set()
+
+    def _on_speaking(self, msg: Bool) -> None:
+        with self._speech_lock:
+            self._is_speaking = msg.data
 
     # ── Cached reads (worker thread) ──────────────────────────────────────
 
@@ -90,7 +112,7 @@ class ROS2Bridge:
         if self._vision_event.wait(timeout=timeout):
             with self._vision_lock:
                 return self._vision_result or "No answer received"
-        return "Vision query timed out — moondream node may not be running"
+        return "Vision is currently unavailable — Moondream node may not be running"
 
     # ── Active order ──────────────────────────────────────────────────────
 
@@ -102,26 +124,26 @@ class ROS2Bridge:
         with self._order_lock:
             return self._active_order_id
 
-    # ── Publishers ─────────────────────────────────────────────────────────
+    # ── Speech with back-pressure ─────────────────────────────────────────
 
     def publish_speech(self, text: str) -> None:
+        """Queue speech text. Drained by timer when Kokoro is not speaking."""
+        with self._speech_lock:
+            self._speech_queue.append(text)
+
+    def _drain_speech_queue(self) -> None:
+        """Timer callback (spin thread): publish next queued string if not speaking."""
+        with self._speech_lock:
+            if self._is_speaking or not self._speech_queue:
+                return
+            text = self._speech_queue.pop(0)
         self._speech_pub.publish(String(data=text))
+
+    # ── Publishers ─────────────────────────────────────────────────────────
 
     def publish_twist(self, twist: Twist) -> None:
         """Publish Twist directly to /cmd_vel → micro-ROS agent → ESP32."""
         self._twist_pub.publish(twist)
-
-    def publish_goal_pose(self, x: float, y: float, yaw_deg: float) -> None:
-        """Publish PoseStamped to /goal_pose → Jetson Nav2 for map-based navigation."""
-        msg = PoseStamped()
-        msg.header.frame_id = "map"
-        msg.header.stamp = self._node.get_clock().now().to_msg()
-        msg.pose.position.x = x
-        msg.pose.position.y = y
-        yaw_rad = math.radians(yaw_deg)
-        msg.pose.orientation.z = math.sin(yaw_rad / 2.0)
-        msg.pose.orientation.w = math.cos(yaw_rad / 2.0)
-        self._goal_pub.publish(msg)
 
     def publish_to_topic(self, topic: str, data: str) -> None:
         """Publish a String to any topic, creating the publisher lazily."""
@@ -174,76 +196,140 @@ class ROS2Bridge:
         return result_box[0]
 
     # ══════════════════════════════════════════════════════════════════════════
-    # SECTION 3 — Actions
+    # SECTION 3 — Actions (Nav2)
     # ══════════════════════════════════════════════════════════════════════════
 
-    def send_action(
+    def register_nav_done_callback(self, cb: Callable[[bool, str], None]) -> None:
+        """Register a callback(success: bool, message: str) called when navigation ends."""
+        self._nav_done_callback = cb
+
+    def cancel_navigation(self) -> None:
+        """Cancel any active navigation goal."""
+        with self._nav_lock:
+            if self._nav_cancel_event:
+                self._nav_cancel_event.set()
+
+    def start_nav_to_pose(self, x: float, y: float, yaw_deg: float, label: str = "") -> None:
+        """Start a Nav2 NavigateToPose action asynchronously.
+
+        Returns immediately. When navigation completes or fails, the registered
+        nav_done_callback is invoked from a background thread with (success, message).
+        """
+        self.cancel_navigation()
+
+        cancel_event = threading.Event()
+        with self._nav_lock:
+            self._nav_cancel_event = cancel_event
+
+        thread = threading.Thread(
+            target=self._nav_worker,
+            args=(x, y, yaw_deg, label, cancel_event),
+            daemon=True,
+        )
+        with self._nav_lock:
+            self._nav_thread = thread
+        thread.start()
+
+    def _nav_worker(
         self,
-        name:        str,
-        action_type,
-        goal_msg,
-        timeout:     float = 60.0,
-        feedback_cb: Optional[Callable] = None,
-    ):
-        """Send a ROS2 action goal and block until complete or timeout.
-
-        Action clients are created lazily on first call and cached.
-        Optional feedback_cb(feedback_msg) is called on each feedback message.
-        Raises TimeoutError or RuntimeError on failure.
-
-        Args:
-            name:        Action server name, e.g. '/navigate_to_pose'
-            action_type: ROS2 action class, e.g. nav2_msgs.action.NavigateToPose
-            goal_msg:    Populated goal object
-            timeout:     Max seconds to wait for the action to complete
-            feedback_cb: Optional callable(feedback) for progress updates
-
-        Example:
+        x: float,
+        y: float,
+        yaw_deg: float,
+        label: str,
+        cancel_event: threading.Event,
+    ) -> None:
+        """Background thread: send Nav2 action goal, wait for result."""
+        try:
+            from rclpy.action import ActionClient
             from nav2_msgs.action import NavigateToPose
-            from geometry_msgs.msg import PoseStamped
+
+            with self._act_lock:
+                if "/navigate_to_pose" not in self._action_clients:
+                    self._action_clients["/navigate_to_pose"] = ActionClient(
+                        self._node, NavigateToPose, "/navigate_to_pose"
+                    )
+            client = self._action_clients["/navigate_to_pose"]
+
+            if not client.wait_for_server(timeout_sec=10.0):
+                self._fire_nav_done(False, "Navigation unavailable — Nav2 not running")
+                return
+
             goal = NavigateToPose.Goal()
             goal.pose = PoseStamped()
-            goal.pose.pose.position.x = 1.0
-            result = bridge.send_action('/navigate_to_pose', NavigateToPose, goal, timeout=120.0)
-        """
-        from rclpy.action import ActionClient
+            goal.pose.header.frame_id = "map"
+            goal.pose.header.stamp = self._node.get_clock().now().to_msg()
+            goal.pose.pose.position.x = x
+            goal.pose.pose.position.y = y
+            yaw_rad = math.radians(yaw_deg)
+            goal.pose.pose.orientation.z = math.sin(yaw_rad / 2.0)
+            goal.pose.pose.orientation.w = math.cos(yaw_rad / 2.0)
 
-        with self._act_lock:
-            if name not in self._action_clients:
-                self._action_clients[name] = ActionClient(self._node, action_type, name)
+            goal_event = threading.Event()
+            goal_box:  list = [None]
 
-        client = self._action_clients[name]
-        if not client.wait_for_server(timeout_sec=min(10.0, timeout)):
-            raise TimeoutError(f"Action server '{name}' not available")
+            def _goal_response(future):
+                goal_box[0] = future.result()
+                goal_event.set()
 
-        # ── Send goal ─────────────────────────────────────────────────────
-        goal_event  = threading.Event()
-        goal_box:   list = [None]
+            send_future = client.send_goal_async(goal_msg=goal)
+            send_future.add_done_callback(_goal_response)
 
-        def _goal_response(future):
-            goal_box[0] = future.result()
-            goal_event.set()
+            if not goal_event.wait(timeout=10.0):
+                self._fire_nav_done(False, "Navigation goal acceptance timed out")
+                return
 
-        send_future = client.send_goal_async(goal_msg, feedback_callback=feedback_cb)
-        send_future.add_done_callback(_goal_response)
+            goal_handle = goal_box[0]
+            if not goal_handle.accepted:
+                self._fire_nav_done(False, "Navigation goal rejected by Nav2")
+                return
 
-        if not goal_event.wait(timeout=10.0):
-            raise TimeoutError(f"Action '{name}': goal acceptance timed out")
+            result_event = threading.Event()
+            result_box:  list = [None]
 
-        goal_handle = goal_box[0]
-        if not goal_handle.accepted:
-            raise RuntimeError(f"Action '{name}': goal was rejected by the server")
+            def _result(future):
+                result_box[0] = future.result()
+                result_event.set()
 
-        # ── Wait for result ────────────────────────────────────────────────
-        result_event = threading.Event()
-        result_box:  list = [None]
+            goal_handle.get_result_async().add_done_callback(_result)
 
-        def _result(future):
-            result_box[0] = future.result()
-            result_event.set()
+            # Poll for cancel or result
+            while not result_event.wait(timeout=1.0):
+                if cancel_event.is_set():
+                    goal_handle.cancel_goal_async()
+                    dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"
+                    self._fire_nav_done(False, f"Navigation to {dest} cancelled")
+                    return
 
-        goal_handle.get_result_async().add_done_callback(_result)
+            result = result_box[0]
+            dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"
+            from action_msgs.msg import GoalStatus
+            if result.status == GoalStatus.STATUS_SUCCEEDED:
+                self._fire_nav_done(True, f"I've arrived at {dest}.")
+            else:
+                self._fire_nav_done(False, f"Navigation to {dest} failed — path may be blocked.")
 
-        if not result_event.wait(timeout=timeout):
-            raise TimeoutError(f"Action '{name}' timed out after {timeout}s")
-        return result_box[0]
+        except Exception as e:
+            self._fire_nav_done(False, f"Navigation error: {e}")
+
+    def _fire_nav_done(self, success: bool, message: str) -> None:
+        cb = self._nav_done_callback
+        if cb:
+            try:
+                cb(success, message)
+            except Exception as e:
+                self._node.get_logger().error(f"nav_done_callback raised: {e}")
+
+    def wait_for_nav_server(self, timeout: float = 30.0) -> bool:
+        """Return True if the Nav2 action server is available within timeout."""
+        try:
+            from rclpy.action import ActionClient
+            from nav2_msgs.action import NavigateToPose
+
+            with self._act_lock:
+                if "/navigate_to_pose" not in self._action_clients:
+                    self._action_clients["/navigate_to_pose"] = ActionClient(
+                        self._node, NavigateToPose, "/navigate_to_pose"
+                    )
+            return self._action_clients["/navigate_to_pose"].wait_for_server(timeout_sec=timeout)
+        except Exception:
+            return False

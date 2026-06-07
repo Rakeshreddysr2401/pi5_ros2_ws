@@ -1,0 +1,7 @@
+# Request: object to find in current camera frame
+string object_description
+---
+# Response
+bool found
+geometry_msgs/PoseStamped pose   # 3D pose in map frame, valid only if found=true
+string reason                    # if not found, why (e.g. "object not visible")

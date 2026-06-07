@@ -1,0 +1,40 @@
+"""Central agent registry — single source of truth for agent names, descriptions, and examples.
+
+Add a new agent here and both the supervisor prompt and handle_handover context
+messages update automatically — no other files need touching.
+"""
+
+AGENTS: dict[str, dict] = {
+    "chat": {
+        "description": "general questions, web search, system status, small talk, anything not covered by other agents",
+        "examples": ["what's the weather?", "tell me a joke", "what time is it"],
+    },
+    "vision": {
+        "description": "what the robot sees, object detection, scene description, visual queries",
+        "examples": ["what do you see?", "is there anyone in the room?", "describe the scene"],
+    },
+    "navigate": {
+        "description": "moving the robot, going somewhere, finding and approaching objects, stopping",
+        "examples": ["go to the kitchen", "find the bottle", "come here", "stop"],
+    },
+    "status": {
+        "description": "robot battery level, hardware state, what the robot is currently doing",
+        "examples": ["what's your battery?", "how are you doing?", "are you okay?"],
+    },
+    "swiggy": {
+        "description": "food ordering, restaurant search, browsing menus, managing cart, placing orders",
+        "examples": ["order pizza", "what restaurants are nearby?", "add to cart"],
+    },
+    "tracker": {
+        "description": "checking delivery status, order ETA, tracking a Swiggy order",
+        "examples": ["where's my order?", "how long until delivery?", "track my food"],
+    },
+}
+
+
+def build_supervisor_agent_list() -> str:
+    """Return the agents block for the supervisor prompt."""
+    lines = []
+    for name, meta in AGENTS.items():
+        lines.append(f'- "{name}" : {meta["description"]}')
+    return "\n".join(lines)

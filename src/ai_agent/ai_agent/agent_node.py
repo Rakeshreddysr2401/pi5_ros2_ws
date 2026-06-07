@@ -11,7 +11,6 @@ Responsibilities (and nothing more):
 
 import base64
 import os
-import queue
 import threading
 
 import rclpy
@@ -51,8 +50,6 @@ class AgentNode(Node):
         api_key = os.environ.get(api_key_env, "") if api_key_env else "none"
 
         # ── Known map locations for Nav2 goal publishing ──────────────────
-        # Populated from nav_params.yaml once SLAM map is built
-        # Format: {name: [x, y, yaw_deg]}
         self.declare_parameter("locations.kitchen",     [2.5,  1.0,  0.0])
         self.declare_parameter("locations.living_room", [0.0,  3.0, 90.0])
         self.declare_parameter("locations.bedroom",     [-2.0, 2.0, 180.0])
@@ -67,11 +64,25 @@ class AgentNode(Node):
         bridge_module.init(self._bridge)
         llm_module.configure(provider, model, base_url, api_key, max_tokens)
 
+        # Register navigation completion callback
+        self._bridge.register_nav_done_callback(self._on_nav_done)
+
         # ── Build graph ───────────────────────────────────────────────────
         self._graph   = build_graph()
         self._history: list[dict] = []
         self._history_lock = threading.Lock()
-        self._input_queue: queue.Queue = queue.Queue(maxsize=3)
+
+        # ── Two-slot input queue ──────────────────────────────────────────
+        # _user_pending:   latest user message (replaced by newer ones)
+        # _system_pending: priority system event (delivery, nav done) — never dropped
+        # _input_event:    wakes the worker when either slot is filled
+        self._queue_lock     = threading.Lock()
+        self._user_pending:   str | None = None
+        self._system_pending: str | None = None
+        self._input_event    = threading.Event()
+
+        # ── Startup readiness gate ────────────────────────────────────────
+        self._ready_event = threading.Event()
 
         # ── Publishers ────────────────────────────────────────────────────
         self._pub_thinking = self.create_publisher(Bool, "/brain/thinking", 1)
@@ -83,22 +94,46 @@ class AgentNode(Node):
             from cv_bridge import CvBridge
             from sensor_msgs.msg import Image
             self._cv_bridge = CvBridge()
-            # /camera/color/image_raw — D555 native topic (no camera_node needed)
             self.create_subscription(Image,  "/camera/color/image_raw", self._on_image,              1)
-            # /vision/query_result — Moondream VLM response from Jetson ai_stack container
             self.create_subscription(String, "/vision/query_result",    self._bridge.on_query_result, 10)
             self.get_logger().info("Vision enabled — /camera/color/image_raw + /vision/query_result")
 
-        # ── Worker thread ─────────────────────────────────────────────────
-        threading.Thread(target=self._worker_loop, daemon=True).start()
+        # ── Worker + startup threads ──────────────────────────────────────
+        threading.Thread(target=self._startup_check, daemon=True).start()
+        threading.Thread(target=self._worker_loop,   daemon=True).start()
 
         # ── Delivery polling timer (every 2 min) ──────────────────────────
         self.create_timer(120.0, self._poll_delivery)
 
         self.get_logger().info(
-            f"Agent ready — provider: {provider}, base_url: {base_url}, "
+            f"Agent starting — provider: {provider}, base_url: {base_url}, "
             f"vision: {self._use_vision}"
         )
+
+    # ── Startup readiness check ───────────────────────────────────────────
+
+    def _startup_check(self) -> None:
+        """Wait for Nav2 and micro-ROS, then announce readiness."""
+        nav_ok = self._bridge.wait_for_nav_server(timeout=30.0)
+
+        if nav_ok:
+            self._bridge.publish_speech("I'm ready.")
+            self.get_logger().info("Startup complete — Nav2 available")
+        else:
+            self._bridge.publish_speech(
+                "Navigation unavailable right now. I'm starting in limited mode — "
+                "I can still chat and see, but I can't navigate until Nav2 comes up."
+            )
+            self.get_logger().warning("Startup: Nav2 not available — limited mode")
+
+        self._ready_event.set()
+
+    # ── Navigation done callback (background nav thread → worker) ─────────
+
+    def _on_nav_done(self, success: bool, message: str) -> None:
+        """Called by bridge when Nav2 goal finishes. Injects system message."""
+        status = "Navigation succeeded" if success else "Navigation failed"
+        self._enqueue_system(f"[SYSTEM] {status}: {message}")
 
     # ── Image callback (spin thread) ──────────────────────────────────────
 
@@ -111,36 +146,50 @@ class AgentNode(Node):
         except Exception as e:
             self.get_logger().warning(f"Frame encode error: {e}")
 
-    # ── Input queue (spin thread → worker thread) ─────────────────────────
+    # ── Two-slot queue (spin thread → worker thread) ──────────────────────
 
     def _on_user_input(self, msg: String) -> None:
         text = msg.data.strip()
         if not text:
             return
-        try:
-            self._input_queue.put_nowait(text)
-        except queue.Full:
-            try:
-                self._input_queue.get_nowait()
-            except queue.Empty:
-                pass
-            self._input_queue.put_nowait(text)
-            self.get_logger().warning("Input queue full — oldest item dropped")
+        # New user input cancels any active navigation and replaces pending user message
+        self._bridge.cancel_navigation()
+        with self._queue_lock:
+            if self._user_pending is not None:
+                self.get_logger().warning("User queue: replacing pending message with newer input")
+            self._user_pending = text
+        self._input_event.set()
+
+    def _enqueue_system(self, text: str) -> None:
+        """Enqueue a system event — never dropped, fires after current graph run."""
+        with self._queue_lock:
+            self._system_pending = text
+        self._input_event.set()
 
     def _poll_delivery(self) -> None:
         """Timer callback — injects a delivery check if an order is active."""
         order_id = self._bridge.get_active_order()
         if order_id:
-            try:
-                self._input_queue.put_nowait(f"[SYSTEM] Check if order {order_id} has been delivered")
-            except queue.Full:
-                pass
+            self._enqueue_system(f"[SYSTEM] Check if order {order_id} has been delivered")
+
+    # ── Worker loop ───────────────────────────────────────────────────────
 
     def _worker_loop(self) -> None:
+        self._ready_event.wait()  # wait for startup check to complete
+
         while True:
-            text = self._input_queue.get()
-            self._process(text)
-            self._input_queue.task_done()
+            self._input_event.wait()
+
+            # Drain both slots — system takes priority
+            with self._queue_lock:
+                text = self._system_pending or self._user_pending
+                self._system_pending = None
+                self._user_pending   = None
+                self._input_event.clear()
+                # If both were set, re-arm for the other slot (already cleared above)
+
+            if text:
+                self._process(text)
 
     # ── Graph invocation (worker thread) ──────────────────────────────────
 
@@ -161,7 +210,12 @@ class AgentNode(Node):
                 return
 
             with self._history_lock:
-                self._history.append({"role": "user",      "content": text})
+                # Store plain text in history (strip image bytes from user content)
+                user_text = text if isinstance(user_content, str) else next(
+                    (p["text"] for p in user_content if isinstance(p, dict) and p.get("type") == "text"),
+                    text,
+                )
+                self._history.append({"role": "user",      "content": user_text})
                 self._history.append({"role": "assistant", "content": response})
                 if len(self._history) > self._max_history:
                     self._history = self._history[-self._max_history:]
@@ -171,6 +225,7 @@ class AgentNode(Node):
 
         except Exception as e:
             self.get_logger().error(f"Graph error: {e}")
+            self._bridge.publish_speech("I'm having trouble right now. Please try again in a moment.")
         finally:
             self._pub_thinking.publish(Bool(data=False))
 

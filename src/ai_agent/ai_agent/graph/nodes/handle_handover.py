@@ -13,19 +13,11 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langgraph.types import Command
 
 from ..state import AgentState
+from ._registry import AGENTS
 
 logger = logging.getLogger(__name__)
 
 _MAX_VISITS_PER_AGENT = 3
-
-_AGENT_DESCRIPTIONS = {
-    "chat":     "general conversation, web search, system status, small talk",
-    "vision":   "visual reasoning, object detection, scene description",
-    "navigate": "robot movement, chassis control, navigation to targets",
-    "status":   "robot operational state, battery, hardware queries",
-    "swiggy":   "food ordering, restaurant search, cart management, placing Swiggy orders",
-    "tracker":  "Swiggy delivery tracking, order status, ETA",
-}
 
 
 def _parse_handover(content: str) -> tuple[str, str, bool]:
@@ -81,7 +73,8 @@ def _resolve(state: AgentState, raw_next: str, reason: str) -> _Resolution:
         else:
             content = "Route to the appropriate agent based on the conversation."
     else:
-        desc = _AGENT_DESCRIPTIONS.get(raw_next, raw_next)
+        meta = AGENTS.get(raw_next)
+        desc = meta["description"] if meta else raw_next
         content = (
             f"You are the {raw_next} agent, responsible for: {desc}.\n"
             f"You were called because: \"{reason or 'user request'}\". "
@@ -114,10 +107,14 @@ def handle_handover(state: AgentState):
             next_agent="chat",
             bridge_messages=[SystemMessage(content=(
                 "A routing loop was detected. Respond with plain natural language only — "
-                "no tool calls. Acknowledge the user's request helpfully."
+                "no tool calls. Acknowledge the user's request helpfully and let them know "
+                "you're having trouble completing the task. Use speak() to say this."
             ))],
         )
         visits["chat"] = visits.get("chat", 0) + 1
+        # Always chain on loop guard — user must hear an error response this turn
+        chain = True
+        ai_content = ""
 
     should_chain = chain or not ai_content
 
