@@ -92,6 +92,9 @@ class AgentNode(Node):
         # ── Worker thread ─────────────────────────────────────────────────
         threading.Thread(target=self._worker_loop, daemon=True).start()
 
+        # ── Delivery polling timer (every 2 min) ──────────────────────────
+        self.create_timer(120.0, self._poll_delivery)
+
         self.get_logger().info(
             f"Agent ready — provider: {provider}, base_url: {base_url}, "
             f"vision: {self._use_vision}"
@@ -123,6 +126,15 @@ class AgentNode(Node):
                 pass
             self._input_queue.put_nowait(text)
             self.get_logger().warning("Input queue full — oldest item dropped")
+
+    def _poll_delivery(self) -> None:
+        """Timer callback — injects a delivery check if an order is active."""
+        order_id = self._bridge.get_active_order()
+        if order_id:
+            try:
+                self._input_queue.put_nowait(f"[SYSTEM] Check if order {order_id} has been delivered")
+            except queue.Full:
+                pass
 
     def _worker_loop(self) -> None:
         while True:

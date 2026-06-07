@@ -37,6 +37,9 @@ class ROS2Bridge:
         self._vision_event  = threading.Event()
         self._vision_result: str | None = None
 
+        # ── Latest camera frame (bytes, JPEG-encoded) ─────────────────────
+        self._latest_frame: bytes | None = None
+
         # ── Active Swiggy order (for background delivery polling) ─────────────
         self._order_lock       = threading.Lock()
         self._active_order_id: str | None = None
