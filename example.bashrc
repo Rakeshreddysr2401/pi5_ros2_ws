@@ -10,7 +10,7 @@
 
 
 # ── ROS2 base setup ───────────────────────────────────────────────────────────
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 
 
 # ── Workspace (update path if you cloned somewhere else) ─────────────────────
@@ -65,7 +65,7 @@ alias rsrc='source $ROBOT_WS/install/setup.bash && echo "Workspace sourced"'
 # LAUNCH ALIASES  —  full system
 # =============================================================================
 
-# Full system — brain (all 7 agents) + chassis pilot  [DEFAULT]
+# Full system — brain (all 7 agents) + micro-ROS agent  [DEFAULT]
 alias robot='ros2 launch robot_brain brain_launch.py base_url:=$LLM_BASE_URL'
 
 # Brain only — no motor control (useful when testing without the robot)
@@ -83,8 +83,8 @@ robot-ip() {
     ros2 launch robot_brain brain_launch.py base_url:="http://$1:8080/v1"
 }
 
-# Chassis pilot only  (motor control without the brain)
-alias launch-chassis='ros2 run robot_brain chassis_pilot'
+# micro-ROS agent only  (ESP32 bridge without the brain)
+alias launch-microros='ros2 run micro_ros_agent micro_ros_agent udp4 --port 8888'
 
 
 # =============================================================================
@@ -99,21 +99,17 @@ alias rservices='ros2 service list'
 # Echo key topics  (Ctrl+C to stop)
 alias recho-in='ros2 topic echo /voice/user_input'          # what user said
 alias recho-out='ros2 topic echo /voice/robot_speech'       # what robot speaks
-alias recho-objects='ros2 topic echo /vision/objects_3d'    # YOLO 3D detections
 alias recho-query='ros2 topic echo /vision/query'           # VLM question sent to Jetson
 alias recho-answer='ros2 topic echo /vision/query_result'   # Moondream answer from Jetson
-alias recho-move='ros2 topic echo /movement_cmd'            # chassis commands
 alias recho-vel='ros2 topic echo /cmd_vel'                  # wheel velocity to ESP32
 alias recho-thinking='ros2 topic echo /brain/thinking'      # true while LLM is running
 
 # Topic publish rate
 alias rhz-input='ros2 topic hz /voice/user_input'
-alias rhz-objects='ros2 topic hz /vision/objects_3d'
-alias rhz-camera='ros2 topic hz /vision/image_raw'
+alias rhz-camera='ros2 topic hz /camera/color/image_raw'
 
 # Node details
 alias rnode-agent='ros2 node info /agent_node'
-alias rnode-chassis='ros2 node info /chassis_pilot'
 
 # Check topic connections  (usage: rcheck /voice/user_input)
 alias rcheck='ros2 topic info -v'
@@ -144,10 +140,11 @@ rorder-arrived() {
         "{data: \"[SYSTEM] Check if Swiggy order $1 has been delivered\"}"
 }
 
-# Send a movement command directly to chassis_pilot
+# Send a movement command directly to the robot (bypasses brain)
 # Usage: rmove F:30  /  rmove L:90  /  rmove S
 rmove() {
-    ros2 topic pub --once /movement_cmd std_msgs/msg/String "{data: \"$1\"}"
+    ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0}, angular: {z: 0.0}}"
+    echo "Use rspeak to send movement commands through the brain, or publish Twist directly to /cmd_vel"
 }
 
 # Test TTS — make Jetson speak a sentence
@@ -158,12 +155,6 @@ rsay() {
 # Ask Moondream a visual question directly
 rask-vision() {
     ros2 topic pub --once /vision/query std_msgs/msg/String "{data: \"$*\"}"
-}
-
-# Inject fake 3D objects JSON  (tests navigate_to without real YOLO)
-rtest-objects() {
-    ros2 topic pub --once /vision/objects_3d std_msgs/msg/String \
-        "{data: '[{\"class\":\"chair\",\"confidence\":0.9,\"distance_m\":1.5,\"direction\":\"center\",\"angle_h_deg\":0}]'}"
 }
 
 
@@ -181,7 +172,7 @@ alias wsa='cd $ROBOT_WS/src/ai_agent/ai_agent'
 alias rlog='tail -f $ROBOT_WS/log/latest_build/events.log'
 
 # Kill all ROS2 processes on this machine
-alias rkillall='pkill -9 -f "ros2|agent_node|chassis_pilot" && echo "All ROS2 processes killed"'
+alias rkillall='pkill -9 -f "ros2|agent_node|micro_ros_agent" && echo "All ROS2 processes killed"'
 
 # Show active ROS2 environment variables
 alias renv='env | grep -E "^ROS|^AMENT|^COLCON|^RMW|^LLM"'
@@ -198,29 +189,27 @@ BUILD:
   rsrc                 — re-source without rebuilding
 
 LAUNCH:
-  robot                — full system: brain + chassis  [DEFAULT]
-  robot-brain          — brain only (no motor control)
+  robot                — full system: brain + micro-ROS agent  [DEFAULT]
+  robot-brain          — brain only (no micro-ROS agent)
   robot-llamacpp       — use local llama.cpp (default)
   robot-openai         — use OpenAI API
   robot-anthropic      — use Anthropic Claude
   robot-gemini         — use Google Gemini
   robot-ollama         — use local Ollama
   robot-ip <ip>        — use custom LLM server IP
-  launch-chassis       — chassis pilot only
+  launch-microros      — micro-ROS agent only (ESP32 bridge without brain)
 
 DEBUG:
   rtopics / rnodes / rservices
-  recho-in/out/objects/query/answer/move/vel/thinking
-  rhz-input/objects/camera    — topic publish rates
+  recho-in/out/query/answer/vel/thinking
+  rhz-input/camera             — topic publish rates
   rstatus                      — call /robot/get_status service
   rtemp / rcpu / rmem          — Pi5 hardware monitoring
 
 TEST (no Jetson needed):
   rspeak <text>        — simulate user saying something
-  rmove F:30           — send movement command (F/B/L/R/S)
   rsay <text>          — test TTS output
   rask-vision <q>      — send vision query to Moondream
-  rtest-objects        — inject fake YOLO detections
   rorder-arrived <id>  — trigger Swiggy delivery flow
 
 MISC:

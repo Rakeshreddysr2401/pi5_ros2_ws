@@ -18,19 +18,24 @@ ESP32     ──────  4-wheel drive chassis (micro-ROS over WiFi UDP)
 ### On the Pi5 (Ubuntu 24.04, ROS2 Jazzy)
 
 ```bash
-# ROS2 Jazzy
-sudo apt install ros-jazzy-desktop
+# ROS2 Jazzy base (no desktop — saves ~400 MB RAM on Pi5; no GUI needed)
+sudo apt install ros-jazzy-ros-base
+echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc
+source ~/.bashrc
 
-# micro-ROS agent — bridges Pi5 ↔ ESP32 over WiFi UDP
-sudo apt install ros-jazzy-micro-ros-agent
+# ROS2 package dependencies (declared in package.xml, resolved by rosdep)
+sudo rosdep init   # skip if already done
+rosdep update
+cd ~/pi5_ros2_ws
+rosdep install --from-paths src --ignore-src -r -y
 
-# Python dependencies
-pip install langgraph langchain-core langchain-openai langchain-anthropic \
-            langchain-google-genai langchain-ollama langchain-community \
-            langchain-mcp-adapters opencv-python-headless cv-bridge
+# Python dependencies — pinned versions for reproducible installs
+pip install -r requirements.txt
+
+# micro-ROS agent — built once in a separate workspace, sourced at shell startup
+# See INTEGRATION.md § micro-ROS agent setup
 
 # Build the workspace
-cd ~/pi5_ros2_ws
 colcon build --symlink-install
 source install/setup.bash
 ```
@@ -168,7 +173,7 @@ If the order arrives, the tracker agent speaks, navigates to the door via Nav2, 
 |---------|---------|
 | `ai_agent` | LangGraph supervisor + 7 agents + all tools |
 | `robot_brain` | Launch only — starts micro-ROS agent + agent_node |
-| `robot_interfaces` | Custom `RobotStatus.msg` |
+| `robot_interfaces` | Custom `FindObjectPose.srv` |
 
 ---
 
@@ -179,7 +184,7 @@ If the order arrives, the tracker agent speaks, navigates to the door via Nav2, 
 | `supervisor` | Routes every request — never speaks | `handover` |
 | `chat` | General questions, small talk | `speak`, `query_vision`, `get_robot_status` |
 | `vision` | What the robot sees | `speak`, `query_vision` |
-| `navigate` | Movement, go-to rooms, find objects | `speak`, `navigate_to_pose`, `navigate_to_object`, `move_robot`, `query_vision` |
+| `navigate` | Movement, go-to rooms, find objects | `speak`, `navigate_to_pose`, `navigate_to_visible_object`, `navigate_to_object`, `move_robot`, `query_vision` |
 | `status` | Battery, hardware, operational state | `speak`, `get_robot_status`, `ros2_publish` |
 | `swiggy` | Food ordering, cart, place orders | Swiggy MCP tools |
 | `tracker` | Delivery tracking, door navigation on arrival | Swiggy MCP tools, `navigate_to_pose` |

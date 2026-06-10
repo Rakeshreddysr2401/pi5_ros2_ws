@@ -44,7 +44,6 @@ def ros2_publish(topic: str, data: str) -> str:
     Use for hardware not covered by the other tools.
 
     Known topics:
-      /movement_cmd   — chassis commands, e.g. 'F:20'  (prefer move_robot)
       /arm/joint_goal — joint angles, e.g. '{\"j1\": 90}'
       /gripper/cmd    — 'open' or 'close'"""
     _bridge.get().publish_to_topic(topic, data)

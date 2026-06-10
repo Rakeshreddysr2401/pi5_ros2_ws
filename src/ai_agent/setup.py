@@ -23,6 +23,7 @@ setup(
         'langchain-ollama',
         'langchain-community',
         'opencv-python-headless',
+        'typing-extensions',
     ],
     zip_safe=True,
     maintainer='rakhi24',

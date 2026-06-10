@@ -48,7 +48,6 @@ src/
 │   │       ├── state.py         AgentState TypedDict
 │   │       ├── graph.py         StateGraph topology
 │   │       ├── llm.py           LLM factory (provider-agnostic)
-│   │       ├── prompts.py       Prompt reference (prompts live inline in each node)
 │   │       ├── nodes/
 │   │       │   ├── turn_entry.py       Resets loop guard, routes to supervisor
 │   │       │   ├── handle_handover.py  Resolves handover: chain vs sticky, loop guard
@@ -64,7 +63,7 @@ src/
 │   │       │   ├── handover.py      handover() tool — the routing mechanism
 │   │       │   ├── speech.py        speak()
 │   │       │   ├── vision.py        query_vision()
-│   │       │   ├── movement.py      move_robot(), navigate_to_pose(), navigate_to_object()
+│   │       │   ├── movement.py      move_robot(), navigate_to_pose(), navigate_to_visible_object(), navigate_to_object()
 │   │       │   ├── system.py        get_robot_status(), ros2_publish(), set_active_order()
 │   │       │   ├── swiggy_mcp.py    Loads Swiggy MCP tools at startup
 │   │       │   └── __init__.py      Named tool sets per agent
@@ -72,7 +71,7 @@ src/
 │   │           └── message_utils.py  prepare_messages_for_agent(), safe_invoke()
 │   └── config/agent_params.yaml
 ├── robot_brain/        Launch only — micro_ros_agent + agent_node (no chassis_pilot)
-└── robot_interfaces/   Custom ROS2 messages (RobotStatus.msg)
+└── robot_interfaces/   Custom ROS2 interfaces (FindObjectPose.srv)
 ```
 
 ---
@@ -205,7 +204,8 @@ Publishes Twist directly to `/cmd_vel`. For small precise corrections after arri
 | `speak(text)` | `tools/speech.py` | Publishes to `/voice/robot_speech` |
 | `query_vision(question)` | `tools/vision.py` | Publishes to `/vision/query`, blocks on `/vision/query_result` |
 | `navigate_to_pose(location)` | `tools/movement.py` | Publishes PoseStamped to `/goal_pose` → Jetson Nav2 |
-| `navigate_to_object(target)` | `tools/movement.py` | VLM 360° scan + direct Twist approach |
+| `navigate_to_visible_object(target)` | `tools/movement.py` | Calls Jetson `/vision/find_object_pose` service → Nav2; falls back to VLM scan |
+| `navigate_to_object(target)` | `tools/movement.py` | Fallback: VLM 360° scan + direct Twist approach (no Nav2) |
 | `move_robot(command)` | `tools/movement.py` | Fine Twist: `F:20` / `L:90` / `S` — direct to `/cmd_vel` |
 | `get_robot_status()` | `tools/system.py` | Calls `/robot/get_status` service |
 | `ros2_publish(topic, data)` | `tools/system.py` | Generic String publisher |
@@ -221,7 +221,7 @@ Publishes Twist directly to `/cmd_vel`. For small precise corrections after arri
 | `supervisor` | `handover` |
 | `chat` | `CHAT_TOOLS`: `speak`, `query_vision`, `get_robot_status` |
 | `vision` | `VISION_TOOLS`: `speak`, `query_vision` |
-| `navigate` | `NAVIGATE_TOOLS`: `speak`, `move_robot`, `navigate_to_pose`, `navigate_to_object`, `query_vision`, `ros2_publish` |
+| `navigate` | `NAVIGATE_TOOLS`: `speak`, `move_robot`, `navigate_to_pose`, `navigate_to_visible_object`, `navigate_to_object`, `query_vision` |
 | `status` | `STATUS_TOOLS`: `speak`, `get_robot_status`, `ros2_publish` |
 | `swiggy` | Swiggy MCP tools + `speak` |
 | `tracker` | Swiggy MCP tools + `navigate_to_pose` + `speak` |
@@ -232,7 +232,7 @@ Publishes Twist directly to `/cmd_vel`. For small precise corrections after arri
 
 - **Agent:** `micro_ros_agent` — started automatically by `brain_launch.py`
 - **Transport:** WiFi UDP port 8888
-- **Install:** `sudo apt install ros-jazzy-micro-ros-agent`
+- **Install:** built from source in `~/microros_ws` (see INTEGRATION.md § micro-ROS agent)
 - **ESP32 subscribes:** `/cmd_vel` (Twist) — wheel motor velocities
 - **ESP32 publishes:** nothing (IR sensor removed)
 

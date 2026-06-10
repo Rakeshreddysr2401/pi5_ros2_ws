@@ -111,27 +111,59 @@ The ESP32 will keep retrying until the Pi5 micro-ROS agent is running.
 
 ### 1. ROS2 Jazzy
 
+Install the base variant — no desktop or GUI tools needed on Pi5, saves ~400 MB RAM:
+
 ```bash
 sudo apt update
-sudo apt install ros-jazzy-desktop
+sudo apt install ros-jazzy-ros-base
 echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc
 source ~/.bashrc
 ```
 
 ### 2. micro-ROS agent
 
+Build in a **dedicated workspace** (`~/microros_ws`), separate from the application workspace.
+This avoids polluting `pi5_ros2_ws` with a build-tool package and keeps `colcon build` fast.
+
 ```bash
-sudo apt install ros-jazzy-micro-ros-agent
+# One-time build (takes ~10 min on Pi5)
+mkdir -p ~/microros_ws/src
+cd ~/microros_ws
+git clone https://github.com/micro-ROS/micro_ros_setup src/micro_ros_setup
+source /opt/ros/jazzy/setup.bash
+rosdep update
+rosdep install --from-paths src --ignore-src -r -y
+colcon build
+source install/setup.bash
+
+# Create the micro-ROS agent
+ros2 run micro_ros_setup create_agent_ws.sh
+ros2 run micro_ros_setup build_agent.sh
+source install/setup.bash
+
+# Add to ~/.bashrc so every new shell sources it
+echo "source ~/microros_ws/install/setup.bash" >> ~/.bashrc
 ```
 
-If not available in apt, build from source:
+After this, `micro_ros_agent` is available system-wide; the `robot_brain` launch file calls it by name.
+
+### 3. Python and ROS2 dependencies
+
 ```bash
+# ROS2 package dependencies (nav2_msgs, action_msgs, std_srvs, etc.)
 cd ~/pi5_ros2_ws
-git clone https://github.com/micro-ROS/micro_ros_agent src/micro_ros_agent
-colcon build --packages-select micro_ros_agent
+sudo rosdep init   # skip if already done
+rosdep update
+rosdep install --from-paths src --ignore-src -r -y
+
+# Python dependencies — pinned versions for reproducible installs
+pip install -r requirements.txt
 ```
 
-### 3. Set a static IP on Pi5
+To update a pinned version: edit `requirements.txt`, then re-run `pip install -r requirements.txt`.
+To add a new Python library: add it to both `requirements.txt` (with pinned version) and `src/ai_agent/setup.py` `install_requires`.
+
+### 4. Set a static IP on Pi5
 
 Edit `/etc/dhcpcd.conf` (or use your router's DHCP reservation):
 ```
@@ -148,7 +180,7 @@ This must match `AGENT_IP` in the firmware.
 > nmcli con up "WiFi-connection-name"
 > ```
 
-### 4. Build the workspace
+### 5. Build the workspace
 
 ```bash
 cd ~/pi5_ros2_ws

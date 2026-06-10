@@ -34,7 +34,7 @@ def generate_launch_description():
         # ── micro-ROS agent (Pi5 ↔ ESP32 WiFi bridge) ───────────────────────
         # ESP32 connects to Pi5 IP:8888 over WiFi UDP.
         # Bridges /cmd_vel (Twist) → ESP32 wheels.
-        # Install: sudo apt install ros-jazzy-micro-ros-agent
+        # Built from source in ~/microros_ws — see INTEGRATION.md
         Node(
             package="micro_ros_agent",
             executable="micro_ros_agent",
