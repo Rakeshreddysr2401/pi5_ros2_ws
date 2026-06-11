@@ -1,5 +1,8 @@
 # Pi5 Robot Brain — Quick Start
 
+<img width="14716" height="8396" alt="image" src="https://github.com/user-attachments/assets/d43e636c-5db9-416a-b9be-8e64c54e9343" />
+
+
 The **brain and motor bridge** of a distributed home assistant robot.
 Pi5 handles all reasoning (LangGraph + LLM) and routes motor commands via micro-ROS.
 Jetson Orin handles perception (STT, TTS, camera, YOLO, Moondream, SLAM, Nav2).
