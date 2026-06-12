@@ -17,7 +17,7 @@ def generate_launch_description():
         # ── Launch arguments ─────────────────────────────────────────────────
         DeclareLaunchArgument(
             "base_url",
-            default_value="http://singireddys.local:8080/v1",
+            default_value="http://singireddys-mac-mini.local:8080/v1",
             description="Mac Mini llama.cpp server URL",
         ),
         DeclareLaunchArgument(

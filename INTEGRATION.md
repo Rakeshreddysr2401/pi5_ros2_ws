@@ -206,7 +206,7 @@ This starts:
 
 ```bash
 # Different LLM endpoint
-ros2 launch robot_brain brain_launch.py base_url:=http://singireddys.local:8080/v1
+ros2 launch robot_brain brain_launch.py base_url:=http://singireddys-mac-mini.local:8080/v1
 
 # Different micro-ROS agent port
 ros2 launch robot_brain brain_launch.py agent_port:=9999
@@ -254,7 +254,7 @@ Serial Monitor on ESP32 should show:
 ```
 192.168.1.x subnet (all devices same router)
 
-Mac Mini  (singireddys.local)   :8080  llama.cpp HTTP
+Mac Mini  (singireddys-mac-mini.local)   :8080  llama.cpp HTTP
 Jetson    (static or DHCP)      :0     ROS2 DDS (ROS_DOMAIN_ID=0)
 Pi5       192.168.1.100         :8888  micro-ROS UDP agent
 D555      192.168.1.100 (PoE)   —      publishes ROS2 topics natively to Jetson
@@ -295,13 +295,13 @@ All ROS2 devices must be on the same subnet with `ROS_DOMAIN_ID=0`.
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | ESP32 Serial shows `[EXECUTOR ERROR]` repeatedly | micro-ROS agent not running | Start Pi5 launch first, then power ESP32 |
-| Motors don't move but Serial shows commands | ENA/ENB jumpers still on | Remove jumpers, wire ENA→GPIO14, ENB→GPIO12 |
+| Motors don't move but Serial shows commands | ENA/ENB jumpers still on | Remove jumpers, wire ENA→GPIO14, ENB→GPIO27 |
 | Robot goes in circles instead of straight | Left/right motor wires swapped | Swap IN1↔IN3 or reverse one motor's wires |
 | `ros2 topic list` doesn't show `/cmd_vel` | ESP32 not connected to agent | Check WiFi SSID/password and `AGENT_IP` in firmware |
 | Robot stops mid-move | CMD_TIMEOUT_MS watchdog firing | Normal — ESP32 stops if no Twist received in 500ms |
 | `/voice/user_input` not visible on Pi5 | Jetson containers not running | Start both docker containers on Jetson first |
 | Nav2 goal published but robot doesn't move | Isaac ROS not running or SLAM not initialised | Check Jetson isaac_ros container, run SLAM test first |
-| LLM calls failing | Wrong endpoint | Verify `singireddys.local` resolves: `ping singireddys.local` |
+| LLM calls failing | Wrong endpoint | Verify `singireddys-mac-mini.local` resolves: `ping singireddys-mac-mini.local` |
 
 ---
 

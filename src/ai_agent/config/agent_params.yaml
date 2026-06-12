@@ -10,7 +10,7 @@ agent_node:
   api_key_env: ""
 
   # Mac Mini llama.cpp server endpoint — update with your Mac Mini's IP
-  base_url: "http://singireddys.local:8080/v1"
+  base_url: "http://singireddys-mac-mini.local:8080/v1"
 
   # Max tokens per LLM response
   max_tokens: 300

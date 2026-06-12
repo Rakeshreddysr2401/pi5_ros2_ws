@@ -5,7 +5,7 @@ Pi5 handles all reasoning (LangGraph + LLM) and routes motor commands via micro-
 Jetson Orin handles perception (STT, TTS, camera, YOLO, Moondream, SLAM, Nav2).
 
 ```
-Mac Mini  ──────  llama.cpp at singireddys.local:8080  (OpenAI-compatible HTTP)
+Mac Mini  ──────  llama.cpp at singireddys-mac-mini.local:8080  (OpenAI-compatible HTTP)
 Jetson    ──────  Isaac ROS (SLAM, Nav2, nvblox) · STT · TTS · YOLO · Moondream
 Pi 5      ──────  THIS REPO — LangGraph brain + micro-ROS agent (ESP32 bridge)
 ESP32     ──────  4-wheel drive chassis (micro-ROS over WiFi UDP)
@@ -58,7 +58,7 @@ See `SETUP.md` (Jetson repo) for full container build and launch instructions.
 ```bash
 # llama.cpp — serves any GGUF model on the local network
 ./llama-server -m your-model.gguf --port 8080 -ngl 99
-# Access via http://singireddys.local:8080/v1
+# Access via http://singireddys-mac-mini.local:8080/v1
 ```
 
 ### ESP32 firmware
@@ -95,7 +95,7 @@ Edit `src/ai_agent/config/agent_params.yaml`:
 ```yaml
 agent_node:
   provider: "llamacpp"                              # llamacpp | openai | anthropic | gemini | ollama
-  base_url: "http://singireddys.local:8080/v1"      # Mac Mini llama.cpp endpoint
+  base_url: "http://singireddys-mac-mini.local:8080/v1"      # Mac Mini llama.cpp endpoint
   max_tokens: 3000
   use_vision: true
   # Named map locations (x, y, yaw_deg) in SLAM map frame
@@ -115,7 +115,7 @@ agent_node:
 ros2 launch robot_brain brain_launch.py
 
 # Override LLM endpoint
-ros2 launch robot_brain brain_launch.py base_url:=http://singireddys.local:8080/v1
+ros2 launch robot_brain brain_launch.py base_url:=http://singireddys-mac-mini.local:8080/v1
 
 # Brain only (no micro-ROS agent — for testing without ESP32)
 ros2 launch ai_agent agent.launch.py

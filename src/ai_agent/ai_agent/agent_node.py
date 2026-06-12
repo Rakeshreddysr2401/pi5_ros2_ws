@@ -32,7 +32,7 @@ class AgentNode(Node):
         self.declare_parameter("provider",   "llamacpp")
         self.declare_parameter("model",      "default")
         self.declare_parameter("api_key_env", "")
-        self.declare_parameter("base_url",   "http://singireddys.local:8080/v1")
+        self.declare_parameter("base_url",   "http://singireddys-mac-mini.local:8080/v1")
         self.declare_parameter("max_tokens", 3000)
         self.declare_parameter("history_turns", 20)
         self.declare_parameter("use_vision",  True)

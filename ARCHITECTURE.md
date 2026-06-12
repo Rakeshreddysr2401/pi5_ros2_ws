@@ -7,7 +7,7 @@ How the system works, how the pieces fit together, and how to extend it.
 ## System Overview
 
 ```
-Mac Mini          llama.cpp at singireddys.local:8080 — any GGUF (OpenAI-compatible HTTP)
+Mac Mini          llama.cpp at singireddys-mac-mini.local:8080 — any GGUF (OpenAI-compatible HTTP)
 Jetson Orin 8GB   Isaac ROS (SLAM, Nav2, nvblox) · STT · TTS · YOLO · Moondream VLM
 Pi 5  [this repo] LangGraph supervisor + agents + micro-ROS agent (ESP32 bridge)
 ESP32             4-wheel drive chassis (micro-ROS over WiFi UDP port 8888)
@@ -297,14 +297,14 @@ Edit `config/agent_params.yaml` — no code changes:
 agent_node:
   provider: "llamacpp"                              # llamacpp | openai | anthropic | gemini | ollama
   model: "default"                                  # llama.cpp ignores model name
-  base_url: "http://singireddys.local:8080/v1"      # Mac Mini llama.cpp
+  base_url: "http://singireddys-mac-mini.local:8080/v1"      # Mac Mini llama.cpp
   api_key_env: ""                                   # env var name holding the API key
   max_tokens: 3000
 ```
 
 Or override at launch:
 ```bash
-ros2 launch robot_brain brain_launch.py base_url:=http://singireddys.local:8080/v1
+ros2 launch robot_brain brain_launch.py base_url:=http://singireddys-mac-mini.local:8080/v1
 ```
 
 ---
