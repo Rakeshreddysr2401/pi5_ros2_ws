@@ -73,17 +73,20 @@ Copy `example.env` and fill in what you need:
 
 ```bash
 cp example.env .env
-# then source it, or export variables individually
 ```
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `SWIGGY_FOOD_MCP_URL` | No | Defaults to `https://mcp.swiggy.com/food` |
-| `SWIGGY_ACCESS_TOKEN` | No | Bearer token for Swiggy auth |
-| `TAVILY_API_KEY` | No | Enables web search in the chat agent |
 | `OPENAI_API_KEY` | If using OpenAI | Cloud LLM API key |
 | `ANTHROPIC_API_KEY` | If using Anthropic | Cloud LLM API key |
 | `GOOGLE_API_KEY` | If using Gemini | Cloud LLM API key |
+| `STUDIO_PROVIDER` | No | LLM provider for Studio (default `openai`) |
+| `STUDIO_MODEL` | No | Model for Studio (default `gpt-4o-mini`) |
+| `STUDIO_BASE_URL` | No | Custom base URL for Studio (e.g. llama.cpp endpoint) |
+| `STUDIO_MAX_TOKENS` | No | Max tokens for Studio LLM (default `3000`) |
+| `SWIGGY_FOOD_MCP_URL` | No | Defaults to `https://mcp.swiggy.com/food` |
+| `SWIGGY_ACCESS_TOKEN` | No | Bearer token for Swiggy auth |
+| `TAVILY_API_KEY` | No | Enables web search in the chat agent |
 | `ROS_DOMAIN_ID` | No | Must match Jetson (default `0`) |
 
 ---
@@ -110,6 +113,8 @@ agent_node:
 
 ## Launch
 
+### Normal robot launch (voice → ROS2 → robot)
+
 ```bash
 # Full system (micro-ROS agent + LangGraph brain)
 ros2 launch robot_brain brain_launch.py
@@ -126,6 +131,22 @@ ros2 launch ai_agent agent.launch.py
 2. **Jetson:** `docker compose up` (both containers)
 3. **Pi5:** `ros2 launch robot_brain brain_launch.py`
 4. **ESP32:** power on — auto-connects to Pi5 micro-ROS agent over WiFi
+
+### LangGraph Studio (browser UI → ROS2 → robot)
+
+Chat with the robot from the Studio visual debugger. See the full graph, step through routing decisions, and trigger real robot actions from your browser.
+
+```bash
+# On Pi5 — source ROS2 first so Studio drives the real robot
+source /opt/ros/jazzy/setup.bash
+langgraph dev
+```
+
+Then open [LangGraph Studio](https://smith.langchain.com/studio) and connect to `http://<pi5-ip>:2024`.
+
+> **Note:** Do not run `langgraph dev` and `ros2 launch` simultaneously — both publish to the same ROS2 topics.
+
+Without ROS2 sourced, `langgraph dev` still works: chat and Swiggy tools function normally; movement and vision tools log instead of publishing.
 
 For full wiring, flashing, and troubleshooting see [INTEGRATION.md](INTEGRATION.md).
 

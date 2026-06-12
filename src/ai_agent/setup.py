@@ -24,6 +24,7 @@ setup(
         'langchain-community',
         'opencv-python-headless',
         'typing-extensions',
+        'python-dotenv',
     ],
     zip_safe=True,
     maintainer='rakhi24',

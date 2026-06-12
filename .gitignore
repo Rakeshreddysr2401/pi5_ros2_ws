@@ -13,5 +13,9 @@ __pycache__/
 *.pyo
 *.pyd
 
+# LangGraph Studio
+.env
+.langgraph_api/
+
 # Other
 .DS_Store

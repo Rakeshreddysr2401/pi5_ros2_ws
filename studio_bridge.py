@@ -1,0 +1,94 @@
+"""StubBridge — no-op replacement for ROS2Bridge when ROS2 is unavailable.
+
+Used by graph_studio.py so LangGraph Studio can run on a machine without ROS2
+(or before the robot is booted).  Every public method from ROS2Bridge is
+implemented here as a no-op that logs the call.
+
+Tools that import ROS2 message types inside their body (movement.py, system.py)
+will raise ImportError when ROS2 packages are absent — LangGraph catches that
+as a ToolMessage error and the LLM can respond gracefully.
+"""
+
+import logging
+import threading
+
+logger = logging.getLogger(__name__)
+
+
+class StubBridge:
+
+    def __init__(self, known_locations: dict = None):
+        self._known_locations = known_locations or {}
+        self._active_order_id: str | None = None
+        self._order_lock = threading.Lock()
+        self._nav_done_callback = None
+        logger.info("StubBridge initialised (no ROS2 — all publishes are logged)")
+
+    # ── Topics ────────────────────────────────────────────────────────────
+
+    def on_image(self, frame_bytes: bytes) -> None:
+        pass
+
+    def on_query_result(self, msg) -> None:
+        pass
+
+    def get_frame(self) -> bytes | None:
+        return None
+
+    def get_known_locations(self) -> dict:
+        return self._known_locations
+
+    def query_vision(self, question: str, timeout: float = 10.0) -> str:
+        logger.info("[STUB] query_vision: %s", question)
+        return (
+            "Vision is not available in Studio stub mode. "
+            "The robot's camera is only accessible when ROS2 is running."
+        )
+
+    # ── Active order ──────────────────────────────────────────────────────
+
+    def set_active_order(self, order_id: str | None) -> None:
+        with self._order_lock:
+            self._active_order_id = order_id
+        logger.info("[STUB] set_active_order(%s)", order_id)
+
+    def get_active_order(self) -> str | None:
+        with self._order_lock:
+            return self._active_order_id
+
+    # ── Speech ────────────────────────────────────────────────────────────
+
+    def publish_speech(self, text: str) -> None:
+        logger.info("[STUB] speak: %s", text)
+
+    # ── Publishers ────────────────────────────────────────────────────────
+
+    def publish_twist(self, twist) -> None:
+        lx = getattr(getattr(twist, "linear",  None), "x", 0.0)
+        az = getattr(getattr(twist, "angular", None), "z", 0.0)
+        logger.info("[STUB] publish_twist: linear.x=%.2f angular.z=%.2f", lx, az)
+
+    def publish_to_topic(self, topic: str, data: str) -> None:
+        logger.info("[STUB] publish_to_topic(%s): %s", topic, data)
+
+    # ── Services ──────────────────────────────────────────────────────────
+
+    def call_service(self, name: str, srv_type, request_msg, timeout: float = 5.0):
+        raise TimeoutError(f"[STUB] Service '{name}' unavailable (ROS2 not running)")
+
+    # ── Actions (Nav2) ────────────────────────────────────────────────────
+
+    def register_nav_done_callback(self, cb) -> None:
+        self._nav_done_callback = cb
+
+    def cancel_navigation(self) -> None:
+        logger.info("[STUB] cancel_navigation()")
+
+    def start_nav_to_pose(self, x: float, y: float, yaw_deg: float, label: str = "") -> None:
+        dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"
+        logger.info("[STUB] navigate_to_pose → %s", dest)
+        if self._nav_done_callback:
+            self._nav_done_callback(True, f"[STUB] Simulated arrival at {dest}")
+
+    def wait_for_nav_server(self, timeout: float = 30.0) -> bool:
+        return True

@@ -39,11 +39,13 @@ Pi5 LangGraph brain
 ## Package Layout
 
 ```
+graph_studio.py              LangGraph Studio entry point (langgraph dev)
 src/
 ├── ai_agent/           Brain — LangGraph supervisor + all agents + tools
 │   ├── ai_agent/
 │   │   ├── agent_node.py        ROS2 entry point (only file that ties ROS2 + graph)
 │   │   ├── ros2_bridge.py       All ROS2 I/O — the only other file that imports rclpy
+│   │   ├── studio_bridge.py     StubBridge — no-op ROS2Bridge for Studio without hardware
 │   │   └── graph/
 │   │       ├── state.py         AgentState TypedDict
 │   │       ├── graph.py         StateGraph topology
@@ -82,6 +84,34 @@ src/
 > Only `agent_node.py` and `ros2_bridge.py` are allowed to import `rclpy`.
 
 This lets you run and test all graph logic on any machine, no robot needed.
+
+---
+
+## Two Entry Points
+
+The same graph can be driven in two ways — never simultaneously.
+
+| | `ros2 launch` | `langgraph dev` |
+|---|---|---|
+| Entry file | `agent_node.py` | `graph_studio.py` |
+| Input source | `/voice/user_input` ROS2 topic (Jetson STT) | LangGraph Studio browser UI |
+| Bridge | `ROS2Bridge` (real hardware) | `ROS2Bridge` if ROS2 sourced, else `StubBridge` |
+| State persistence | In-node history list (bounded by `history_turns`) | LangGraph dev server in-memory checkpointer |
+| LLM config | `agent_params.yaml` via ROS2 parameters | `.env` via `STUDIO_PROVIDER` / `STUDIO_MODEL` |
+
+**`graph_studio.py` startup sequence:**
+1. `load_dotenv()` — reads `.env` for API keys and `STUDIO_*` config
+2. `llm_module.configure()` — sets provider/model/key
+3. Try `rclpy.init()` + `ROS2Bridge` with background spin thread → real robot control
+4. On failure → `StubBridge` (logs tool calls, no ROS2 publishing)
+5. `bridge_module.init(bridge)` — tools pick it up at invocation time
+6. `graph = build_graph()` — exported for Studio
+
+**`StubBridge` behaviour:**
+- `publish_speech()` — logs the text
+- `query_vision()` — returns an explanatory string
+- `navigate_to_pose()` / `move_robot()` — logs the command, simulates success
+- `call_service()` — raises `TimeoutError` (caught by existing tool handlers)
 
 ---
 

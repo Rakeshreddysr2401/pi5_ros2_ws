@@ -44,6 +44,8 @@ cd ~/ros2_ws
 pip3 install -r requirements.txt --break-system-packages
 ```
 
+This also installs `langgraph-cli` (the `langgraph dev` command used for LangGraph Studio).
+
 ### Step 3: Install Main Workspace Dependencies
 Use `rosdep` to download all other standard ROS 2 package dependencies declared in the packages:
 ```bash
@@ -97,6 +99,38 @@ cd ~/ros2_ws
 colcon build --symlink-install
 source install/setup.bash
 ```
+
+---
+
+---
+
+## LangGraph Studio Setup
+
+LangGraph Studio gives you a browser UI to chat with the robot, inspect the agent graph, and step through routing decisions in real time.
+
+### One-time setup
+
+```bash
+cp example.env .env
+# Edit .env — set your API key (e.g. OPENAI_API_KEY=sk-...)
+# Optionally change STUDIO_PROVIDER / STUDIO_MODEL
+```
+
+### Starting Studio on Pi5
+
+```bash
+# Source ROS2 first — this makes Studio drive the real robot
+source /opt/ros/jazzy/setup.bash
+cd ~/ros2_ws
+langgraph dev
+```
+
+The dev server starts at `http://0.0.0.0:2024`.
+Open [LangGraph Studio](https://smith.langchain.com/studio) in your browser and connect to `http://<pi5-ip>:2024`.
+
+> **Important:** Do not run `langgraph dev` and `ros2 launch` at the same time — both would publish to the same ROS2 topics (`/voice/robot_speech`, `/cmd_vel`, etc.) and commands would interleave unpredictably.
+
+If ROS2 is not sourced (e.g. on a dev laptop), Studio still works — chat and Swiggy tools function normally; movement/vision tools return stub messages instead of controlling the robot.
 
 ---
 
