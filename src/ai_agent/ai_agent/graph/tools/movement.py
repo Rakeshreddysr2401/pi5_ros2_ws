@@ -19,6 +19,18 @@ def _duration(cmd: str, val: float) -> float:
     return 0.0
 
 
+def _drive_for_duration(bridge, twist, dur: float) -> None:
+    """Publish twist at 10 Hz for `dur` seconds, then send a stop.
+
+    Keeps the ESP32 watchdog (500 ms) fed throughout the move."""
+    from geometry_msgs.msg import Twist
+    end = time.time() + dur
+    while time.time() < end:
+        bridge.publish_twist(twist)
+        time.sleep(0.1)
+    bridge.publish_twist(Twist())
+
+
 @tool
 def move_robot(command: str) -> str:
     """Send a short, precise movement command directly to the wheels via /cmd_vel.
@@ -51,11 +63,11 @@ def move_robot(command: str) -> str:
     elif cmd == "S":
         pass  # zero Twist = stop
 
-    bridge.publish_twist(twist)
     dur = _duration(cmd, val)
     if dur > 0:
-        time.sleep(dur)
-        bridge.publish_twist(Twist())  # stop after duration
+        _drive_for_duration(bridge, twist, dur)
+    else:
+        bridge.publish_twist(twist)
 
     return f"Movement done: {command}"
 
@@ -154,9 +166,7 @@ def _fallback_scan(target: str, bridge) -> str:
         bridge.publish_speech(f"Not found yet, rotating… ({step + 1}/8)")
         twist = Twist()
         twist.angular.z = _ANGULAR_VEL_RS
-        bridge.publish_twist(twist)
-        time.sleep(_duration("L", 45))
-        bridge.publish_twist(Twist())
+        _drive_for_duration(bridge, twist, _duration("L", 45))
 
     if direction is None:
         bridge.publish_speech(f"I couldn't find the {target} after a full scan.")
@@ -168,21 +178,15 @@ def _fallback_scan(target: str, bridge) -> str:
         if direction == "left":
             twist = Twist()
             twist.angular.z = _ANGULAR_VEL_RS
-            bridge.publish_twist(twist)
-            time.sleep(_duration("L", 20))
-            bridge.publish_twist(Twist())
+            _drive_for_duration(bridge, twist, _duration("L", 20))
         elif direction == "right":
             twist = Twist()
             twist.angular.z = -_ANGULAR_VEL_RS
-            bridge.publish_twist(twist)
-            time.sleep(_duration("R", 20))
-            bridge.publish_twist(Twist())
+            _drive_for_duration(bridge, twist, _duration("R", 20))
 
         fwd = Twist()
         fwd.linear.x = _LINEAR_VEL_MS
-        bridge.publish_twist(fwd)
-        time.sleep(_duration("F", 20))
-        bridge.publish_twist(Twist())
+        _drive_for_duration(bridge, fwd, _duration("F", 20))
 
         close = bridge.query_vision(
             f"Am I now close to the {target} (within 30 cm)? Reply YES or NO."

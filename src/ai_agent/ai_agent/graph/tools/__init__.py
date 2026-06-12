@@ -10,7 +10,7 @@ from .swiggy_mcp import SWIGGY_FOOD_TOOLS
 # Per-agent tool sets
 CHAT_TOOLS       = [speak, query_vision, get_robot_status]
 VISION_TOOLS     = [speak, query_vision]
-NAVIGATE_TOOLS   = [speak, move_robot, navigate_to_pose, navigate_to_object, navigate_to_visible_object, query_vision]
+NAVIGATE_TOOLS   = [speak, move_robot]
 STATUS_TOOLS     = [speak, get_robot_status, ros2_publish]
 SUPERVISOR_TOOLS = [handover]
 SWIGGY_TOOLS     = [speak, set_active_order, handover] + SWIGGY_FOOD_TOOLS

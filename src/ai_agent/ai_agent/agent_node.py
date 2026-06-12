@@ -113,19 +113,9 @@ class AgentNode(Node):
     # ── Startup readiness check ───────────────────────────────────────────
 
     def _startup_check(self) -> None:
-        """Wait for Nav2 and micro-ROS, then announce readiness."""
-        nav_ok = self._bridge.wait_for_nav_server(timeout=30.0)
-
-        if nav_ok:
-            self._bridge.publish_speech("I'm ready.")
-            self.get_logger().info("Startup complete — Nav2 available")
-        else:
-            self._bridge.publish_speech(
-                "Navigation unavailable right now. I'm starting in limited mode — "
-                "I can still chat and see, but I can't navigate until Nav2 comes up."
-            )
-            self.get_logger().warning("Startup: Nav2 not available — limited mode")
-
+        """Announce readiness. Nav2 check skipped — not available in current hardware scope."""
+        self._bridge.publish_speech("I'm ready.")
+        self.get_logger().info("Startup complete")
         self._ready_event.set()
 
     # ── Navigation done callback (background nav thread → worker) ─────────

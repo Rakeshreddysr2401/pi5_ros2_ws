@@ -7,7 +7,7 @@
 //
 //  L298N wiring:
 //    Motor A (LEFT)   IN1=26  IN2=25  ENA=14 (PWM)
-//    Motor B (RIGHT)  IN3=33  IN4=32  ENB=12 (PWM)
+//    Motor B (RIGHT)  IN3=33  IN4=32  ENB=27 (PWM)
 //    IR sensor        GPIO 34  (LOW = obstacle detected)
 //    Servo            GPIO 18
 //
@@ -38,7 +38,7 @@ const uint16_t AGENT_PORT = 8888;
 #define ENA  14   // PWM — wire jumper off, connect to this GPIO
 #define IN3  33
 #define IN4  32
-#define ENB  12   // PWM — wire jumper off, connect to this GPIO
+#define ENB  27   // PWM — wire jumper off, connect to this GPIO
 
 // ── Other pins ───────────────────────────────────────────────────────────────
 #define IR_PIN    34
@@ -127,12 +127,9 @@ void cmdVelCb(const void* msgIn) {
 
     lastCmdMs = millis();
 
-    // IR obstacle: block forward motion only (still allow reverse/turn to escape)
-    bool obstacle = (digitalRead(IR_PIN) == LOW);
-    if (obstacle && msg->linear.x > 0.0f) {
-        stopMotors();
-        return;
-    }
+    // IR not wired — skip obstacle check until sensor is connected
+    // bool obstacle = (digitalRead(IR_PIN) == LOW);
+    // if (obstacle && msg->linear.x > 0.0f) { stopMotors(); return; }
 
     driveFromTwist((float)msg->linear.x, (float)msg->angular.z);
 }

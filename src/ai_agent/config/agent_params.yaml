@@ -19,7 +19,7 @@ agent_node:
   history_turns: 6
 
   # Subscribe to /vision/image_raw and attach frames to LLM calls for visual questions
-  use_vision: true
+  use_vision: false
 
   # Seconds to wait for Jetson's Moondream to answer a /vision/query
   vision_query_timeout: 60.0
