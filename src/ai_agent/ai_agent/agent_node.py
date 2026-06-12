@@ -192,7 +192,14 @@ class AgentNode(Node):
             user_content = self._build_user_content(text)
             messages     = history + [{"role": "user", "content": user_content}]
 
-            result   = self._graph.invoke({"messages": messages})
+            self.get_logger().info(f"Invoking graph with input: {text}")
+            result = None
+            for event in self._graph.stream({"messages": messages}, stream_mode="values"):
+                if "messages" in event:
+                    msg = event["messages"][-1]
+                    self.get_logger().info(f"Step message [{type(msg).__name__}]: {msg.content[:200]} (tool_calls: {getattr(msg, 'tool_calls', None)})")
+                result = event
+
             response = self._extract_response(result)
 
             if not response:
