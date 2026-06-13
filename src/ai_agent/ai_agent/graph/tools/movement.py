@@ -6,7 +6,7 @@ from langchain_core.tools import tool
 from . import _bridge
 
 # Fine-movement Twist parameters (direct /cmd_vel, bypasses Nav2)
-_LINEAR_VEL_MS  = 0.12   # m/s forward/backward
+_LINEAR_VEL_MS  = 0.28   # m/s forward/backward
 _ANGULAR_VEL_RS = 1.2    # rad/s rotation
 _CMD_BUFFER     = 0.2    # extra sleep after each command (seconds)
 
