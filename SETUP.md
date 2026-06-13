@@ -145,3 +145,90 @@ ros2 pkg list | grep -E "ai_agent|robot_brain"
 ```bash
 ros2 run micro_ros_agent micro_ros_agent --help
 ```
+
+---
+
+## Laptop Setup (Dev Machine — No ROS2)
+
+Run the full LangGraph graph and LangGraph Studio on your laptop without any robot hardware.
+Chat, supervisor routing, and Swiggy tools work normally. Movement and vision tools return
+stub messages (ROS2 not running) instead of controlling the robot.
+
+### Prerequisites
+
+- Python 3.11+
+- [uv](https://docs.astral.sh/uv/) — fast Python package manager
+
+```bash
+# Install uv (once, system-wide)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# or on Windows:
+# powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+### Step 1: Clone the repo
+
+```bash
+git clone <repo-url>
+cd pi5_ros2_ws
+```
+
+### Step 2: Create environment and install dependencies
+
+```bash
+# Create a venv and install all dependencies from requirements.txt
+uv venv
+uv pip install -r requirements.txt
+
+# Activate the venv
+source .venv/bin/activate        # Linux/macOS
+# .venv\Scripts\activate         # Windows
+```
+
+> `uv` resolves and installs all packages in seconds. No `--break-system-packages`
+> needed — the venv is fully isolated (no ROS2 on laptop, so no system packages to inherit).
+
+### Step 3: Configure environment
+
+```bash
+cp example.env .env
+# Edit .env and set your API key:
+#   OPENAI_API_KEY=sk-...        (if using OpenAI)
+#   ANTHROPIC_API_KEY=sk-ant-... (if using Anthropic)
+#
+# Optionally change the Studio LLM:
+#   STUDIO_PROVIDER=openai
+#   STUDIO_MODEL=gpt-4o-mini
+```
+
+### Step 4: Run LangGraph Studio
+
+```bash
+# Make sure the venv is active, then:
+langgraph dev
+```
+
+Open [LangGraph Studio](https://smith.langchain.com/studio) and connect to `http://localhost:2024`.
+
+### Adding / updating dependencies (laptop)
+
+```bash
+# Add a new package
+uv pip install <package>
+uv pip freeze > requirements.txt   # keep requirements.txt in sync
+
+# Or edit requirements.txt directly, then:
+uv pip install -r requirements.txt
+```
+
+### What works vs. what doesn't on laptop
+
+| Feature | Works | Notes |
+|---------|-------|-------|
+| Chat / general questions | yes | full LLM routing |
+| Supervisor agent routing | yes | full graph visible in Studio |
+| Swiggy food ordering | yes | MCP tools connect to Swiggy server |
+| `speak()` | no | logs text instead of publishing |
+| `move_robot()` / `navigate_to_pose()` | no | returns error — no ROS2 |
+| `query_vision()` | no | returns stub message — no camera |
+| `get_robot_status()` | no | `call_service()` raises TimeoutError |
