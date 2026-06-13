@@ -137,12 +137,20 @@ ros2 launch ai_agent agent.launch.py
 Chat with the robot from the Studio visual debugger. See the full graph, step through routing decisions, and trigger real robot actions from your browser.
 
 ```bash
-# On Pi5 — source ROS2 first so Studio drives the real robot
-source /opt/ros/jazzy/setup.bash
-langgraph dev
+# On Pi5 — starts micro-ROS agent (background) + Studio (foreground) together
+cd ~/ros2_ws
+./dev.sh
 ```
 
-Then open [LangGraph Studio](https://smith.langchain.com/studio) and connect to `http://<pi5-ip>:2024`.
+Make it executable first (one time only):
+```bash
+chmod +x ~/ros2_ws/dev.sh
+```
+
+Then:
+1. Power on the ESP32 — it auto-connects over WiFi UDP
+2. Open [LangGraph Studio](https://smith.langchain.com/studio) → connect to `http://<pi5-ip>:2024`
+3. Ctrl+C stops both processes cleanly
 
 > **Note:** Do not run `langgraph dev` and `ros2 launch` simultaneously — both publish to the same ROS2 topics.
 

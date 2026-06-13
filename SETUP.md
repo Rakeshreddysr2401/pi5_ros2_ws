@@ -108,6 +108,8 @@ source install/setup.bash
 
 LangGraph Studio gives you a browser UI to chat with the robot, inspect the agent graph, and step through routing decisions in real time.
 
+The ESP32 connects to the Pi5 over **WiFi UDP** (not USB serial). The micro-ROS agent must be running before the ESP32 can receive `/cmd_vel` commands.
+
 ### One-time setup
 
 ```bash
@@ -116,21 +118,48 @@ cp example.env .env
 # Optionally change STUDIO_PROVIDER / STUDIO_MODEL
 ```
 
-### Starting Studio on Pi5
+Make `dev.sh` executable (do this once):
 
 ```bash
-# Source ROS2 first — this makes Studio drive the real robot
-source /opt/ros/jazzy/setup.bash
-cd ~/ros2_ws
-langgraph dev
+chmod +x ~/ros2_ws/dev.sh
 ```
 
-The dev server starts at `http://0.0.0.0:2024`.
-Open [LangGraph Studio](https://smith.langchain.com/studio) in your browser and connect to `http://<pi5-ip>:2024`.
+### Starting Studio on Pi5
+
+Use `dev.sh` — it starts the micro-ROS agent (background) and LangGraph Studio (foreground) together:
+
+```bash
+cd ~/ros2_ws
+./dev.sh
+```
+
+Then:
+1. Power on the ESP32 — it auto-connects over WiFi
+2. Open [LangGraph Studio](https://smith.langchain.com/studio) in your browser
+3. Connect to `http://<pi5-ip>:2024`
+
+You should see `/rover_esp32` appear in `ros2 node list` once the ESP32 connects.
+
+**What `dev.sh` does:**
+- Starts `ros2 run micro_ros_agent micro_ros_agent udp4 --port 8888` in the background
+- Starts `langgraph dev` in the foreground
+- Ctrl+C stops both cleanly
 
 > **Important:** Do not run `langgraph dev` and `ros2 launch` at the same time — both would publish to the same ROS2 topics (`/voice/robot_speech`, `/cmd_vel`, etc.) and commands would interleave unpredictably.
 
 If ROS2 is not sourced (e.g. on a dev laptop), Studio still works — chat and Swiggy tools function normally; movement/vision tools return stub messages instead of controlling the robot.
+
+### Verifying the connection
+
+In a second terminal after `./dev.sh`:
+
+```bash
+# Should show /rover_esp32 and /studio_bridge once ESP32 connects
+ros2 node list
+
+# Should show /cmd_vel in the list
+ros2 topic list | grep cmd_vel
+```
 
 ---
 

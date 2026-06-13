@@ -36,7 +36,8 @@ def supervisor_node(state: AgentState) -> dict:
     llm = get_llm().bind_tools([handover])
     clean = prepare_messages_for_agent(state["messages"], keep_all_system_msgs=True)
     response = safe_invoke(llm, [SystemMessage(content=_get_prompt())] + clean, logger)
-    # Strip any stray text — supervisor must stay silent
+    # Strip stray text and deduplicate — supervisor emits exactly one handover call
     if response.tool_calls and any(tc["name"] in HANDOVER_NAMES for tc in response.tool_calls):
-        response = AIMessage(content="", tool_calls=response.tool_calls, id=response.id)
+        first = next(tc for tc in response.tool_calls if tc["name"] in HANDOVER_NAMES)
+        response = AIMessage(content="", tool_calls=[first], id=response.id)
     return {"messages": [response], "active_agent": "supervisor"}
