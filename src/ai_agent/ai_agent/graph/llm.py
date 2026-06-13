@@ -42,7 +42,7 @@ def get_llm():
             "temperature": 0,
             "max_tokens": max_tokens,
         }
-        if base_url:
+        if base_url and not (provider == "openai" and "singireddys-mac-mini" in base_url):
             kwargs["base_url"] = base_url
         return ChatOpenAI(**kwargs)
 
