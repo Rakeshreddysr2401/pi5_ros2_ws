@@ -7,16 +7,16 @@ from . import _bridge
 
 # Fine-movement Twist parameters (direct /cmd_vel, bypasses Nav2)
 _LINEAR_VEL_MS  = 0.28   # m/s forward/backward command (translates to ~93% PWM)
-_PHYSICAL_VEL_MS = 0.58  # actual physical speed of the robot at 93% PWM
+_PHYSICAL_VEL_MS = 0.94   # actual physical speed of the robot at 93% PWM
 _ANGULAR_VEL_RS = 1.2    # rad/s rotation
 _CMD_BUFFER     = 0.2    # extra sleep after each command (seconds)
 
 
 def _duration(cmd: str, val: float) -> float:
     if cmd in ("F", "B"):
-        return (val / 100.0) / _PHYSICAL_VEL_MS + _CMD_BUFFER   # cm → m
+        return (val / 100.0) / _PHYSICAL_VEL_MS   # cm → m
     if cmd in ("L", "R"):
-        return math.radians(val) / _ANGULAR_VEL_RS + _CMD_BUFFER
+        return math.radians(val) / _ANGULAR_VEL_RS
     return 0.0
 
 
@@ -30,6 +30,7 @@ def _drive_for_duration(bridge, twist, dur: float) -> None:
         bridge.publish_twist(twist)
         time.sleep(0.1)
     bridge.publish_twist(Twist())
+    time.sleep(_CMD_BUFFER)
 
 
 @tool
