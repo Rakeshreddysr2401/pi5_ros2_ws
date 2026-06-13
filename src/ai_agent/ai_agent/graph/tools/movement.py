@@ -6,14 +6,15 @@ from langchain_core.tools import tool
 from . import _bridge
 
 # Fine-movement Twist parameters (direct /cmd_vel, bypasses Nav2)
-_LINEAR_VEL_MS  = 0.28   # m/s forward/backward
+_LINEAR_VEL_MS  = 0.28   # m/s forward/backward command (translates to ~93% PWM)
+_PHYSICAL_VEL_MS = 0.53  # actual physical speed of the robot at 93% PWM
 _ANGULAR_VEL_RS = 1.2    # rad/s rotation
 _CMD_BUFFER     = 0.2    # extra sleep after each command (seconds)
 
 
 def _duration(cmd: str, val: float) -> float:
     if cmd in ("F", "B"):
-        return (val / 100.0) / _LINEAR_VEL_MS + _CMD_BUFFER   # cm → m
+        return (val / 100.0) / _PHYSICAL_VEL_MS + _CMD_BUFFER   # cm → m
     if cmd in ("L", "R"):
         return math.radians(val) / _ANGULAR_VEL_RS + _CMD_BUFFER
     return 0.0
