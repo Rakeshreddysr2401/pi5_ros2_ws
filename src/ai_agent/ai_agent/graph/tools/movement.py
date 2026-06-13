@@ -7,7 +7,7 @@ from . import _bridge
 
 # Fine-movement Twist parameters (direct /cmd_vel, bypasses Nav2)
 _LINEAR_VEL_MS  = 0.28   # m/s forward/backward command (translates to ~93% PWM)
-_PHYSICAL_VEL_MS = 0.53  # actual physical speed of the robot at 93% PWM
+_PHYSICAL_VEL_MS = 0.58  # actual physical speed of the robot at 93% PWM
 _ANGULAR_VEL_RS = 1.2    # rad/s rotation
 _CMD_BUFFER     = 0.2    # extra sleep after each command (seconds)
 
