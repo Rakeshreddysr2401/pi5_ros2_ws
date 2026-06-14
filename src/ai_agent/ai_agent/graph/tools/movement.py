@@ -7,8 +7,10 @@ from . import _bridge
 
 # Fine-movement Twist parameters (direct /cmd_vel, bypasses Nav2)
 _LINEAR_VEL_MS  = 0.28   # m/s forward/backward command (translates to ~93% PWM)
-_PHYSICAL_VEL_MS = 0.94   # actual physical speed of the robot at 93% PWM
-_ANGULAR_VEL_RS = 1.2    # rad/s rotation
+_PHYSICAL_VEL_MS = 0.60   # actual physical speed of the robot at 93% PWM (calibrated from active tests)
+_ANGULAR_VEL_RS = 2.8    # rad/s rotation command (translates to ~70% PWM)
+_STEADY_STATE_ANGULAR_VEL = 2.65  # rad/s physical speed at 70% PWM (calibrated from active tests)
+_TURN_STARTUP_DELAY       = 0.0   # seconds transient ramp-up offset
 _CMD_BUFFER     = 0.2    # extra sleep after each command (seconds)
 
 
@@ -16,19 +18,25 @@ def _duration(cmd: str, val: float) -> float:
     if cmd in ("F", "B"):
         return (val / 100.0) / _PHYSICAL_VEL_MS   # cm → m
     if cmd in ("L", "R"):
-        return math.radians(val) / _ANGULAR_VEL_RS
+        return (math.radians(val) / _STEADY_STATE_ANGULAR_VEL) + _TURN_STARTUP_DELAY
     return 0.0
 
 
 def _drive_for_duration(bridge, twist, dur: float) -> None:
-    """Publish twist at 10 Hz for `dur` seconds, then send a stop.
-
-    Keeps the ESP32 watchdog (500 ms) fed throughout the move."""
+    """Publish twist periodically to feed the watchdog, with millisecond-precise stop timing."""
     from geometry_msgs.msg import Twist
-    end = time.time() + dur
-    while time.time() < end:
-        bridge.publish_twist(twist)
-        time.sleep(0.1)
+    start = time.time()
+    end = start + dur
+    last_pub = 0.0
+    while True:
+        now = time.time()
+        if now >= end:
+            break
+        # Publish at 20 Hz (every 50ms) to keep the watchdog fed
+        if now - last_pub >= 0.05:
+            bridge.publish_twist(twist)
+            last_pub = now
+        time.sleep(0.005)
     bridge.publish_twist(Twist())
     time.sleep(_CMD_BUFFER)
 

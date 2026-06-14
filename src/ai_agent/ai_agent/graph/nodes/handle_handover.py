@@ -71,7 +71,10 @@ def _resolve(state: AgentState, raw_next: str, reason: str) -> _Resolution:
                 f"The user asked: \"{user_query}\""
             )
         else:
-            content = "Route to the appropriate agent based on the conversation."
+            content = (
+                f"The agent '{current}' has completed its task (reason: '{reason or 'done'}'). "
+                f"Route to the next appropriate agent or back to 'chat' to respond to the user."
+            )
     else:
         meta = AGENTS.get(raw_next)
         desc = meta["description"] if meta else raw_next

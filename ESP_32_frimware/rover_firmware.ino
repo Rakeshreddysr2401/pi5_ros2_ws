@@ -104,13 +104,14 @@ void stopMotors() {
 
 // Differential drive: Twist → left/right wheel velocities
 void driveFromTwist(float linearX, float angularZ) {
-    // Standard differential drive equations
-    float left  = linearX - (angularZ * WHEEL_BASE / 2.0f);
-    float right = linearX + (angularZ * WHEEL_BASE / 2.0f);
+    // Normalize linear and angular components independently to utilize full PWM range
+    float linear_pct  = linearX / MAX_LINEAR_VEL;
+    float angular_pct = angularZ / MAX_ANGULAR_VEL;
+
+    float left  = linear_pct - angular_pct;
+    float right = linear_pct + angular_pct;
 
     // Normalise to -1..1
-    left  /= MAX_LINEAR_VEL;
-    right /= MAX_LINEAR_VEL;
     if (left  >  1.0f) left  =  1.0f;
     if (left  < -1.0f) left  = -1.0f;
     if (right >  1.0f) right =  1.0f;

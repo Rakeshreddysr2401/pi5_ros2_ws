@@ -7,13 +7,16 @@
 #
 # Ctrl+C stops both cleanly.
 
-set -euo pipefail
+set -eo pipefail
 
 UDP_PORT="${1:-8888}"
 
+# Temporarily disable unbound variable checking for ROS sourcing
+set +u
 source /opt/ros/jazzy/setup.bash
 source ~/microros_ws/install/setup.bash
 source ~/ros2_ws/install/setup.bash
+set -u
 
 echo "==> micro-ROS agent: UDP port $UDP_PORT"
 echo "==> LangGraph Studio: http://127.0.0.1:2024"
