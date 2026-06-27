@@ -68,7 +68,7 @@ class ROS2Bridge:
         self._twist_pub        = node.create_publisher(Twist, "/cmd_vel", 10)
 
         # Subscribe to Kokoro speaking status for back-pressure
-        node.create_subscription(Bool, "/voice/speaking", self._on_speaking, 10)
+        node.create_subscription(Bool, "/voice/tts_speaking", self._on_speaking, 10)
 
         # Drain speech queue every 300ms
         node.create_timer(0.3, self._drain_speech_queue)

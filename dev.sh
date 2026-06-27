@@ -18,6 +18,17 @@ source ~/microros_ws/install/setup.bash
 source ~/ros2_ws/install/setup.bash
 set -u
 
+# ROS2 networking (must match Jetson)
+export ROS_DOMAIN_ID=0
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export FASTRTPS_DEFAULT_PROFILES_FILE=$HOME/ros2_ws/fastdds_unicast.xml
+unset ROS_LOCALHOST_ONLY
+
+echo "ROS_DOMAIN_ID=$ROS_DOMAIN_ID"
+echo "RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION"
+echo "FASTRTPS_DEFAULT_PROFILES_FILE=$FASTRTPS_DEFAULT_PROFILES_FILE"
+
+
 echo "==> micro-ROS agent: UDP port $UDP_PORT"
 echo "==> LangGraph Studio: http://127.0.0.1:2024"
 echo "(Ctrl+C to stop both)"

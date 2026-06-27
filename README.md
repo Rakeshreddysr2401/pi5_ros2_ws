@@ -113,7 +113,23 @@ agent_node:
 
 ## Launch
 
-### Normal robot launch (voice → ROS2 → robot)
+### Production launch — voice + LangSmith tracing (prod.sh)
+
+```bash
+# On Pi5 — micro-ROS agent + LangGraph brain. Loads .env so runs are traced
+# to LangSmith project "pi5". Exports Ethernet-only DDS config automatically.
+cd ~/ros2_ws
+./prod.sh           # default: Mac Mini gemma (llamacpp)
+./prod.sh openai    # switch to OpenAI gpt-4o-mini (cloud)
+```
+
+> **Ethernet-only DDS:** `prod.sh` and `dev.sh` set
+> `FASTRTPS_DEFAULT_PROFILES_FILE=~/ros2_ws/fastdds_unicast.xml` (whitelists Pi5 eth
+> `192.168.2.10`, peers Jetson `192.168.2.20`). Needs the direct Jetson↔Pi5 cable
+> and static IPs — WiFi multicast is unreliable for ROS2 discovery. WiFi still carries
+> internet, Mac Mini HTTP, and the ESP32 micro-ROS link.
+
+### Manual launch (voice → ROS2 → robot)
 
 ```bash
 # Full system (micro-ROS agent + LangGraph brain)
