@@ -11,3 +11,6 @@ langchain-community
 langchain-mcp-adapters
 opencv-python-headless
 typing-extensions
+
+# colcon --symlink-install needs setup.py develop (removed in setuptools 80+)
+setuptools<80
