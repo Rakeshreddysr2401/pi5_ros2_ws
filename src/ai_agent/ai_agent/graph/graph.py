@@ -25,6 +25,7 @@ from .nodes.local_agent import local_agent_node
 from .nodes.navigate import navigate_node
 from .nodes.status import status_node
 from .nodes.swiggy import swiggy_node
+from .nodes.swiggy_tools import make_swiggy_tools_node
 from .nodes.tracker import tracker_node
 from .tools import (
     SUPERVISOR_TOOLS,
@@ -32,8 +33,8 @@ from .tools import (
     LOCAL_AGENT_TOOLS,
     NAVIGATE_TOOLS,
     STATUS_TOOLS,
-    SWIGGY_TOOLS,
-    TRACKER_TOOLS,
+    get_swiggy_tools,
+    get_tracker_tools,
 )
 
 _AGENTS = ["supervisor", "chat", "local_agent", "navigate", "status", "swiggy", "tracker"]
@@ -87,8 +88,11 @@ def build_graph(checkpointer=None):
     builder.add_node("local_agent_tools", ToolNode(tools=LOCAL_AGENT_TOOLS))
     builder.add_node("navigate_tools",    ToolNode(tools=NAVIGATE_TOOLS))
     builder.add_node("status_tools",     ToolNode(tools=STATUS_TOOLS))
-    builder.add_node("swiggy_tools",     ToolNode(tools=SWIGGY_TOOLS))
-    builder.add_node("tracker_tools",    ToolNode(tools=TRACKER_TOOLS))
+    # swiggy gets the order-confirmation gate instead of a plain ToolNode.
+    # get_*_tools() trigger the one-time Swiggy MCP load here at build (startup),
+    # never at import.
+    builder.add_node("swiggy_tools",     make_swiggy_tools_node(get_swiggy_tools()))
+    builder.add_node("tracker_tools",    ToolNode(tools=get_tracker_tools()))
 
     # Entry
     builder.add_edge(START, "turn_entry")

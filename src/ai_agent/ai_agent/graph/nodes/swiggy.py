@@ -6,7 +6,7 @@ from langchain_core.messages import SystemMessage
 
 from ..llm import get_llm
 from ..state import AgentState
-from ..tools import SWIGGY_TOOLS
+from ..tools import get_swiggy_tools
 from ..utils.message_utils import prepare_messages_for_agent, safe_invoke
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,11 @@ Guidelines:
 - Ask for clarification on item variants (size, spice level, add-ons) when relevant.
 - Show a cart summary before placing and require explicit user confirmation ("yes", "confirm").
 - Never place an order without explicit user confirmation.
+- The order tool is GATED: the first time you call it you will get a
+  "CONFIRMATION_REQUIRED" response instead of a placed order. When that happens,
+  read the order summary back to the user, ask them to confirm, and END your turn.
+  Only after the user confirms in their next message should you call the order tool
+  again with the same arguments — that second call actually places it.
 - After successfully placing an order, call set_active_order(order_id) with the order ID so \
 the robot monitors delivery, then respond with a confirmation message and call:
     handover("tracker", reason="order_placed", chain=True)
@@ -39,7 +44,7 @@ the robot monitors delivery, then respond with a confirmation message and call:
 
 
 def swiggy_node(state: AgentState) -> dict:
-    llm = get_llm().bind_tools(SWIGGY_TOOLS)
+    llm = get_llm().bind_tools(get_swiggy_tools())
     clean = prepare_messages_for_agent(state["messages"])
     response = safe_invoke(llm, [SystemMessage(content=_PROMPT)] + clean, logger)
     return {"messages": [response], "active_agent": "swiggy"}

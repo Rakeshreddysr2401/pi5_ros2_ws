@@ -47,6 +47,14 @@ class ROS2Bridge:
         self._order_lock       = threading.Lock()
         self._active_order_id: str | None = None
 
+        # ── Turn counter + order-confirmation gate (structural HITL) ──────────
+        # Placing an order requires a SECOND call on a LATER user turn: the first
+        # call arms; the re-call only succeeds once the user has spoken again
+        # (turn advanced). Blocks single-shot / accidental order placement without
+        # needing a checkpointer. All accessed from the worker thread only.
+        self._turn_id = 0
+        self._order_arm: tuple | None = None   # (order_key, armed_turn_id)
+
         # ── Speech queue + back-pressure against Kokoro TTS ───────────────────
         self._speech_lock    = threading.Lock()
         self._speech_queue:  list[str] = []
@@ -138,6 +146,25 @@ class ROS2Bridge:
     def get_active_order(self) -> str | None:
         with self._order_lock:
             return self._active_order_id
+
+    # ── Order-confirmation gate (worker thread) ───────────────────────────
+    def bump_turn(self) -> None:
+        """Advance the turn counter — called once per processed user turn."""
+        self._turn_id += 1
+
+    def arm_order(self, key: str) -> None:
+        """Record that an order placement was requested this turn (awaiting confirm)."""
+        self._order_arm = (key, self._turn_id)
+
+    def order_confirmed(self, key: str) -> bool:
+        """True only if this exact order was armed on an EARLIER turn (user has since spoken)."""
+        if not self._order_arm:
+            return False
+        armed_key, armed_turn = self._order_arm
+        return armed_key == key and self._turn_id > armed_turn
+
+    def clear_order_arm(self) -> None:
+        self._order_arm = None
 
     # ── Speech with back-pressure ─────────────────────────────────────────
 

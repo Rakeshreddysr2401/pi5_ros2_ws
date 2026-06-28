@@ -6,7 +6,7 @@ from langchain_core.messages import SystemMessage
 
 from ..llm import get_llm
 from ..state import AgentState
-from ..tools import TRACKER_TOOLS
+from ..tools import get_tracker_tools
 from ..utils.message_utils import prepare_messages_for_agent, safe_invoke
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ can greet the delivery person or assist the user further.
 
 
 def tracker_node(state: AgentState) -> dict:
-    llm = get_llm().bind_tools(TRACKER_TOOLS)
+    llm = get_llm().bind_tools(get_tracker_tools())
     clean = prepare_messages_for_agent(state["messages"])
     response = safe_invoke(llm, [SystemMessage(content=_PROMPT)] + clean, logger)
     return {"messages": [response], "active_agent": "tracker"}

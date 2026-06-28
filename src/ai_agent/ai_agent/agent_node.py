@@ -237,6 +237,11 @@ class AgentNode(Node):
             # enforces which agents are actually sticky-eligible.
             incoming_agent = "supervisor" if is_system else (self._sticky_agent or "supervisor")
 
+            # Advance the turn counter on real user turns so the order-confirmation
+            # gate can tell that the user has spoken again since an order was armed.
+            if not is_system:
+                self._bridge.bump_turn()
+
             self.get_logger().info(
                 f"Invoking graph with input: {text} (entry={incoming_agent})")
             result = None

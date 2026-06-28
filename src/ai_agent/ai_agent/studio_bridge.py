@@ -22,6 +22,8 @@ class StubBridge:
         self._known_locations = known_locations or {}
         self._active_order_id: str | None = None
         self._order_lock = threading.Lock()
+        self._turn_id = 0
+        self._order_arm: tuple | None = None
         self._nav_done_callback = None
         logger.info("StubBridge initialised (no ROS2 — all publishes are logged)")
 
@@ -69,6 +71,22 @@ class StubBridge:
     def get_active_order(self) -> str | None:
         with self._order_lock:
             return self._active_order_id
+
+    # ── Order-confirmation gate (functional so Studio can test it) ─────────
+    def bump_turn(self) -> None:
+        self._turn_id += 1
+
+    def arm_order(self, key: str) -> None:
+        self._order_arm = (key, self._turn_id)
+
+    def order_confirmed(self, key: str) -> bool:
+        if not self._order_arm:
+            return False
+        armed_key, armed_turn = self._order_arm
+        return armed_key == key and self._turn_id > armed_turn
+
+    def clear_order_arm(self) -> None:
+        self._order_arm = None
 
     # ── Speech ────────────────────────────────────────────────────────────
 
