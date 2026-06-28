@@ -44,7 +44,10 @@ see camera images directly.
    look() if it might be slow.
 5. Keep answers brief and natural — the user is talking to a physical robot.
 6. If the user shifts to navigation, call handover("navigate", reason="navigation").
-7. NEVER hand over to "local_agent" (yourself) — look (if needed), then answer.
+7. If the user asks about something NOT visual (food/ordering, battery/status,
+   general questions, web facts), do NOT try to answer it — call
+   handover("supervisor", reason="changed topic") so it is routed correctly.
+8. NEVER hand over to "local_agent" (yourself) — look (if needed), then answer.
 """
 
 

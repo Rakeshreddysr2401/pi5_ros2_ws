@@ -57,6 +57,12 @@ class ROS2Bridge:
         self._nav_cancel_event: threading.Event | None = None
         self._nav_thread:       threading.Thread | None = None
 
+        # ── Motion interrupt ───────────────────────────────────────────────────
+        # Set by agent_node when new user input arrives, so blocking motion tools
+        # (navigate_to_visible_object's servo loop, move_robot's timed drive) can
+        # bail out promptly — i.e. a spoken "stop" actually stops the wheels.
+        self._motion_interrupt = threading.Event()
+
         # ── Lazy client registries ─────────────────────────────────────────────
         self._dynamic_pubs:    dict = {}   # topic name → Publisher
         self._service_clients: dict = {}   # service name → Client
@@ -217,6 +223,18 @@ class ROS2Bridge:
         with self._nav_lock:
             if self._nav_cancel_event:
                 self._nav_cancel_event.set()
+
+    # ── Motion interrupt (blocking movement tools) ─────────────────────────
+    def request_motion_stop(self) -> None:
+        """Signal blocking motion tools to abort (e.g. on new user input)."""
+        self._motion_interrupt.set()
+
+    def clear_motion_stop(self) -> None:
+        """Clear the interrupt — call at the start of a deliberate motion tool."""
+        self._motion_interrupt.clear()
+
+    def motion_interrupted(self) -> bool:
+        return self._motion_interrupt.is_set()
 
     def start_nav_to_pose(self, x: float, y: float, yaw_deg: float, label: str = "") -> None:
         """Start a Nav2 NavigateToPose action asynchronously.

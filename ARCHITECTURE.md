@@ -55,7 +55,6 @@ src/
 │   │       │   ├── handle_handover.py  Resolves handover: chain vs sticky, loop guard
 │   │       │   ├── supervisor.py       Pure router — calls handover(), never speaks
 │   │       │   ├── chat.py             General conversation + web search
-│   │       │   ├── vision.py           Visual Q&A via look() (mostly superseded by local_agent, kept for restore)
 │   │       │   ├── local_agent.py      Conversational vision — reasons over real frames via Gemma + look()
 │   │       │   ├── navigate.py         Map nav (Nav2, future) + visual-servoing object approach (YOLOv8n + Twist)
 │   │       │   ├── status.py           Robot operational state
@@ -147,7 +146,7 @@ supervisor  ──► supervisor_tools  ──► handle_handover
                                             │
               ┌─────────────────────────────┼──────────────────────────────┐
               ▼         ▼         ▼         ▼         ▼         ▼         ▼
-            chat      vision  navigate   status    swiggy   tracker  (any agent)
+           chat   local_agent  navigate  status   swiggy   tracker  (any agent)
               │         │         │         │         │         │
            per-agent tool nodes (chat_tools, vision_tools, …)
               │         │         │         │         │         │
@@ -169,9 +168,10 @@ supervisor  ──► supervisor_tools  ──► handle_handover
 ## Conversational Vision — `local_agent`
 
 `local_agent` is a multimodal agent (Gemma 3n via llama.cpp) that reasons over the
-**actual camera frame**. It owns the visual-conversation route. The `vision` agent now
-also uses `look()` (the old Moondream `query_vision` path was retired — no local VLM fits
-the 8GB Jetson), so `vision` and `local_agent` overlap; `local_agent` is preferred.
+**actual camera frame**. It owns the visual-conversation route. (The old Moondream
+`query_vision` path was retired — no local VLM fits the 8GB Jetson — and the earlier
+separate `vision` agent was removed as redundant; `local_agent` is now the single
+visual route. `look()` is its capture tool.)
 
 Why a separate agent instead of attaching frames to every turn: a real image stays in
 the conversation, so a follow-up about the *same* scene reasons over the same pixels
@@ -334,7 +334,6 @@ Publishes Twist directly to `/cmd_vel`. For small precise corrections after arri
 | `supervisor` | `handover` |
 | `chat` | `CHAT_TOOLS`: `speak`, `get_robot_status` |
 | `local_agent` | `LOCAL_AGENT_TOOLS`: `speak`, `look`, `handover` — multimodal, sees real frames |
-| `vision` | `VISION_TOOLS`: `speak`, `look` — visual Q&A (superseded by `local_agent`) |
 | `navigate` | `NAVIGATE_TOOLS`: `speak`, `move_robot`, `navigate_to_pose`, `navigate_to_visible_object` |
 | `status` | `STATUS_TOOLS`: `speak`, `get_robot_status`, `ros2_publish` |
 | `swiggy` | Swiggy MCP tools + `speak` |
@@ -477,7 +476,7 @@ ros2 topic echo /visual_slam/tracking/odometry --once
 ## How to Add a New Agent
 
 1. **Add tools** in `graph/tools/` using `@tool` and `_bridge.get()`
-2. **Create the node** in `graph/nodes/` (copy `vision.py` as template)
+2. **Create the node** in `graph/nodes/` (copy `chat.py` as template)
 3. **Add to tool sets** in `graph/tools/__init__.py`
 4. **Wire into graph** in `graph/graph.py` — add node + ToolNode, add to `_AGENTS`
 5. **Update supervisor prompt** — add new agent name + description of when to route to it

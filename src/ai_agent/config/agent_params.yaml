@@ -26,6 +26,13 @@ agent_node:
     # Seconds to wait for Jetson's Moondream to answer a /vision/query
     vision_query_timeout: 60.0
 
+    # Force the supervisor's mandatory handover() via tool_choice. On llama.cpp the
+    # server grammar-constrains the output (from the tool's JSON schema, incl. the
+    # next_agent enum) so a small model can only emit a valid handover — no stray text,
+    # no invalid agent. Requires a llama.cpp server started with --jinja (tool support).
+    # OpenAI honors the same field. Set false only if your build lacks --jinja.
+    strict_tool_calls: true
+
     # ── local_agent (multimodal vision agent, Gemma via llama.cpp) ────────────
     # Dedicated llama.cpp KV-cache slot so its cached image prefix is never
     # evicted by other agents' calls. Requires the server started with

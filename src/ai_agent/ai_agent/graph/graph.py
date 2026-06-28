@@ -3,7 +3,7 @@
 Architecture:
   START → turn_entry → supervisor → supervisor_tools
                                          ↓ (handover)
-                                   handle_handover → [chat|vision|navigate|status|swiggy|tracker]
+                                   handle_handover → [chat|local_agent|navigate|status|swiggy|tracker]
                                                             ↓
                                                       per-agent tools
                                                             ↓ (if handover)
@@ -21,7 +21,6 @@ from .nodes.turn_entry import turn_entry_node
 from .nodes.handle_handover import handle_handover
 from .nodes.supervisor import supervisor_node
 from .nodes.chat import chat_node
-from .nodes.vision import vision_node
 from .nodes.local_agent import local_agent_node
 from .nodes.navigate import navigate_node
 from .nodes.status import status_node
@@ -30,7 +29,6 @@ from .nodes.tracker import tracker_node
 from .tools import (
     SUPERVISOR_TOOLS,
     CHAT_TOOLS,
-    VISION_TOOLS,
     LOCAL_AGENT_TOOLS,
     NAVIGATE_TOOLS,
     STATUS_TOOLS,
@@ -38,7 +36,7 @@ from .tools import (
     TRACKER_TOOLS,
 )
 
-_AGENTS = ["supervisor", "chat", "vision", "local_agent", "navigate", "status", "swiggy", "tracker"]
+_AGENTS = ["supervisor", "chat", "local_agent", "navigate", "status", "swiggy", "tracker"]
 
 
 # ── Routing helpers ────────────────────────────────────────────────────────────
@@ -77,7 +75,6 @@ def build_graph(checkpointer=None):
     # Agent nodes
     builder.add_node("supervisor", supervisor_node)
     builder.add_node("chat",        chat_node)
-    builder.add_node("vision",      vision_node)
     builder.add_node("local_agent", local_agent_node)
     builder.add_node("navigate",    navigate_node)
     builder.add_node("status",     status_node)
@@ -87,7 +84,6 @@ def build_graph(checkpointer=None):
     # Per-agent tool nodes
     builder.add_node("supervisor_tools", ToolNode(tools=SUPERVISOR_TOOLS))
     builder.add_node("chat_tools",        ToolNode(tools=CHAT_TOOLS))
-    builder.add_node("vision_tools",      ToolNode(tools=VISION_TOOLS))
     builder.add_node("local_agent_tools", ToolNode(tools=LOCAL_AGENT_TOOLS))
     builder.add_node("navigate_tools",    ToolNode(tools=NAVIGATE_TOOLS))
     builder.add_node("status_tools",     ToolNode(tools=STATUS_TOOLS))

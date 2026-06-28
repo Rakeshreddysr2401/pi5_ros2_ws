@@ -22,15 +22,23 @@ def _duration(cmd: str, val: float) -> float:
     return 0.0
 
 
-def _drive_for_duration(bridge, twist, dur: float) -> None:
-    """Publish twist periodically to feed the watchdog, with millisecond-precise stop timing."""
+def _drive_for_duration(bridge, twist, dur: float) -> bool:
+    """Publish twist periodically to feed the watchdog, with millisecond-precise stop timing.
+
+    Returns True if the move completed, False if it was interrupted (e.g. the user
+    spoke a new command / "stop"). Always leaves the wheels stopped.
+    """
     from geometry_msgs.msg import Twist
     start = time.time()
     end = start + dur
     last_pub = 0.0
+    interrupted = False
     while True:
         now = time.time()
         if now >= end:
+            break
+        if bridge.motion_interrupted():
+            interrupted = True
             break
         # Publish at 20 Hz (every 50ms) to keep the watchdog fed
         if now - last_pub >= 0.05:
@@ -39,6 +47,7 @@ def _drive_for_duration(bridge, twist, dur: float) -> None:
         time.sleep(0.005)
     bridge.publish_twist(Twist())
     time.sleep(_CMD_BUFFER)
+    return not interrupted
 
 
 @tool
@@ -55,6 +64,7 @@ def move_robot(command: str) -> str:
       R:45   rotate right 45 degrees
       S      stop immediately"""
     bridge = _bridge.get()
+    bridge.clear_motion_stop()   # this is a deliberate move — start with a clean slate
     parts = command.upper().split(":")
     cmd = parts[0]
     val = float(parts[1]) if len(parts) > 1 else 0.0
@@ -75,7 +85,8 @@ def move_robot(command: str) -> str:
 
     dur = _duration(cmd, val)
     if dur > 0:
-        _drive_for_duration(bridge, twist, dur)
+        if not _drive_for_duration(bridge, twist, dur):
+            return f"Movement interrupted: {command}"
     else:
         bridge.publish_twist(twist)
 
@@ -138,6 +149,7 @@ def navigate_to_visible_object(target: str) -> str:
     bridge = _bridge.get()
     target = target.lower().strip()
 
+    bridge.clear_motion_stop()                  # deliberate move — start with a clean slate
     bridge.set_vision_target(target)            # tell Jetson target_node to start hunting
     try:
         start = time.time()
@@ -148,6 +160,8 @@ def navigate_to_visible_object(target: str) -> str:
         while True:
             now = time.time()
             elapsed = now - start
+            if bridge.motion_interrupted():
+                return f"Stopped approaching the {target}."
             if elapsed > _APPROACH_TIMEOUT_S:
                 return f"Approach timed out after {int(_APPROACH_TIMEOUT_S)}s before reaching the {target}."
 

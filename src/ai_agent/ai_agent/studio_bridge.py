@@ -98,6 +98,15 @@ class StubBridge:
     def cancel_navigation(self) -> None:
         logger.info("[STUB] cancel_navigation()")
 
+    def request_motion_stop(self) -> None:
+        logger.info("[STUB] request_motion_stop()")
+
+    def clear_motion_stop(self) -> None:
+        logger.info("[STUB] clear_motion_stop()")
+
+    def motion_interrupted(self) -> bool:
+        return False
+
     def start_nav_to_pose(self, x: float, y: float, yaw_deg: float, label: str = "") -> None:
         dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"
         logger.info("[STUB] navigate_to_pose → %s", dest)

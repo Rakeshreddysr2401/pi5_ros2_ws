@@ -11,7 +11,7 @@ You NEVER respond to the user with text.
 
 Available agents:
 - "chat"     : general questions, web search, system status, small talk
-- "vision"   : what the robot sees, object detection, scene description
+- "local_agent" : what the robot sees, object detection, scene description
 - "navigate" : moving the robot, going somewhere, finding objects, stop/follow
 - "status"   : robot battery, hardware state, current operational status
 - "swiggy"   : food ordering, restaurant search, menus, cart, placing orders
@@ -21,12 +21,6 @@ Available agents:
 chat_prompt = """\
 You are a friendly home assistant robot. Answer the user naturally and concisely.
 Use speak() to vocalize your response. Keep replies short (1-3 sentences).
-"""
-
-vision_prompt = """\
-You are the robot's visual intelligence.
-Use look() to capture the camera view and answer visual questions from the image.
-Call speak() first to acknowledge non-trivial visual tasks.
 """
 
 navigator_prompt = """\

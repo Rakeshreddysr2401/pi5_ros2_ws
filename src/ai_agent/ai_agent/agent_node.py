@@ -36,6 +36,9 @@ class AgentNode(Node):
         self.declare_parameter("history_turns", 20)
         self.declare_parameter("use_vision",  True)
         self.declare_parameter("vision_query_timeout", 60.0)
+        # Force the supervisor's mandatory handover via tool_choice (grammar-constrained
+        # on llama.cpp). Set False if your llama.cpp build lacks --jinja tool support.
+        self.declare_parameter("strict_tool_calls", True)
         # Per-agent overrides for the local multimodal agent (Gemma via llama.cpp).
         # local_agent_slot: dedicated llama.cpp KV-cache slot (-1 = none/auto).
         # local_agent_model: override model name for local_agent ("" = inherit global).
@@ -54,6 +57,7 @@ class AgentNode(Node):
         self._vision_timeout = self.get_parameter("vision_query_timeout").value
         local_agent_slot     = self.get_parameter("local_agent_slot").value
         local_agent_model    = self.get_parameter("local_agent_model").value
+        strict_tool_calls    = self.get_parameter("strict_tool_calls").value
 
         api_key = os.environ.get(api_key_env, "") if api_key_env else "none"
 
@@ -79,7 +83,8 @@ class AgentNode(Node):
         # ── Inject config into graph layer ────────────────────────────────
         self._bridge = ROS2Bridge(self, known_locations=known_locations)
         bridge_module.init(self._bridge)
-        llm_module.configure(provider, model, base_url, api_key, max_tokens, agent_overrides)
+        llm_module.configure(provider, model, base_url, api_key, max_tokens, agent_overrides,
+                             strict_tools=strict_tool_calls)
 
         # Register navigation completion callback
         self._bridge.register_nav_done_callback(self._on_nav_done)
@@ -88,6 +93,11 @@ class AgentNode(Node):
         self._graph   = build_graph()
         self._history: list[dict] = []
         self._history_lock = threading.Lock()
+
+        # Sticky routing: the agent left active at the end of the previous turn.
+        # turn_entry re-enters it directly (skipping the supervisor hop) only if
+        # it is STICKY_ELIGIBLE; [SYSTEM] events always force a fresh supervisor route.
+        self._sticky_agent: str | None = None
 
         # ── Two-slot input queue ──────────────────────────────────────────
         # _user_pending:   latest user message (replaced by newer ones)
@@ -108,12 +118,15 @@ class AgentNode(Node):
         self.create_subscription(String, "/voice/user_input", self._on_user_input, 10)
 
         if self._use_vision:
-            from cv_bridge import CvBridge
-            from sensor_msgs.msg import Image
-            self._cv_bridge = CvBridge()
-            self.create_subscription(Image,  "/camera/color/image_raw",  self._on_image,                1)
+            from sensor_msgs.msg import CompressedImage
+            # Consume the JPEG that camera_node already publishes — no raw-frame
+            # transport over the Jetson↔Pi5 link and no re-encode on the Pi5.
+            # The compressed bytes ARE what look() needs (base64 image/jpeg).
+            self.create_subscription(CompressedImage, "/camera/color/image_raw/compressed",
+                                     self._on_compressed_image, 1)
             self.create_subscription(String, "/vision/target_result",    self._bridge.on_target_result, 10)
-            self.get_logger().info("Vision enabled — /camera/color/image_raw + /vision/target_result")
+            self.get_logger().info(
+                "Vision enabled — /camera/color/image_raw/compressed + /vision/target_result")
 
         # ── Worker + startup threads ──────────────────────────────────────
         threading.Thread(target=self._startup_check, daemon=True).start()
@@ -144,14 +157,12 @@ class AgentNode(Node):
 
     # ── Image callback (spin thread) ──────────────────────────────────────
 
-    def _on_image(self, msg) -> None:
-        import cv2
+    def _on_compressed_image(self, msg) -> None:
+        # msg.data is already JPEG (camera_node encodes '.jpg', format='jpeg').
         try:
-            cv_img = self._cv_bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
-            _, buf = cv2.imencode(".jpg", cv_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
-            self._bridge.on_image(buf.tobytes())
+            self._bridge.on_image(bytes(msg.data))
         except Exception as e:
-            self.get_logger().warning(f"Frame encode error: {e}")
+            self.get_logger().warning(f"Frame cache error: {e}")
 
     # ── Two-slot queue (spin thread → worker thread) ──────────────────────
 
@@ -159,8 +170,10 @@ class AgentNode(Node):
         text = msg.data.strip()
         if not text:
             return
-        # New user input cancels any active navigation and replaces pending user message
+        # New user input cancels any active navigation AND interrupts any blocking
+        # motion tool (visual servoing / timed drive), then replaces pending input.
         self._bridge.cancel_navigation()
+        self._bridge.request_motion_stop()
         with self._queue_lock:
             if self._user_pending is not None:
                 self.get_logger().warning("User queue: replacing pending message with newer input")
@@ -187,20 +200,27 @@ class AgentNode(Node):
         while True:
             self._input_event.wait()
 
-            # Drain both slots — system takes priority
+            # Drain ONE slot per iteration — system takes priority, but a user
+            # message that arrived in the same window is NOT discarded: we leave
+            # it pending and keep the event armed so the next loop picks it up.
             with self._queue_lock:
-                text = self._system_pending or self._user_pending
-                self._system_pending = None
-                self._user_pending   = None
-                self._input_event.clear()
-                # If both were set, re-arm for the other slot (already cleared above)
+                if self._system_pending is not None:
+                    text, is_system = self._system_pending, True
+                    self._system_pending = None
+                    if self._user_pending is None:
+                        self._input_event.clear()
+                    # else: leave event set so user_pending is processed next
+                else:
+                    text, is_system = self._user_pending, False
+                    self._user_pending = None
+                    self._input_event.clear()
 
             if text:
-                self._process(text)
+                self._process(text, is_system)
 
     # ── Graph invocation (worker thread) ──────────────────────────────────
 
-    def _process(self, text: str) -> None:
+    def _process(self, text: str, is_system: bool = False) -> None:
         from langchain_core.messages import HumanMessage
         self._pub_thinking.publish(Bool(data=True))
         try:
@@ -212,13 +232,24 @@ class AgentNode(Node):
             # projection (graph.utils.message_utils) strips images for text agents.
             messages = history + [HumanMessage(content=text)]
 
-            self.get_logger().info(f"Invoking graph with input: {text}")
+            # Sticky routing: re-enter the previous agent for a user follow-up;
+            # [SYSTEM] events always get a fresh supervisor route. turn_entry
+            # enforces which agents are actually sticky-eligible.
+            incoming_agent = "supervisor" if is_system else (self._sticky_agent or "supervisor")
+
+            self.get_logger().info(
+                f"Invoking graph with input: {text} (entry={incoming_agent})")
             result = None
-            for event in self._graph.stream({"messages": messages}, stream_mode="values"):
+            for event in self._graph.stream(
+                {"messages": messages, "active_agent": incoming_agent}, stream_mode="values"):
                 if "messages" in event:
                     msg = event["messages"][-1]
                     self.get_logger().info(f"Step message [{type(msg).__name__}]: {str(msg.content)[:200]} (tool_calls: {getattr(msg, 'tool_calls', None)})")
                 result = event
+
+            # Remember where the turn ended so the next user follow-up can skip
+            # the supervisor (turn_entry gates which agents are sticky-eligible).
+            self._sticky_agent = result.get("active_agent") if result else None
 
             response = self._extract_response(result)
 

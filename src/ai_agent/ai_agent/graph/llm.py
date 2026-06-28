@@ -12,6 +12,7 @@ provider/model entirely — without disturbing the others.  See agent_params.yam
 
 _config: dict = {}
 _agent_overrides: dict = {}
+_strict_tools: bool = True
 
 
 def configure(
@@ -21,14 +22,20 @@ def configure(
     api_key: str,
     max_tokens: int,
     agent_overrides: dict | None = None,
+    strict_tools: bool = True,
 ) -> None:
     """Called once by agent_node before the graph is built.
 
     agent_overrides: {agent_name: {provider?, model?, base_url?, api_key?,
                       max_tokens?, slot?}} — any subset of fields overrides
                       the global config for that agent only.
+    strict_tools:    when True, nodes that MUST emit a tool call (the supervisor's
+                     handover) force it via tool_choice. On llama.cpp this becomes a
+                     grammar constraint generated from the tool's JSON schema, so the
+                     model can only emit a valid handover to a real agent. Disable if
+                     your llama.cpp build lacks --jinja tool-call support.
     """
-    global _config, _agent_overrides
+    global _config, _agent_overrides, _strict_tools
     _config = {
         "provider": provider,
         "model": model,
@@ -37,6 +44,12 @@ def configure(
         "max_tokens": max_tokens,
     }
     _agent_overrides = agent_overrides or {}
+    _strict_tools = strict_tools
+
+
+def strict_tools_enabled() -> bool:
+    """True if mandatory tool calls should be forced via tool_choice (grammar-constrained)."""
+    return _strict_tools
 
 
 def get_llm(agent: str | None = None):

@@ -4,7 +4,7 @@ import logging
 
 from langchain_core.messages import AIMessage, SystemMessage
 
-from ..llm import get_llm
+from ..llm import get_llm, strict_tools_enabled
 from ..state import AgentState
 from ..tools.handover import handover, HANDOVER_NAMES
 from ..utils.message_utils import prepare_messages_for_agent, safe_invoke
@@ -33,7 +33,15 @@ def _get_prompt() -> str:
 
 
 def supervisor_node(state: AgentState) -> dict:
-    llm = get_llm().bind_tools([handover])
+    # The supervisor MUST emit exactly one handover and never free text. Forcing
+    # tool_choice makes that structural: on llama.cpp the server grammar-constrains
+    # the output to a valid handover (incl. the next_agent enum) generated from the
+    # tool schema; OpenAI honors the same field. Falls back to plain bind_tools if
+    # disabled (e.g. a llama.cpp build without --jinja tool support).
+    if strict_tools_enabled():
+        llm = get_llm().bind_tools([handover], tool_choice="handover")
+    else:
+        llm = get_llm().bind_tools([handover])
     clean = prepare_messages_for_agent(state["messages"], keep_all_system_msgs=True)
     response = safe_invoke(llm, [SystemMessage(content=_get_prompt())] + clean, logger)
     # Strip stray text and deduplicate — supervisor emits exactly one handover call
