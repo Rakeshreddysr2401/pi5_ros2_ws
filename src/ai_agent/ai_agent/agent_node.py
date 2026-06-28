@@ -9,7 +9,6 @@ Responsibilities (and nothing more):
   6. Manage conversation history and multimodal user messages
 """
 
-import base64
 import os
 import threading
 
@@ -37,17 +36,35 @@ class AgentNode(Node):
         self.declare_parameter("history_turns", 20)
         self.declare_parameter("use_vision",  True)
         self.declare_parameter("vision_query_timeout", 60.0)
+        # Per-agent overrides for the local multimodal agent (Gemma via llama.cpp).
+        # local_agent_slot: dedicated llama.cpp KV-cache slot (-1 = none/auto).
+        # local_agent_model: override model name for local_agent ("" = inherit global).
+        self.declare_parameter("local_agent_slot",  -1)
+        self.declare_parameter("local_agent_model", "")
 
         provider      = self.get_parameter("provider").value
         model         = self.get_parameter("model").value
         api_key_env   = self.get_parameter("api_key_env").value
         base_url      = self.get_parameter("base_url").value
         max_tokens    = self.get_parameter("max_tokens").value
-        self._max_history    = self.get_parameter("history_turns").value * 2
+        # History now stores raw message objects (incl. captured image blocks),
+        # not turn-pairs, so allow extra room for tool-call / image messages.
+        self._max_history    = self.get_parameter("history_turns").value * 4
         self._use_vision     = self.get_parameter("use_vision").value
         self._vision_timeout = self.get_parameter("vision_query_timeout").value
+        local_agent_slot     = self.get_parameter("local_agent_slot").value
+        local_agent_model    = self.get_parameter("local_agent_model").value
 
         api_key = os.environ.get(api_key_env, "") if api_key_env else "none"
+
+        # Per-agent LLM overrides — local_agent gets its own slot (and optionally
+        # its own multimodal model) so its cached image prefix isn't evicted.
+        agent_overrides = {
+            "local_agent": {
+                "slot":  local_agent_slot,
+                "model": local_agent_model or None,
+            }
+        }
 
         # ── Known map locations for Nav2 goal publishing ──────────────────
         self.declare_parameter("locations.kitchen",     [2.5,  1.0,  0.0])
@@ -62,7 +79,7 @@ class AgentNode(Node):
         # ── Inject config into graph layer ────────────────────────────────
         self._bridge = ROS2Bridge(self, known_locations=known_locations)
         bridge_module.init(self._bridge)
-        llm_module.configure(provider, model, base_url, api_key, max_tokens)
+        llm_module.configure(provider, model, base_url, api_key, max_tokens, agent_overrides)
 
         # Register navigation completion callback
         self._bridge.register_nav_done_callback(self._on_nav_done)
@@ -184,20 +201,23 @@ class AgentNode(Node):
     # ── Graph invocation (worker thread) ──────────────────────────────────
 
     def _process(self, text: str) -> None:
+        from langchain_core.messages import HumanMessage
         self._pub_thinking.publish(Bool(data=True))
         try:
             with self._history_lock:
                 history = list(self._history)
 
-            user_content = self._build_user_content(text)
-            messages     = history + [{"role": "user", "content": user_content}]
+            # Plain-text user turn. Camera frames enter the conversation only when
+            # local_agent calls look() — no ambient frame-stapling. Per-agent
+            # projection (graph.utils.message_utils) strips images for text agents.
+            messages = history + [HumanMessage(content=text)]
 
             self.get_logger().info(f"Invoking graph with input: {text}")
             result = None
             for event in self._graph.stream({"messages": messages}, stream_mode="values"):
                 if "messages" in event:
                     msg = event["messages"][-1]
-                    self.get_logger().info(f"Step message [{type(msg).__name__}]: {msg.content[:200]} (tool_calls: {getattr(msg, 'tool_calls', None)})")
+                    self.get_logger().info(f"Step message [{type(msg).__name__}]: {str(msg.content)[:200]} (tool_calls: {getattr(msg, 'tool_calls', None)})")
                 result = event
 
             response = self._extract_response(result)
@@ -206,16 +226,13 @@ class AgentNode(Node):
                 self.get_logger().warning("Graph returned empty response")
                 return
 
+            # Persist the FULL message list from the graph (including any frames
+            # captured via look()), so follow-up turns reason over the same image.
+            # Trim at a turn boundary so the cached image prefix stays intact until
+            # a deliberate reset (never a per-turn front shift).
+            new_history = result.get("messages", messages) if result else messages
             with self._history_lock:
-                # Store plain text in history (strip image bytes from user content)
-                user_text = text if isinstance(user_content, str) else next(
-                    (p["text"] for p in user_content if isinstance(p, dict) and p.get("type") == "text"),
-                    text,
-                )
-                self._history.append({"role": "user",      "content": user_text})
-                self._history.append({"role": "assistant", "content": response})
-                if len(self._history) > self._max_history:
-                    self._history = self._history[-self._max_history:]
+                self._history = self._trim_history(new_history)
 
             self.get_logger().info(f"→ TTS: {response[:120]}")
             self._bridge.publish_speech(response)
@@ -226,18 +243,21 @@ class AgentNode(Node):
         finally:
             self._pub_thinking.publish(Bool(data=False))
 
-    def _build_user_content(self, text: str):
-        """Plain text, or [text + image] when a frame is cached and vision is on."""
-        if not self._use_vision:
-            return text
-        frame = self._bridge.get_frame()
-        if frame is None:
-            return text
-        b64 = base64.b64encode(frame).decode()
-        return [
-            {"type": "text",      "text": text},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-        ]
+    def _trim_history(self, messages: list) -> list:
+        """Cap history length, cutting only at a HumanMessage boundary.
+
+        Append-only within the cap (cache-friendly). When the cap is exceeded we
+        drop whole leading turns — one cache reset at the boundary, never a
+        per-turn front shift — and never orphan a tool_call / tool-response pair.
+        """
+        from langchain_core.messages import HumanMessage
+        msgs = list(messages)
+        if len(msgs) <= self._max_history:
+            return msgs
+        cut = len(msgs) - self._max_history
+        while cut < len(msgs) and not isinstance(msgs[cut], HumanMessage):
+            cut += 1
+        return msgs[cut:] if cut < len(msgs) else msgs
 
     def _extract_response(self, result: dict) -> str | None:
         """Return the last non-empty AI text from the graph output."""

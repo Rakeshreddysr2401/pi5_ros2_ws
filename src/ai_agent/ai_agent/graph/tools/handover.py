@@ -8,14 +8,14 @@ HANDOVER_NAMES = {"handover"}
 
 @tool("handover")
 def handover(
-    next_agent: Literal["supervisor", "chat", "vision", "navigate", "status", "swiggy", "tracker"],
+    next_agent: Literal["supervisor", "chat", "local_agent", "vision", "navigate", "status", "swiggy", "tracker"],
     reason: str = "",
     chain: bool = False,
 ) -> str:
     """Transfer the conversation to another agent.
 
     Args:
-        next_agent: Agent to route to — supervisor | chat | vision | navigate | status | swiggy | tracker
+        next_agent: Agent to route to — supervisor | chat | local_agent | vision | navigate | status | swiggy | tracker
         reason: Why this handover is happening (e.g. "order_placed", "cannot_answer").
         chain: True → next agent responds immediately in the same turn.
                Use for swiggy → tracker after placing an order.

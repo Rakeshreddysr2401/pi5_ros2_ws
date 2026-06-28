@@ -12,9 +12,11 @@ Step-by-step to get the rover moving over WiFi using micro-ROS.
 | L298N motor driver | Dual H-bridge |
 | 4-wheel chassis + DC motors | |
 | PoE switch or WiFi router | All devices on same subnet |
-| RealSense D555 (PoE) | Connects to Jetson via PoE, not Pi5 |
+| Logitech USB camera | Plugs into the **Jetson** (current). Publishes `/camera/color/image_raw` |
+| RealSense D555 (PoE) | *Future depth-camera upgrade* — connects to Jetson via PoE (enables SLAM/Nav2/nvblox) |
 
-> **No IR sensor** — obstacle detection is handled by the D555 depth camera + nvblox on Jetson.
+> **No IR sensor** — obstacle detection will be handled by the D555 depth camera + nvblox on
+> Jetson once it arrives. Until then the Logitech cam feeds vision (`local_agent` + Moondream).
 
 ---
 
@@ -257,7 +259,7 @@ Serial Monitor on ESP32 should show:
 Mac Mini  (singireddys-mac-mini.local)   :8080  llama.cpp HTTP
 Jetson    (static or DHCP)      :0     ROS2 DDS (ROS_DOMAIN_ID=0)
 Pi5       192.168.1.100         :8888  micro-ROS UDP agent
-D555      192.168.1.100 (PoE)   —      publishes ROS2 topics natively to Jetson
+Camera    Logitech USB → Jetson —      Jetson publishes /camera/color/image_raw (D555 PoE later)
 ESP32     DHCP                  —      connects to Pi5:8888 via WiFi UDP
 ```
 
@@ -273,8 +275,8 @@ All ROS2 devices must be on the same subnet with `ROS_DOMAIN_ID=0`.
 | `/goal_pose` | `geometry_msgs/PoseStamped` | Pi5 → Jetson Nav2 | Map-based navigation goal |
 | `/voice/user_input` | `std_msgs/String` | Jetson → Pi5 | STT transcription (triggers LangGraph) |
 | `/voice/robot_speech` | `std_msgs/String` | Pi5 → Jetson | TTS text to Kokoro |
-| `/camera/color/image_raw` | `sensor_msgs/Image` | D555 → Pi5 | Camera frames for LLM context |
-| `/vision/query` | `std_msgs/String` | Pi5 → Jetson | Moondream VLM question |
+| `/camera/color/image_raw` | `sensor_msgs/Image` | Jetson (Logitech) → Pi5 | Compressed frames (~640×480, ~5fps); cached on Pi5, sent to Gemma on `look()` |
+| `/vision/query` | `std_msgs/String` | Pi5 → Jetson | Moondream VLM question (navigation) |
 | `/vision/query_result` | `std_msgs/String` | Jetson → Pi5 | Moondream VLM answer |
 | `/visual_slam/tracking/odometry` | `nav_msgs/Odometry` | Jetson → Pi5 | Robot pose from Isaac ROS SLAM |
 | `/brain/thinking` | `std_msgs/Bool` | Pi5 internal | True while LLM running |
@@ -286,7 +288,7 @@ All ROS2 devices must be on the same subnet with `ROS_DOMAIN_ID=0`.
 | `/movement_cmd` | `chassis_pilot` removed — Pi5 publishes Twist directly |
 | `/ir_obstacle` | IR sensor removed — D555 + nvblox handles obstacle detection |
 | `/vision/objects_3d` | `spatial_node` removed — nvblox covers 3D mapping |
-| `/vision/image_raw` | Replaced by D555 native topic `/camera/color/image_raw` |
+| `/vision/image_raw` | Replaced by `/camera/color/image_raw` (Logitech on Jetson now; D555 PoE later) |
 
 ---
 

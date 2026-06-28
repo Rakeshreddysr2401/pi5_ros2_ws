@@ -225,9 +225,13 @@ cp example.env .env
 #   OPENAI_API_KEY=sk-...        (if using OpenAI)
 #   ANTHROPIC_API_KEY=sk-ant-... (if using Anthropic)
 #
-# Optionally change the Studio LLM:
-#   STUDIO_PROVIDER=openai
-#   STUDIO_MODEL=gpt-4o-mini
+# Optionally change the Studio LLM (use the Mac Mini Gemma for multimodal/look()):
+#   STUDIO_PROVIDER=llamacpp
+#   STUDIO_MODEL=gemma-4-E4B-it-Q8_0.gguf
+#   STUDIO_BASE_URL=http://singireddys-mac-mini.local:8080/v1
+#
+# To test local_agent's look() vision without a camera, point this at any image:
+#   STUDIO_TEST_IMAGE=/path/to/photo.jpg
 ```
 
 ### Step 4: Run LangGraph Studio
@@ -259,5 +263,6 @@ uv pip install -r requirements.txt
 | Swiggy food ordering | yes | MCP tools connect to Swiggy server |
 | `speak()` | no | logs text instead of publishing |
 | `move_robot()` / `navigate_to_pose()` | no | returns error — no ROS2 |
-| `query_vision()` | no | returns stub message — no camera |
+| `query_vision()` | no | returns stub message — no Moondream |
+| `look()` (local_agent) | partial | no live camera; serves `STUDIO_TEST_IMAGE` if set, else "no frame" |
 | `get_robot_status()` | no | `call_service()` raises TimeoutError |

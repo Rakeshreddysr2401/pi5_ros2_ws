@@ -20,7 +20,30 @@ def safe_invoke(llm, messages: list, logger: logging.Logger) -> AIMessage:
         return AIMessage(content=_FALLBACK_MESSAGE)
 
 
-def prepare_messages_for_agent(messages: list, keep_all_system_msgs: bool = False) -> list:
+def _strip_images(msg):
+    """Return a copy of msg with any image_url content blocks removed.
+
+    Multimodal messages carry list content like
+    [{"type": "text", ...}, {"type": "image_url", ...}].  Non-vision agents get
+    a text-only projection of the shared log: drop the image blocks, collapse
+    the remaining text.  Messages with plain string content pass through.
+    """
+    content = msg.content
+    if not isinstance(content, list):
+        return msg
+    texts = [
+        part.get("text", "")
+        for part in content
+        if isinstance(part, dict) and part.get("type") == "text"
+    ]
+    return msg.model_copy(update={"content": " ".join(t for t in texts if t)})
+
+
+def prepare_messages_for_agent(
+    messages: list,
+    keep_all_system_msgs: bool = False,
+    keep_images: bool = False,
+) -> list:
     """Remove handover routing noise and stale SystemMessages.
 
     Keeps:
@@ -30,6 +53,9 @@ def prepare_messages_for_agent(messages: list, keep_all_system_msgs: bool = Fals
     - ToolMessages from non-handover tools
     - SystemMessages: if keep_all_system_msgs=True keeps all from current turn;
       otherwise only the most recent one.
+
+    keep_images: when False, strips image_url blocks so non-vision agents get a
+    text-only projection of the (possibly multimodal) shared conversation.
     """
     if keep_all_system_msgs:
         last_human_idx = max(
@@ -75,5 +101,8 @@ def prepare_messages_for_agent(messages: list, keep_all_system_msgs: bool = Fals
                 continue
 
         filtered.append(msg)
+
+    if not keep_images:
+        filtered = [_strip_images(m) for m in filtered]
 
     return filtered

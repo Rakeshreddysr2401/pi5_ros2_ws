@@ -35,6 +35,9 @@ can greet the delivery person or assist the user further.
 - For status checks, report estimated delivery time, current status, and restaurant name.
 - Once the tracking question is fully answered, call handover("supervisor", reason="tracking_done").
 - For food ordering (not tracking), call handover("supervisor", reason="ordering_request").
+- Put replies in your message text (spoken automatically); use speak() only to
+  acknowledge before a slow tool, never for your final reply. NEVER hand over to
+  "tracker" (yourself).
 """
 
 

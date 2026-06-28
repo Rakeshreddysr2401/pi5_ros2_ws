@@ -2,11 +2,11 @@
 
 The **brain and motor bridge** of a distributed home assistant robot.
 Pi5 handles all reasoning (LangGraph + LLM) and routes motor commands via micro-ROS.
-Jetson Orin handles perception (STT, TTS, camera, YOLO, Moondream, SLAM, Nav2).
+Jetson Orin handles perception (STT, TTS, Logitech camera, YOLO, Moondream, SLAM, Nav2).
 
 ```
-Mac Mini  ──────  llama.cpp at singireddys-mac-mini.local:8080  (OpenAI-compatible HTTP)
-Jetson    ──────  Isaac ROS (SLAM, Nav2, nvblox) · STT · TTS · YOLO · Moondream
+Mac Mini  ──────  llama.cpp — Gemma 3n E4B multimodal GGUF  (OpenAI-compatible HTTP)
+Jetson    ──────  Logitech USB cam · Isaac ROS (SLAM, Nav2, nvblox) · STT · TTS · YOLO · Moondream
 Pi 5      ──────  THIS REPO — LangGraph brain + micro-ROS agent (ESP32 bridge)
 ESP32     ──────  4-wheel drive chassis (micro-ROS over WiFi UDP)
 ```
@@ -80,10 +80,11 @@ cp example.env .env
 | `OPENAI_API_KEY` | If using OpenAI | Cloud LLM API key |
 | `ANTHROPIC_API_KEY` | If using Anthropic | Cloud LLM API key |
 | `GOOGLE_API_KEY` | If using Gemini | Cloud LLM API key |
-| `STUDIO_PROVIDER` | No | LLM provider for Studio (default `openai`) |
-| `STUDIO_MODEL` | No | Model for Studio (default `gpt-4o-mini`) |
-| `STUDIO_BASE_URL` | No | Custom base URL for Studio (e.g. llama.cpp endpoint) |
+| `STUDIO_PROVIDER` | No | LLM provider for Studio — use `llamacpp` for the Mac Mini Gemma (default `openai`) |
+| `STUDIO_MODEL` | No | Model for Studio, e.g. `gemma-4-E4B-it-Q8_0.gguf` (default `gpt-4o-mini`) |
+| `STUDIO_BASE_URL` | No | Base URL for Studio, e.g. `http://singireddys-mac-mini.local:8080/v1` |
 | `STUDIO_MAX_TOKENS` | No | Max tokens for Studio LLM (default `3000`) |
+| `STUDIO_TEST_IMAGE` | No | Path to a JPEG/PNG served to `look()` in Studio (no live camera off-robot) |
 | `SWIGGY_FOOD_MCP_URL` | No | Defaults to `https://mcp.swiggy.com/food` |
 | `SWIGGY_ACCESS_TOKEN` | No | Bearer token for Swiggy auth |
 | `TAVILY_API_KEY` | No | Enables web search in the chat agent |
@@ -98,9 +99,12 @@ Edit `src/ai_agent/config/agent_params.yaml`:
 ```yaml
 agent_node:
   provider: "llamacpp"                              # llamacpp | openai | anthropic | gemini | ollama
+  model: "gemma-4-E4B-it-Q8_0.gguf"                 # multimodal GGUF (vision for local_agent)
   base_url: "http://singireddys-mac-mini.local:8080/v1"      # Mac Mini llama.cpp endpoint
   max_tokens: 3000
-  use_vision: true
+  use_vision: true                                  # enable /camera/color/image_raw + look()
+  local_agent_slot: -1                              # dedicated llama.cpp KV slot for local_agent (-1 = auto; needs --parallel N)
+  local_agent_model: ""                             # override model for local_agent only ("" = inherit)
   # Named map locations (x, y, yaw_deg) in SLAM map frame
   # Update these after building a SLAM map on Jetson
   locations.kitchen:     [2.5,  1.0,  0.0]
@@ -183,20 +187,21 @@ User speaks
     │
     ▼  /voice/user_input (String)    [Jetson STT → Pi5]
 agent_node (ROS2 spin thread)
-    │  puts text + cached camera frame into input_queue
+    │  puts text into input_queue (camera frame is pulled on demand by look())
     ▼
 worker thread
     │  graph.invoke()
     ▼
 turn_entry  ──►  supervisor (routes via handover)
                      │
-          ┌──────────┼──────────┬──────────┬──────────┬──────────┐
-          ▼          ▼          ▼          ▼          ▼          ▼
-        chat       vision    navigate   status     swiggy    tracker
-          │          │          │          │          │          │
-        tools      tools      tools      tools      tools      tools
-          │          │          │          │          │          │
-          └──────────┴──────────┴──────────┴──────────┴──────────┘
+     ┌───────────┬───────────┬───────────┬──────────┬──────────┬──────────┐
+     ▼           ▼           ▼           ▼          ▼          ▼          ▼
+   chat     local_agent   navigate    status     swiggy    tracker   (vision*)
+     │           │           │           │          │          │
+   tools       tools       tools       tools      tools      tools
+     │           │           │           │          │          │
+     └───────────┴───────────┴───────────┴──────────┴──────────┘
+   * vision (Moondream text) is dormant — superseded by local_agent
                                     │
                              handle_handover
                           (chain or sticky next turn)
@@ -227,11 +232,20 @@ If the order arrives, the tracker agent speaks, navigates to the door via Nav2, 
 | Agent | Handles | Key Tools |
 |-------|---------|-----------|
 | `supervisor` | Routes every request — never speaks | `handover` |
-| `chat` | General questions, small talk | `speak`, `query_vision`, `get_robot_status` |
-| `vision` | What the robot sees | `speak`, `query_vision` |
+| `chat` | General questions, knowledge, small talk | `speak`, `query_vision`, `get_robot_status` |
+| `local_agent` | **What the robot sees** — multimodal vision over real camera frames, remembers the scene for follow-ups | `speak`, `look`, `handover` |
 | `navigate` | Movement, go-to rooms, find objects | `speak`, `navigate_to_pose`, `navigate_to_visible_object`, `navigate_to_object`, `move_robot`, `query_vision` |
 | `status` | Battery, hardware, operational state | `speak`, `get_robot_status`, `ros2_publish` |
 | `swiggy` | Food ordering, cart, place orders | Swiggy MCP tools |
 | `tracker` | Delivery tracking, door navigation on arrival | Swiggy MCP tools, `navigate_to_pose` |
+| `vision` | *(dormant — superseded by `local_agent`; unrouted, kept for restore)* | `speak`, `query_vision` |
 
-For full architecture details see [ARCHITECTURE.md](ARCHITECTURE.md).
+**Response contract:** agents put their answer in the reply **text** (auto-spoken on
+the robot via `/voice/robot_speech`). `speak()` is for *acknowledgements before slow
+tools only*, and no agent hands over to itself — a deterministic loop guard in
+`handle_handover` enforces this.
+
+**Conversational vision:** `local_agent` runs on the multimodal Gemma model. It calls
+`look()` to capture a frame (injected into the conversation as an image), then reasons
+over it — and over the *same* frame for follow-up questions — without re-querying.
+See [ARCHITECTURE.md](ARCHITECTURE.md) § Conversational Vision for slots & projection.

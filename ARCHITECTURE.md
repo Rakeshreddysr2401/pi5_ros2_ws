@@ -7,8 +7,8 @@ How the system works, how the pieces fit together, and how to extend it.
 ## System Overview
 
 ```
-Mac Mini          llama.cpp at singireddys-mac-mini.local:8080 — any GGUF (OpenAI-compatible HTTP)
-Jetson Orin 8GB   Isaac ROS (SLAM, Nav2, nvblox) · STT · TTS · YOLO · Moondream VLM
+Mac Mini          llama.cpp at singireddys-mac-mini.local:8080 — Gemma 3n multimodal GGUF (OpenAI-compatible HTTP)
+Jetson Orin 8GB   Logitech USB cam · Isaac ROS (SLAM, Nav2, nvblox) · STT · TTS · YOLO · Moondream VLM
 Pi 5  [this repo] LangGraph supervisor + agents + micro-ROS agent (ESP32 bridge)
 ESP32             4-wheel drive chassis (micro-ROS over WiFi UDP port 8888)
 ```
@@ -29,7 +29,7 @@ Pi5 LangGraph brain
     │  /vision/query           → Jetson moondream_node
     │  /goal_pose              → Jetson Nav2 → /cmd_vel → Pi5 micro-ROS → ESP32
     │  /cmd_vel (direct)       → Pi5 micro-ROS → ESP32 (fine movement only)
-    ↑  /camera/color/image_raw ← D555 PoE camera (attached to LLM calls)
+    ↑  /camera/color/image_raw ← Logitech USB cam on Jetson (compressed; cached on Pi5, sent to Gemma when local_agent calls look())
     ↑  /vision/query_result    ← Jetson moondream_node
     ↑  /visual_slam/tracking/odometry ← Jetson Isaac ROS SLAM
 ```
@@ -55,7 +55,8 @@ src/
 │   │       │   ├── handle_handover.py  Resolves handover: chain vs sticky, loop guard
 │   │       │   ├── supervisor.py       Pure router — calls handover(), never speaks
 │   │       │   ├── chat.py             General conversation + web search
-│   │       │   ├── vision.py           Visual reasoning via Moondream
+│   │       │   ├── vision.py           Moondream text VLM (dormant — superseded by local_agent, kept for restore)
+│   │       │   ├── local_agent.py      Conversational vision — reasons over real frames via Gemma + look()
 │   │       │   ├── navigate.py         Map nav (Nav2) + object nav (VLM + Twist)
 │   │       │   ├── status.py           Robot operational state
 │   │       │   ├── swiggy.py           Food ordering
@@ -64,7 +65,8 @@ src/
 │   │       │   ├── _bridge.py       Module-level bridge accessor (injected at startup)
 │   │       │   ├── handover.py      handover() tool — the routing mechanism
 │   │       │   ├── speech.py        speak()
-│   │       │   ├── vision.py        query_vision()
+│   │       │   ├── vision.py        query_vision()  — Moondream text query (Jetson)
+│   │       │   ├── look.py          look()          — capture frame into conversation as an image (local_agent)
 │   │       │   ├── movement.py      move_robot(), navigate_to_pose(), navigate_to_visible_object(), navigate_to_object()
 │   │       │   ├── system.py        get_robot_status(), ros2_publish(), set_active_order()
 │   │       │   ├── swiggy_mcp.py    Loads Swiggy MCP tools at startup
@@ -110,6 +112,8 @@ The same graph can be driven in two ways — never simultaneously.
 **`StubBridge` behaviour:**
 - `publish_speech()` — logs the text
 - `query_vision()` — returns an explanatory string
+- `get_frame()` — returns `None` (so `look()` reports "no camera frame" instead of crashing),
+  or serves the file at `STUDIO_TEST_IMAGE` when set — lets you test `look()` vision off-robot
 - `navigate_to_pose()` / `move_robot()` — logs the command, simulates success
 - `call_service()` — raises `TimeoutError` (caught by existing tool handlers)
 
@@ -163,6 +167,82 @@ supervisor  ──► supervisor_tools  ──► handle_handover
 
 ---
 
+## Conversational Vision — `local_agent`
+
+`local_agent` is a multimodal agent (Gemma 3n via llama.cpp) that reasons over the
+**actual camera frame**, not Moondream's flattened text. It owns the visual-conversation
+route — it replaces the old Moondream-backed `vision` agent, which stays wired but
+unrouted (drop it back into `_registry.AGENTS` to restore).
+
+Why a separate agent instead of attaching frames to every turn: a real image stays in
+the conversation, so a follow-up about the *same* scene reasons over the same pixels
+instead of re-querying Moondream and getting a fresh, possibly different, text answer.
+
+**Flow:**
+
+```
+supervisor → local_agent
+    │  (no recent frame in context)
+    ├─ look()  →  grabs cached frame, injects it as a HumanMessage image block
+    │             (OpenAI-compatible servers won't carry images in tool-role
+    │              messages, so look() returns a text ack + a follow-up image msg)
+    ▼
+Gemma sees the pixels, answers. The frame STAYS in history.
+    │
+    └─ follow-up ("did he wear spectacles?") reasons over the same image — no re-capture
+```
+
+**Frame freshness:** reuse the in-history frame for follow-ups about the same scene;
+call `look()` again only for a new/changed view ("look again", "what now"). A hard
+staleness timeout (force a fresh look after ~15s) is planned — currently prompt-guided.
+
+### Single master log, projected per-agent
+
+There is one shared conversation log. Each agent is fed a *projection* of it:
+
+| Agent | Projection |
+|-------|-----------|
+| `local_agent` | image-preserving (`prepare_messages_for_agent(..., keep_images=True)`) |
+| every other agent | **image-stripped** text (default — frames collapse to `[Current camera view]`) |
+
+So frames live in the master log but only the multimodal agent pays for them.
+`agent_node` persists the full message objects (images included) across turns; trimming
+happens **only at a HumanMessage boundary** — append-only within the cap, one reset at
+the boundary, never a per-turn front shift (which would break the slot cache below).
+
+### Per-agent llama.cpp slots
+
+`get_llm(agent)` merges the global LLM config with a per-agent override and pins a
+llama.cpp KV-cache slot via `extra_body={"id_slot": N}`. `local_agent` can get a
+**dedicated slot** so its hot image prefix isn't churned out when other agents hit the
+shared server.
+
+**The Mac Mini server (Gemma 3n E4B Q8_0) already provides the cache machinery:**
+
+- `n_parallel = 4` (auto) — **4 slots exist by default**, no `--parallel` flag needed.
+  Set `local_agent_slot` in `agent_params.yaml` to `0–3` (`-1` = auto / no pinning).
+- `kv_unified = true`, `n_ctx = 131072` per slot — 128k context from a shared KV pool
+  (slots do **not** split context here).
+- **Prompt cache enabled (8 GB):** idle slots are saved to the prompt cache and restored
+  by longest-prefix match. This gives automatic cross-task KV reuse regardless of slot —
+  so pinning is **insurance**, not load-bearing.
+- **Context checkpoints** (max 32, spacing 256) — KV checkpointed ~every Gemma image.
+- `local_agent_model` overrides the model for this agent only (e.g. a multimodal GGUF
+  while other agents run a text model).
+
+> **Still verify before relying on the speed win:** the server clearly reuses *text*
+> prefixes, but whether it reuses KV *across the image boundary* (vs. re-running the
+> mmproj vision encoder) is version-dependent and not shown in the boot logs. Run a
+> 2-turn `look()` conversation and check the cached/restored token count on turn 2. The
+> intelligence win (real frames in context) holds regardless; only the "no re-prefill"
+> speed-up needs this confirmed.
+
+> **GGUF token warning:** this build logs mislabeled `<|tool_response>` / `</s>` control
+> tokens. Since routing leans on tool calls (`look`, `handover`, `speak`), watch for
+> flaky tool-call parsing or early stops — if seen, suspect the quant/chat template.
+
+---
+
 ## Navigation: Two Modes
 
 ### Map-based (Nav2 via /goal_pose)
@@ -207,7 +287,7 @@ Publishes Twist directly to `/cmd_vel`. For small precise corrections after arri
 |-------|------|-----------|-------|
 | `/voice/user_input` | String | Jetson → Pi5 | STT output — triggers graph.invoke() |
 | `/voice/robot_speech` | String | Pi5 → Jetson | TTS text for Kokoro |
-| `/camera/color/image_raw` | Image | D555 → Pi5 | Camera frames — cached, attached to LLM calls |
+| `/camera/color/image_raw` | Image | Jetson (Logitech) → Pi5 | Compressed frames — cached on Pi5, sent to Gemma when local_agent calls look() |
 | `/vision/query` | String | Pi5 → Jetson | Question for Moondream VLM |
 | `/vision/query_result` | String | Jetson → Pi5 | Moondream answer |
 | `/visual_slam/tracking/odometry` | Odometry | Jetson → Pi5 | Robot pose from Isaac ROS SLAM |
@@ -232,7 +312,8 @@ Publishes Twist directly to `/cmd_vel`. For small precise corrections after arri
 |------|------|------|
 | `handover(next_agent, reason, chain)` | `tools/handover.py` | Routes to another agent |
 | `speak(text)` | `tools/speech.py` | Publishes to `/voice/robot_speech` |
-| `query_vision(question)` | `tools/vision.py` | Publishes to `/vision/query`, blocks on `/vision/query_result` |
+| `query_vision(question)` | `tools/vision.py` | Publishes to `/vision/query`, blocks on `/vision/query_result` (Moondream) |
+| `look()` | `tools/look.py` | Captures the cached frame into the conversation as an image block (local_agent) |
 | `navigate_to_pose(location)` | `tools/movement.py` | Publishes PoseStamped to `/goal_pose` → Jetson Nav2 |
 | `navigate_to_visible_object(target)` | `tools/movement.py` | Calls Jetson `/vision/find_object_pose` service → Nav2; falls back to VLM scan |
 | `navigate_to_object(target)` | `tools/movement.py` | Fallback: VLM 360° scan + direct Twist approach (no Nav2) |
@@ -250,7 +331,8 @@ Publishes Twist directly to `/cmd_vel`. For small precise corrections after arri
 |-------|----------|
 | `supervisor` | `handover` |
 | `chat` | `CHAT_TOOLS`: `speak`, `query_vision`, `get_robot_status` |
-| `vision` | `VISION_TOOLS`: `speak`, `query_vision` |
+| `local_agent` | `LOCAL_AGENT_TOOLS`: `speak`, `look`, `handover` — multimodal, sees real frames |
+| `vision` | `VISION_TOOLS`: `speak`, `query_vision` — dormant (superseded by `local_agent`) |
 | `navigate` | `NAVIGATE_TOOLS`: `speak`, `move_robot`, `navigate_to_pose`, `navigate_to_visible_object`, `navigate_to_object`, `query_vision` |
 | `status` | `STATUS_TOOLS`: `speak`, `get_robot_status`, `ros2_publish` |
 | `swiggy` | Swiggy MCP tools + `speak` |
@@ -277,13 +359,37 @@ forwards all Twist messages to ESP32 without any routing logic.
 | User says | Routes to |
 |-----------|-----------|
 | General question, small talk | `chat` |
-| "what do you see", "describe", "is there a..." | `vision` |
+| "what do you see", "describe", "is there a...", "did he wear...", "is this the real..." | `local_agent` |
 | "go to [room]", "find [object]", "move forward" | `navigate` |
 | "battery", "status", "what are you doing" | `status` |
 | "order food", "search restaurants", "add to cart" | `swiggy` |
 | "where's my order", "delivery ETA", "track" | `tracker` |
 
 The supervisor never produces text. Any text alongside a handover call is stripped.
+
+---
+
+## Response Contract & Loop Safety
+
+**Response contract** — every agent follows the same rule:
+
+- The actual answer goes in the agent's **message text**. `agent_node` auto-publishes the
+  final AI text to `/voice/robot_speech` (TTS); Studio displays it. An empty final message
+  shows as "No data".
+- `speak()` is **acknowledgement-only** — use it *before* a slow tool (e.g. "let me look"),
+  never to carry the final answer (that empties the message and creates a second TTS path).
+
+**Loop safety** — `handle_handover` prevents runaway routing structurally, independent of
+the model:
+
+- **Self-handover** (agent routes to itself) → re-entered once with a hard "answer now,
+  do not hand over" nudge; prompts also forbid it.
+- **Deterministic loop guard** — per-turn visit counter (`_MAX_VISITS_PER_AGENT = 3`, reset
+  each turn by `turn_entry`), applied to **every** agent with no exemptions. On overflow the
+  turn ends with a plain fallback message **without another LLM call**.
+
+> Small models (Gemma 3n E4B) over-route — these guards make that safe; routing improves on
+> Gemma 12B.
 
 ---
 
@@ -330,7 +436,15 @@ agent_node:
   base_url: "http://singireddys-mac-mini.local:8080/v1"      # Mac Mini llama.cpp
   api_key_env: ""                                   # env var name holding the API key
   max_tokens: 3000
+
+  # Per-agent overrides for the multimodal local_agent:
+  local_agent_slot: 0                               # dedicated llama.cpp KV slot (-1 = none; needs --parallel N)
+  local_agent_model: ""                             # override model for local_agent only ("" = inherit)
 ```
+
+Per-agent config is read by `get_llm(agent_name)` in `graph/llm.py` (see
+[Conversational Vision](#conversational-vision--local_agent) for slots). Other agents can
+be promoted to their own slot/model the same way.
 
 Or override at launch:
 ```bash

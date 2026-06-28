@@ -97,27 +97,38 @@ def handle_handover(state: AgentState):
         return Command(goto="supervisor", update={})
 
     res = _resolve(state, next_agent, reason)
+    current = state.get("active_agent", "supervisor")
+
+    # Self-handover: an agent routed to itself instead of answering. Re-enter it
+    # once with a hard "answer now" nudge (counts toward the loop budget below).
+    if res.next_agent == current and current != "supervisor":
+        logger.info("Self-handover by '%s' — nudging it to answer directly", current)
+        res = _Resolution(
+            next_agent=current,
+            bridge_messages=[SystemMessage(content=(
+                f"Do NOT call handover. You are the '{current}' agent — answer the "
+                f"user's request directly in plain text now: \"{_last_user_query(state)}\""
+            ))],
+        )
+        chain, ai_content = True, ""
 
     visits = dict(state.get("agent_turn_visits") or {})
     visits[res.next_agent] = visits.get(res.next_agent, 0) + 1
 
-    if visits[res.next_agent] > _MAX_VISITS_PER_AGENT and res.next_agent != "chat":
+    # Loop guard: stop calling the LLM and end the turn deterministically with a
+    # plain message (applies to every agent, chat included — no exemptions).
+    if visits[res.next_agent] > _MAX_VISITS_PER_AGENT:
         logger.warning(
-            "Loop guard: %s visited %d times — breaking cycle, redirecting to chat",
+            "Loop guard: %s visited %d times — ending turn with fallback",
             res.next_agent, visits[res.next_agent],
         )
-        res = _Resolution(
-            next_agent="chat",
-            bridge_messages=[SystemMessage(content=(
-                "A routing loop was detected. Respond with plain natural language only — "
-                "no tool calls. Acknowledge the user's request helpfully and let them know "
-                "you're having trouble completing the task. Use speak() to say this."
+        return {
+            "active_agent": res.next_agent,
+            "agent_turn_visits": visits,
+            "messages": [AIMessage(content=(
+                "Sorry, I'm having trouble with that one. Could you rephrase it for me?"
             ))],
-        )
-        visits["chat"] = visits.get("chat", 0) + 1
-        # Always chain on loop guard — user must hear an error response this turn
-        chain = True
-        ai_content = ""
+        }
 
     should_chain = chain or not ai_content
 

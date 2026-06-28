@@ -10,6 +10,7 @@ as a ToolMessage error and the LLM can respond gracefully.
 """
 
 import logging
+import os
 import threading
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,18 @@ class StubBridge:
         pass
 
     def get_frame(self) -> bytes | None:
-        return None
+        """No live camera in Studio. For testing local_agent's look() + vision,
+        set STUDIO_TEST_IMAGE to a JPEG/PNG path and that frame is served instead.
+        """
+        path = os.getenv("STUDIO_TEST_IMAGE", "").strip()
+        if not path:
+            return None
+        try:
+            with open(os.path.expanduser(path), "rb") as f:
+                return f.read()
+        except OSError as e:
+            logger.warning("STUDIO_TEST_IMAGE unreadable (%s): %s", path, e)
+            return None
 
     def get_known_locations(self) -> dict:
         return self._known_locations

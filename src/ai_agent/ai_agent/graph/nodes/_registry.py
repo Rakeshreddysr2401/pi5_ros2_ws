@@ -9,9 +9,9 @@ AGENTS: dict[str, dict] = {
         "description": "general questions, web search, system status, small talk, anything not covered by other agents",
         "examples": ["what's the weather?", "tell me a joke", "what time is it"],
     },
-    "vision": {
-        "description": "what the robot sees, object detection, scene description, visual queries",
-        "examples": ["what do you see?", "is there anyone in the room?", "describe the scene"],
+    "local_agent": {
+        "description": "anything about what the robot sees — scene description, object/person detection, visual queries, and follow-up questions about the same scene (reasons over the actual camera image and remembers it)",
+        "examples": ["what do you see?", "is there anyone in the room?", "did he wear spectacles?", "is this the real poster?"],
     },
     "navigate": {
         "description": "moving the robot, going somewhere, finding and approaching objects, stopping",

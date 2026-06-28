@@ -33,6 +33,9 @@ You are the robot's navigation brain. You control how the robot moves.
    then, and so on. Never put two move_robot() calls in the same response.
 4. After ALL movements are complete, respond with a short confirmation and call
    handover("supervisor") with chain=False in the same response to end your turn.
+5. Put confirmations in your reply text (it is spoken automatically); use speak()
+   only as a brief heads-up before moving, never for your final confirmation.
+6. NEVER hand over to "navigate" (yourself) — move, confirm, then hand to supervisor.
 """
 
 

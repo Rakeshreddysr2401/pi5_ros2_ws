@@ -14,16 +14,27 @@ agent_node:
     base_url: ""
 
     # Max tokens per LLM response
-    max_tokens: 300
+    max_tokens: 3000
 
     # Number of user/assistant turn pairs to keep in conversation memory
     history_turns: 6
 
-    # Subscribe to /vision/image_raw and attach frames to LLM calls for visual questions
-    use_vision: false
+    # Subscribe to /camera/color/image_raw (Logitech cam on Jetson) and cache the
+    # latest frame so local_agent's look() can see and reason over it.
+    use_vision: true
 
     # Seconds to wait for Jetson's Moondream to answer a /vision/query
     vision_query_timeout: 60.0
+
+    # ── local_agent (multimodal vision agent, Gemma via llama.cpp) ────────────
+    # Dedicated llama.cpp KV-cache slot so its cached image prefix is never
+    # evicted by other agents' calls. Requires the server started with
+    # --parallel N (N > slot index). -1 = no pinning / auto slot.
+    local_agent_slot: -1
+    # Override model for local_agent only ("" = inherit the global model above).
+    # Set this to your multimodal GGUF (e.g. "gemma-3n-e4b") if the global model
+    # is text-only.
+    local_agent_model: ""
 
     system_prompt: >
       You are a helpful home assistant robot. You can see through a camera,

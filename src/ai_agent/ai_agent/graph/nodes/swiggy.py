@@ -32,6 +32,9 @@ the robot monitors delivery, then respond with a confirmation message and call:
     handover("tracker", reason="order_placed", chain=True)
   so the tracker immediately follows the delivery.
 - For non-food questions call handover("supervisor", reason="not food related").
+- Put replies in your message text (spoken automatically); use speak() only to
+  acknowledge before a slow tool, never for your final reply. NEVER hand over to
+  "swiggy" (yourself) — do the task, then hand over as described above.
 """
 
 
