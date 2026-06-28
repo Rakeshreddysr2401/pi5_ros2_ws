@@ -9,6 +9,7 @@ LangGraph tools never import from this file directly — they call
 graph.tools._bridge.get() which returns this object.
 """
 
+import json
 import threading
 from typing import Callable, Optional
 
@@ -32,10 +33,12 @@ class ROS2Bridge:
         self._svc_lock     = threading.Lock()
         self._act_lock     = threading.Lock()
 
-        # ── Vision query blocking sync ─────────────────────────────────────────
-        self._vision_lock   = threading.Lock()
-        self._vision_event  = threading.Event()
-        self._vision_result: str | None = None
+        # ── Latest YOLO target-finder result (parsed JSON from /vision/target_result) ──
+        # Jetson target_node publishes {target, found, bearing_x, rel_size, conf, stamp}
+        # whenever a target is set on /vision/target. Used by the visual-servoing
+        # approach loop in graph.tools.movement.
+        self._target_lock = threading.Lock()
+        self._latest_target_result: dict | None = None
 
         # ── Latest camera frame (bytes, JPEG-encoded) ─────────────────────────
         self._latest_frame: bytes | None = None
@@ -63,9 +66,9 @@ class ROS2Bridge:
         self._nav_done_callback: Callable[[bool, str], None] | None = None
 
         # ── Fixed publishers (pre-created so tools never block on first call) ──
-        self._speech_pub       = node.create_publisher(String, "/voice/robot_speech", 10)
-        self._vision_query_pub = node.create_publisher(String, "/vision/query", 10)
-        self._twist_pub        = node.create_publisher(Twist, "/cmd_vel", 10)
+        self._speech_pub        = node.create_publisher(String, "/voice/robot_speech", 10)
+        self._vision_target_pub = node.create_publisher(String, "/vision/target", 10)
+        self._twist_pub         = node.create_publisher(Twist, "/cmd_vel", 10)
 
         # Subscribe to Kokoro speaking status for back-pressure
         node.create_subscription(Bool, "/voice/tts_speaking", self._on_speaking, 10)
@@ -83,10 +86,14 @@ class ROS2Bridge:
         with self._frame_lock:
             self._latest_frame = frame_bytes
 
-    def on_query_result(self, msg) -> None:
-        with self._vision_lock:
-            self._vision_result = msg.data
-            self._vision_event.set()
+    def on_target_result(self, msg) -> None:
+        """Cache the latest /vision/target_result (JSON string) as a parsed dict."""
+        try:
+            data = json.loads(msg.data)
+        except (ValueError, TypeError):
+            return
+        with self._target_lock:
+            self._latest_target_result = data
 
     def _on_speaking(self, msg: Bool) -> None:
         with self._speech_lock:
@@ -101,18 +108,20 @@ class ROS2Bridge:
     def get_known_locations(self) -> dict:
         return self._known_locations
 
-    # ── Blocking VLM query (topic-pair) ───────────────────────────────────
+    # ── YOLO target finder (Jetson target_node) ───────────────────────────
 
-    def query_vision(self, question: str, timeout: float = 10.0) -> str:
-        """Publish to /vision/query and block until /vision/query_result arrives."""
-        with self._vision_lock:
-            self._vision_event.clear()
-            self._vision_result = None
-        self._vision_query_pub.publish(String(data=question))
-        if self._vision_event.wait(timeout=timeout):
-            with self._vision_lock:
-                return self._vision_result or "No answer received"
-        return "Vision is currently unavailable — Moondream node may not be running"
+    def set_vision_target(self, target: str) -> None:
+        """Tell the Jetson target_node which COCO class to hunt for ("" to stop)."""
+        if target:
+            # New target — drop any stale result so callers wait for a fresh one.
+            with self._target_lock:
+                self._latest_target_result = None
+        self._vision_target_pub.publish(String(data=target))
+
+    def get_target_result(self) -> dict | None:
+        """Return the latest parsed /vision/target_result dict, or None if none yet."""
+        with self._target_lock:
+            return self._latest_target_result
 
     # ── Active order ──────────────────────────────────────────────────────
 

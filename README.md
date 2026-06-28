@@ -2,11 +2,11 @@
 
 The **brain and motor bridge** of a distributed home assistant robot.
 Pi5 handles all reasoning (LangGraph + LLM) and routes motor commands via micro-ROS.
-Jetson Orin handles perception (STT, TTS, Logitech camera, YOLO, Moondream, SLAM, Nav2).
+Jetson Orin handles perception (STT, TTS, Logitech camera, YOLOv8n object directions; SLAM/Nav2 future).
 
 ```
 Mac Mini  ──────  llama.cpp — Gemma 3n E4B multimodal GGUF  (OpenAI-compatible HTTP)
-Jetson    ──────  Logitech USB cam · Isaac ROS (SLAM, Nav2, nvblox) · STT · TTS · YOLO · Moondream
+Jetson    ──────  Logitech USB cam · STT · TTS · YOLOv8n (target_node) · (Isaac ROS SLAM/Nav2/nvblox: future)
 Pi 5      ──────  THIS REPO — LangGraph brain + micro-ROS agent (ESP32 bridge)
 ESP32     ──────  4-wheel drive chassis (micro-ROS over WiFi UDP)
 ```
@@ -47,7 +47,7 @@ Start both containers before the Pi5:
 # Container 1: Isaac ROS (SLAM, Nav2, nvblox)
 cd ~/robot && docker compose up isaac_ros
 
-# Container 2: AI stack (STT, TTS, YOLO, Moondream)
+# Container 2: AI stack (STT, TTS, camera_node, YOLOv8n target_node)
 cd ~/robot && docker compose up ai_stack
 ```
 
@@ -201,7 +201,7 @@ turn_entry  ──►  supervisor (routes via handover)
    tools       tools       tools       tools      tools      tools
      │           │           │           │          │          │
      └───────────┴───────────┴───────────┴──────────┴──────────┘
-   * vision (Moondream text) is dormant — superseded by local_agent
+   * vision uses look() (camera→Gemma); mostly superseded by local_agent
                                     │
                              handle_handover
                           (chain or sticky next turn)
@@ -223,7 +223,7 @@ If the order arrives, the tracker agent speaks, navigates to the door via Nav2, 
 |---------|---------|
 | `ai_agent` | LangGraph supervisor + 7 agents + all tools |
 | `robot_brain` | Launch only — starts micro-ROS agent + agent_node |
-| `robot_interfaces` | Custom `FindObjectPose.srv` |
+| `robot_interfaces` | Custom `FindObjectPose.srv` (for future D555 depth approach) |
 
 ---
 
@@ -232,13 +232,13 @@ If the order arrives, the tracker agent speaks, navigates to the door via Nav2, 
 | Agent | Handles | Key Tools |
 |-------|---------|-----------|
 | `supervisor` | Routes every request — never speaks | `handover` |
-| `chat` | General questions, knowledge, small talk | `speak`, `query_vision`, `get_robot_status` |
+| `chat` | General questions, knowledge, small talk | `speak`, `get_robot_status` |
 | `local_agent` | **What the robot sees** — multimodal vision over real camera frames, remembers the scene for follow-ups | `speak`, `look`, `handover` |
-| `navigate` | Movement, go-to rooms, find objects | `speak`, `navigate_to_pose`, `navigate_to_visible_object`, `navigate_to_object`, `move_robot`, `query_vision` |
+| `navigate` | Movement, go-to rooms, drive up to visible objects | `speak`, `navigate_to_pose`, `navigate_to_visible_object`, `move_robot` |
 | `status` | Battery, hardware, operational state | `speak`, `get_robot_status`, `ros2_publish` |
 | `swiggy` | Food ordering, cart, place orders | Swiggy MCP tools |
 | `tracker` | Delivery tracking, door navigation on arrival | Swiggy MCP tools, `navigate_to_pose` |
-| `vision` | *(dormant — superseded by `local_agent`; unrouted, kept for restore)* | `speak`, `query_vision` |
+| `vision` | Visual Q&A via `look()` (superseded by `local_agent`; kept for restore) | `speak`, `look` |
 
 **Response contract:** agents put their answer in the reply **text** (auto-spoken on
 the robot via `/voice/robot_speech`). `speak()` is for *acknowledgements before slow

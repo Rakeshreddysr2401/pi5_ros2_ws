@@ -30,7 +30,7 @@ class StubBridge:
     def on_image(self, frame_bytes: bytes) -> None:
         pass
 
-    def on_query_result(self, msg) -> None:
+    def on_target_result(self, msg) -> None:
         pass
 
     def get_frame(self) -> bytes | None:
@@ -50,12 +50,14 @@ class StubBridge:
     def get_known_locations(self) -> dict:
         return self._known_locations
 
-    def query_vision(self, question: str, timeout: float = 10.0) -> str:
-        logger.info("[STUB] query_vision: %s", question)
-        return (
-            "Vision is not available in Studio stub mode. "
-            "The robot's camera is only accessible when ROS2 is running."
-        )
+    def set_vision_target(self, target: str) -> None:
+        logger.info("[STUB] set_vision_target: %s", target)
+
+    def get_target_result(self) -> dict | None:
+        # No Jetson target_node in Studio — report "not found" so the approach
+        # loop scans briefly and exits instead of hanging.
+        logger.info("[STUB] get_target_result -> None")
+        return None
 
     # ── Active order ──────────────────────────────────────────────────────
 

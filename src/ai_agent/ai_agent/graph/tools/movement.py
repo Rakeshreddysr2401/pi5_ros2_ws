@@ -105,127 +105,90 @@ def navigate_to_pose(location: str) -> str:
     return f"Navigation started: heading to '{location}' ({x:.1f}, {y:.1f}). I will report when I arrive."
 
 
+# ── Visual-servoing approach ("go near the cup") ──────────────────────────────
+# Uses the Jetson target_node (YOLOv8n) contract:
+#   publish COCO class on /vision/target  →  read /vision/target_result JSON
+#       {target, found, bearing_x[-1..1], rel_size, conf, stamp}
+# We steer with /cmd_vel: turn toward bearing_x, drive forward until rel_size is
+# big enough ("close"). Mono camera → no obstacle avoidance, no metric distance.
+_APPROACH_STOP_REL_SIZE = 0.45   # arrived when the target box fills ~half the frame
+_APPROACH_BEARING_DEADBAND = 0.15  # |bearing_x| below this = "centred enough" to drive
+_APPROACH_TIMEOUT_S = 30.0       # hard cap on the whole approach
+_APPROACH_TURN_GAIN = 1.6        # bearing_x → angular.z scale (clamped to _ANGULAR_VEL_RS)
+_APPROACH_SCAN_GIVEUP_DEG = 400.0  # rotate up to ~full circle looking for the target
+_APPROACH_FIRST_RESULT_WAIT_S = 4.0  # grace period for the first detection to arrive
+
+
 @tool
 def navigate_to_visible_object(target: str) -> str:
-    """Find a visible object using the Jetson depth camera + VLM, then navigate to it via Nav2.
+    """Drive up to a visible object using the camera (no map needed).
 
-    This is the preferred way to approach objects seen in the camera feed:
-    1. Calls the Jetson /vision/find_object_pose service (VLM bbox + RealSense depth → 3D pose)
-    2. Passes the pose to Nav2 for obstacle-aware navigation
+    Visual servoing via the Jetson YOLOv8n target finder: the robot turns toward
+    the named object and drives forward until it is close. Use for:
+    "go near the cup", "approach the bottle", "go to that chair", "come to me".
 
-    Use when: "go near the chair", "approach the bottle", "go to that person"
-    Falls back to navigate_to_object() if the Jetson service is unavailable.
+    `target` must be a common object class (cup, bottle, chair, person, laptop,
+    tv, book, …). For named rooms use navigate_to_pose() instead.
 
-    Returns immediately — navigation runs in background."""
-    bridge = _bridge.get()
-
-    try:
-        from robot_interfaces.srv import FindObjectPose
-        req = FindObjectPose.Request()
-        req.object_description = target
-        resp = bridge.call_service("/vision/find_object_pose", FindObjectPose, req, timeout=15.0)
-
-        if not resp.found:
-            reason = resp.reason or "object not visible in camera"
-            bridge.publish_speech(f"I couldn't find the {target} — {reason}. Let me try scanning.")
-            return _fallback_scan(target, bridge)
-
-        pose = resp.pose
-        x = pose.pose.position.x
-        y = pose.pose.position.y
-
-        import math as _math
-        q = pose.pose.orientation
-        yaw_rad = _math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-        yaw_deg = _math.degrees(yaw_rad)
-
-        bridge.start_nav_to_pose(x, y, yaw_deg, label=target)
-        return f"Found {target} in camera view. Navigating to it via Nav2. I'll report when I arrive."
-
-    except TimeoutError:
-        bridge.publish_speech(f"Jetson vision service unavailable. Scanning for {target} manually.")
-        return _fallback_scan(target, bridge)
-    except Exception as e:
-        bridge.publish_speech(f"Vision service error: {e}. Trying manual scan.")
-        return _fallback_scan(target, bridge)
-
-
-def _fallback_scan(target: str, bridge) -> str:
-    """VLM 360° scan + direct approach — used when Jetson service is unavailable."""
+    This blocks while approaching (up to ~30 s) and returns when it arrives, loses
+    the object, or times out. No obstacle avoidance — it drives straight at the
+    target, so only use it with a clear path. Call speak() first to acknowledge."""
     from geometry_msgs.msg import Twist
 
-    bridge.publish_speech(f"Looking for the {target}, scanning around.")
-    direction = None
-
-    for step in range(8):  # 8 × 45° = 360°
-        answer = bridge.query_vision(
-            f"Do you see a {target}? "
-            f"If yes reply: YES <left|centre|right> <metres>. "
-            f"If no reply: NO."
-        )
-        ans = answer.lower()
-        if ans.startswith("yes"):
-            parts = ans.split()
-            direction = "centre"
-            for word in parts:
-                if word in ("left", "centre", "center", "right"):
-                    direction = word.replace("center", "centre")
-                    break
-            break
-
-        bridge.publish_speech(f"Not found yet, rotating… ({step + 1}/8)")
-        twist = Twist()
-        twist.angular.z = _ANGULAR_VEL_RS
-        _drive_for_duration(bridge, twist, _duration("L", 45))
-
-    if direction is None:
-        bridge.publish_speech(f"I couldn't find the {target} after a full scan.")
-        return f"Navigation failed: {target} not found after 360° scan."
-
-    bridge.publish_speech(f"Found the {target}, approaching now.")
-
-    for _ in range(6):  # max 6 × 20 cm = 1.2 m
-        if direction == "left":
-            twist = Twist()
-            twist.angular.z = _ANGULAR_VEL_RS
-            _drive_for_duration(bridge, twist, _duration("L", 20))
-        elif direction == "right":
-            twist = Twist()
-            twist.angular.z = -_ANGULAR_VEL_RS
-            _drive_for_duration(bridge, twist, _duration("R", 20))
-
-        fwd = Twist()
-        fwd.linear.x = _LINEAR_VEL_MS
-        _drive_for_duration(bridge, fwd, _duration("F", 20))
-
-        close = bridge.query_vision(
-            f"Am I now close to the {target} (within 30 cm)? Reply YES or NO."
-        )
-        if "yes" in close.lower():
-            break
-
-        answer = bridge.query_vision(
-            f"Where is the {target} now — left, centre, or right?"
-        )
-        ans = answer.lower()
-        if "left" in ans:
-            direction = "left"
-        elif "right" in ans:
-            direction = "right"
-        else:
-            direction = "centre"
-
-    bridge.publish_speech(f"I've reached the {target}.")
-    return f"Navigation complete: reached the {target}."
-
-
-@tool
-def navigate_to_object(target: str) -> str:
-    """Fallback: scan 360° using Moondream VLM and approach object with direct wheel control.
-
-    Use only if navigate_to_visible_object() fails or the Jetson service is unavailable.
-    No obstacle avoidance — drives directly toward detected object.
-
-    For named rooms use navigate_to_pose(). For objects with Jetson running use navigate_to_visible_object()."""
     bridge = _bridge.get()
-    return _fallback_scan(target, bridge)
+    target = target.lower().strip()
+
+    bridge.set_vision_target(target)            # tell Jetson target_node to start hunting
+    try:
+        start = time.time()
+        scanned_deg = 0.0
+        last_pub = 0.0
+        tick = 1.0 / 20.0                       # 20 Hz control loop (feeds the watchdog)
+
+        while True:
+            now = time.time()
+            elapsed = now - start
+            if elapsed > _APPROACH_TIMEOUT_S:
+                return f"Approach timed out after {int(_APPROACH_TIMEOUT_S)}s before reaching the {target}."
+
+            result = bridge.get_target_result()
+            twist = Twist()
+
+            if result is None:
+                # No detection yet — wait briefly, then treat as "not found" and scan.
+                if elapsed > _APPROACH_FIRST_RESULT_WAIT_S:
+                    twist.angular.z = _ANGULAR_VEL_RS
+                    scanned_deg += math.degrees(_ANGULAR_VEL_RS) * tick
+            elif not result.get("found"):
+                # Target not in frame — rotate in place to search.
+                twist.angular.z = _ANGULAR_VEL_RS
+                scanned_deg += math.degrees(_ANGULAR_VEL_RS) * tick
+                if scanned_deg > _APPROACH_SCAN_GIVEUP_DEG:
+                    return f"I scanned all the way around but couldn't find the {target}."
+            else:
+                scanned_deg = 0.0               # found it — reset the search sweep
+                rel_size = float(result.get("rel_size", 0.0))
+                bearing_x = float(result.get("bearing_x", 0.0))
+
+                if rel_size >= _APPROACH_STOP_REL_SIZE:
+                    return f"I've reached the {target}."
+                elif abs(bearing_x) > _APPROACH_BEARING_DEADBAND:
+                    # Turn toward it. bearing_x>0 = right → angular.z negative (CCW+).
+                    az = max(-_ANGULAR_VEL_RS, min(_ANGULAR_VEL_RS, -bearing_x * _APPROACH_TURN_GAIN * _ANGULAR_VEL_RS))
+                    twist.angular.z = az
+                else:
+                    twist.linear.x = _LINEAR_VEL_MS   # centred → drive forward
+
+            if now - last_pub >= 0.05:
+                bridge.publish_twist(twist)
+                last_pub = now
+            time.sleep(0.005)
+    finally:
+        bridge.publish_twist(Twist())           # always stop the wheels
+        bridge.set_vision_target("")            # idle the Jetson target_node
+
+
+# NOTE: depth-based approach (Jetson /vision/find_object_pose service → Nav2) is
+# deferred until the D555 depth camera + Isaac ROS SLAM/Nav2 stack lands. When it
+# does, prefer it for obstacle-aware approach and fall back to the visual servoing
+# above. See ARCHITECTURE.md "Build Order" (Phase 4).

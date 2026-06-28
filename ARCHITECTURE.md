@@ -8,7 +8,7 @@ How the system works, how the pieces fit together, and how to extend it.
 
 ```
 Mac Mini          llama.cpp at singireddys-mac-mini.local:8080 — Gemma 3n multimodal GGUF (OpenAI-compatible HTTP)
-Jetson Orin 8GB   Logitech USB cam · Isaac ROS (SLAM, Nav2, nvblox) · STT · TTS · YOLO · Moondream VLM
+Jetson Orin 8GB   Logitech USB cam · STT · TTS · YOLOv8n (target_node) · (Isaac ROS SLAM/Nav2/nvblox: future)
 Pi 5  [this repo] LangGraph supervisor + agents + micro-ROS agent (ESP32 bridge)
 ESP32             4-wheel drive chassis (micro-ROS over WiFi UDP port 8888)
 ```
@@ -26,12 +26,12 @@ Jetson STT (Whisper small)
     ▼
 Pi5 LangGraph brain
     │  /voice/robot_speech     → Jetson tts_node (Kokoro) → USB speaker
-    │  /vision/query           → Jetson moondream_node
-    │  /goal_pose              → Jetson Nav2 → /cmd_vel → Pi5 micro-ROS → ESP32
-    │  /cmd_vel (direct)       → Pi5 micro-ROS → ESP32 (fine movement only)
-    ↑  /camera/color/image_raw ← Logitech USB cam on Jetson (compressed; cached on Pi5, sent to Gemma when local_agent calls look())
-    ↑  /vision/query_result    ← Jetson moondream_node
-    ↑  /visual_slam/tracking/odometry ← Jetson Isaac ROS SLAM
+    │  /vision/target          → Jetson target_node (YOLOv8n) — COCO class to approach
+    │  /goal_pose              → Jetson Nav2 → /cmd_vel → Pi5 micro-ROS → ESP32 (future)
+    │  /cmd_vel (direct)       → Pi5 micro-ROS → ESP32 (fine movement + visual servoing)
+    ↑  /camera/color/image_raw ← Logitech USB cam on Jetson (cached on Pi5, sent to Gemma when local_agent calls look())
+    ↑  /vision/target_result   ← Jetson target_node (JSON: bearing_x, rel_size, conf)
+    ↑  /visual_slam/tracking/odometry ← Jetson Isaac ROS SLAM (future)
 ```
 
 ---
@@ -55,9 +55,9 @@ src/
 │   │       │   ├── handle_handover.py  Resolves handover: chain vs sticky, loop guard
 │   │       │   ├── supervisor.py       Pure router — calls handover(), never speaks
 │   │       │   ├── chat.py             General conversation + web search
-│   │       │   ├── vision.py           Moondream text VLM (dormant — superseded by local_agent, kept for restore)
+│   │       │   ├── vision.py           Visual Q&A via look() (mostly superseded by local_agent, kept for restore)
 │   │       │   ├── local_agent.py      Conversational vision — reasons over real frames via Gemma + look()
-│   │       │   ├── navigate.py         Map nav (Nav2) + object nav (VLM + Twist)
+│   │       │   ├── navigate.py         Map nav (Nav2, future) + visual-servoing object approach (YOLOv8n + Twist)
 │   │       │   ├── status.py           Robot operational state
 │   │       │   ├── swiggy.py           Food ordering
 │   │       │   └── tracker.py          Delivery tracking + door navigation
@@ -65,9 +65,8 @@ src/
 │   │       │   ├── _bridge.py       Module-level bridge accessor (injected at startup)
 │   │       │   ├── handover.py      handover() tool — the routing mechanism
 │   │       │   ├── speech.py        speak()
-│   │       │   ├── vision.py        query_vision()  — Moondream text query (Jetson)
-│   │       │   ├── look.py          look()          — capture frame into conversation as an image (local_agent)
-│   │       │   ├── movement.py      move_robot(), navigate_to_pose(), navigate_to_visible_object(), navigate_to_object()
+│   │       │   ├── look.py          look()          — capture frame into conversation as an image (vision/local_agent)
+│   │       │   ├── movement.py      move_robot(), navigate_to_pose(), navigate_to_visible_object() [YOLOv8n servoing]
 │   │       │   ├── system.py        get_robot_status(), ros2_publish(), set_active_order()
 │   │       │   ├── swiggy_mcp.py    Loads Swiggy MCP tools at startup
 │   │       │   └── __init__.py      Named tool sets per agent
@@ -111,7 +110,7 @@ The same graph can be driven in two ways — never simultaneously.
 
 **`StubBridge` behaviour:**
 - `publish_speech()` — logs the text
-- `query_vision()` — returns an explanatory string
+- `set_vision_target()` / `get_target_result()` — logs target; returns `None` (no Jetson target_node in Studio)
 - `get_frame()` — returns `None` (so `look()` reports "no camera frame" instead of crashing),
   or serves the file at `STUDIO_TEST_IMAGE` when set — lets you test `look()` vision off-robot
 - `navigate_to_pose()` / `move_robot()` — logs the command, simulates success
@@ -170,13 +169,13 @@ supervisor  ──► supervisor_tools  ──► handle_handover
 ## Conversational Vision — `local_agent`
 
 `local_agent` is a multimodal agent (Gemma 3n via llama.cpp) that reasons over the
-**actual camera frame**, not Moondream's flattened text. It owns the visual-conversation
-route — it replaces the old Moondream-backed `vision` agent, which stays wired but
-unrouted (drop it back into `_registry.AGENTS` to restore).
+**actual camera frame**. It owns the visual-conversation route. The `vision` agent now
+also uses `look()` (the old Moondream `query_vision` path was retired — no local VLM fits
+the 8GB Jetson), so `vision` and `local_agent` overlap; `local_agent` is preferred.
 
 Why a separate agent instead of attaching frames to every turn: a real image stays in
 the conversation, so a follow-up about the *same* scene reasons over the same pixels
-instead of re-querying Moondream and getting a fresh, possibly different, text answer.
+that are already in history.
 
 **Flow:**
 
@@ -258,16 +257,20 @@ navigate_to_pose("kitchen")
 
 Obstacle avoidance handled automatically by nvblox + Nav2.
 
-### Object-based (VLM + direct Twist)
+### Object-based (YOLOv8n visual servoing + direct Twist)
 
 ```
-navigate_to_object("the blue bottle")
-  → 360° scan via query_vision() + Moondream
-  → bridge.publish_twist() directly to /cmd_vel for each rotation + approach step
+navigate_to_visible_object("cup")
+  → bridge.set_vision_target("cup")  → Jetson target_node (YOLOv8n) publishes /vision/target_result
+  → loop: read bearing_x/rel_size → turn toward it, drive forward until rel_size ≥ 0.45
+  → bridge.publish_twist() directly to /cmd_vel each tick
   → Pi5 micro-ROS agent → WiFi UDP 8888 → ESP32 → wheels
 ```
 
-Used when the target is not a named map location. No Nav2 involvement.
+Used when the target is a visible COCO-class object, not a named map location. No Nav2
+involvement; bearing + relative size only (mono cam — no metric distance, no obstacle
+avoidance). Depth-based approach (`/vision/find_object_pose` → Nav2) is deferred to the
+future D555 phase.
 
 ### Fine adjustment (direct Twist)
 
@@ -288,9 +291,9 @@ Publishes Twist directly to `/cmd_vel`. For small precise corrections after arri
 | `/voice/user_input` | String | Jetson → Pi5 | STT output — triggers graph.invoke() |
 | `/voice/robot_speech` | String | Pi5 → Jetson | TTS text for Kokoro |
 | `/camera/color/image_raw` | Image | Jetson (Logitech) → Pi5 | Compressed frames — cached on Pi5, sent to Gemma when local_agent calls look() |
-| `/vision/query` | String | Pi5 → Jetson | Question for Moondream VLM |
-| `/vision/query_result` | String | Jetson → Pi5 | Moondream answer |
-| `/visual_slam/tracking/odometry` | Odometry | Jetson → Pi5 | Robot pose from Isaac ROS SLAM |
+| `/vision/target` | String | Pi5 → Jetson | COCO class to approach (`""` = stop) → target_node (YOLOv8n) |
+| `/vision/target_result` | String (JSON) | Jetson → Pi5 | `{target, found, bearing_x, rel_size, conf, stamp}` |
+| `/visual_slam/tracking/odometry` | Odometry | Jetson → Pi5 | Robot pose from Isaac ROS SLAM (future) |
 | `/goal_pose` | PoseStamped | Pi5 → Jetson | Map-based navigation goal for Nav2 |
 | `/cmd_vel` | Twist | Pi5 → ESP32 | Wheel velocities via micro-ROS agent |
 | `/brain/thinking` | Bool | Pi5 internal | True while LLM running |
@@ -300,7 +303,8 @@ Publishes Twist directly to `/cmd_vel`. For small precise corrections after arri
 | Topic | Reason |
 |-------|--------|
 | `/movement_cmd` | Replaced by direct Twist to `/cmd_vel` |
-| `/vision/objects_3d` | `spatial_node` removed — nvblox handles 3D mapping, Moondream handles object queries |
+| `/vision/objects_3d` | `spatial_node` removed — nvblox (future) handles 3D mapping; YOLOv8n target_node handles object directions |
+| `/vision/query` + `/vision/query_result` | Moondream retired — no local VLM fits 8GB Jetson; replaced by `/vision/target`(+`_result`) and Gemma `look()` |
 | `/vision/image_raw` | Replaced by `/camera/color/image_raw` (D555 native topic) |
 | `/ir_obstacle` | IR sensor removed — D555 + nvblox handles all obstacle detection |
 
@@ -312,11 +316,9 @@ Publishes Twist directly to `/cmd_vel`. For small precise corrections after arri
 |------|------|------|
 | `handover(next_agent, reason, chain)` | `tools/handover.py` | Routes to another agent |
 | `speak(text)` | `tools/speech.py` | Publishes to `/voice/robot_speech` |
-| `query_vision(question)` | `tools/vision.py` | Publishes to `/vision/query`, blocks on `/vision/query_result` (Moondream) |
-| `look()` | `tools/look.py` | Captures the cached frame into the conversation as an image block (local_agent) |
-| `navigate_to_pose(location)` | `tools/movement.py` | Publishes PoseStamped to `/goal_pose` → Jetson Nav2 |
-| `navigate_to_visible_object(target)` | `tools/movement.py` | Calls Jetson `/vision/find_object_pose` service → Nav2; falls back to VLM scan |
-| `navigate_to_object(target)` | `tools/movement.py` | Fallback: VLM 360° scan + direct Twist approach (no Nav2) |
+| `look()` | `tools/look.py` | Captures the cached frame into the conversation as an image block (vision/local_agent) |
+| `navigate_to_pose(location)` | `tools/movement.py` | Publishes PoseStamped to `/goal_pose` → Jetson Nav2 (future) |
+| `navigate_to_visible_object(target)` | `tools/movement.py` | YOLOv8n visual servoing: set `/vision/target`, read `/vision/target_result`, turn/drive via `/cmd_vel` until close |
 | `move_robot(command)` | `tools/movement.py` | Fine Twist: `F:20` / `L:90` / `S` — direct to `/cmd_vel` |
 | `get_robot_status()` | `tools/system.py` | Calls `/robot/get_status` service |
 | `ros2_publish(topic, data)` | `tools/system.py` | Generic String publisher |
@@ -330,10 +332,10 @@ Publishes Twist directly to `/cmd_vel`. For small precise corrections after arri
 | Agent | Tool Set |
 |-------|----------|
 | `supervisor` | `handover` |
-| `chat` | `CHAT_TOOLS`: `speak`, `query_vision`, `get_robot_status` |
+| `chat` | `CHAT_TOOLS`: `speak`, `get_robot_status` |
 | `local_agent` | `LOCAL_AGENT_TOOLS`: `speak`, `look`, `handover` — multimodal, sees real frames |
-| `vision` | `VISION_TOOLS`: `speak`, `query_vision` — dormant (superseded by `local_agent`) |
-| `navigate` | `NAVIGATE_TOOLS`: `speak`, `move_robot`, `navigate_to_pose`, `navigate_to_visible_object`, `navigate_to_object`, `query_vision` |
+| `vision` | `VISION_TOOLS`: `speak`, `look` — visual Q&A (superseded by `local_agent`) |
+| `navigate` | `NAVIGATE_TOOLS`: `speak`, `move_robot`, `navigate_to_pose`, `navigate_to_visible_object` |
 | `status` | `STATUS_TOOLS`: `speak`, `get_robot_status`, `ros2_publish` |
 | `swiggy` | Swiggy MCP tools + `speak` |
 | `tracker` | Swiggy MCP tools + `navigate_to_pose` + `speak` |

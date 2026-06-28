@@ -92,8 +92,8 @@ prevented structurally in `handle_handover`, independent of model behaviour:
 ## 4. Conversational Vision (local_agent + look())
 
 `local_agent` is the multimodal vision agent. It sees the **real camera frame** (via the
-Gemma `mmproj`), not Moondream's text, and keeps the frame in the conversation for
-follow-ups.
+Gemma `mmproj`) and keeps the frame in the conversation for follow-ups. (There is no
+on-device VLM — local Moondream doesn't fit the 8GB Jetson; rich vision is Gemma via `look()`.)
 
 - **Capture is tool-driven**: the model calls `look()`, which reads the cached frame and
   injects it as a **HumanMessage image block** (OpenAI-compatible servers won't accept
@@ -104,7 +104,8 @@ follow-ups.
   (`keep_images=True`); every other agent gets the image stripped to `[Current camera view]`.
 - **Camera source**: Logitech USB cam on the **Jetson** publishes compressed
   `/camera/color/image_raw` (~640×480, ~5 fps); `agent_node` caches the latest frame and
-  `look()` serves it. Moondream still consumes the same feed on Jetson for navigation.
+  `look()` serves it. The Jetson `target_node` (YOLOv8n) consumes the same feed for
+  navigation directions (`/vision/target` → `/vision/target_result`).
 
 **Testing vision off-robot (no camera):** set `STUDIO_TEST_IMAGE=/path/to.jpg` — the
 `StubBridge` serves that file to `look()` so you can exercise the full flow in Studio or a

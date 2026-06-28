@@ -111,9 +111,9 @@ class AgentNode(Node):
             from cv_bridge import CvBridge
             from sensor_msgs.msg import Image
             self._cv_bridge = CvBridge()
-            self.create_subscription(Image,  "/camera/color/image_raw", self._on_image,              1)
-            self.create_subscription(String, "/vision/query_result",    self._bridge.on_query_result, 10)
-            self.get_logger().info("Vision enabled — /camera/color/image_raw + /vision/query_result")
+            self.create_subscription(Image,  "/camera/color/image_raw",  self._on_image,                1)
+            self.create_subscription(String, "/vision/target_result",    self._bridge.on_target_result, 10)
+            self.get_logger().info("Vision enabled — /camera/color/image_raw + /vision/target_result")
 
         # ── Worker + startup threads ──────────────────────────────────────
         threading.Thread(target=self._startup_check, daemon=True).start()

@@ -16,7 +16,8 @@ Step-by-step to get the rover moving over WiFi using micro-ROS.
 | RealSense D555 (PoE) | *Future depth-camera upgrade* — connects to Jetson via PoE (enables SLAM/Nav2/nvblox) |
 
 > **No IR sensor** — obstacle detection will be handled by the D555 depth camera + nvblox on
-> Jetson once it arrives. Until then the Logitech cam feeds vision (`local_agent` + Moondream).
+> Jetson once it arrives. Until then the Logitech cam feeds vision (`local_agent` look() via Gemma,
+> and the Jetson YOLOv8n `target_node` for object directions).
 
 ---
 
@@ -276,8 +277,8 @@ All ROS2 devices must be on the same subnet with `ROS_DOMAIN_ID=0`.
 | `/voice/user_input` | `std_msgs/String` | Jetson → Pi5 | STT transcription (triggers LangGraph) |
 | `/voice/robot_speech` | `std_msgs/String` | Pi5 → Jetson | TTS text to Kokoro |
 | `/camera/color/image_raw` | `sensor_msgs/Image` | Jetson (Logitech) → Pi5 | Compressed frames (~640×480, ~5fps); cached on Pi5, sent to Gemma on `look()` |
-| `/vision/query` | `std_msgs/String` | Pi5 → Jetson | Moondream VLM question (navigation) |
-| `/vision/query_result` | `std_msgs/String` | Jetson → Pi5 | Moondream VLM answer |
+| `/vision/target` | `std_msgs/String` | Pi5 → Jetson | COCO class to hunt for (`""` = stop) — drives `target_node` (YOLOv8n) |
+| `/vision/target_result` | `std_msgs/String` (JSON) | Jetson → Pi5 | `{target, found, bearing_x[-1..1], rel_size, conf, stamp}` — bearing/proximity for `navigate_to_visible_object` |
 | `/visual_slam/tracking/odometry` | `nav_msgs/Odometry` | Jetson → Pi5 | Robot pose from Isaac ROS SLAM |
 | `/brain/thinking` | `std_msgs/Bool` | Pi5 internal | True while LLM running |
 
