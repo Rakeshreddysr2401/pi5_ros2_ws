@@ -8,7 +8,9 @@ langchain-anthropic
 langchain-google-genai
 langchain-ollama
 langchain-community
-langchain-mcp-adapters
+# 0.2.0+ imports langchain_core.messages.content (langchain-core 1.x only); pin to
+# the last 0.1.x that works with the langchain-core 0.3.x stack pinned above.
+langchain-mcp-adapters==0.1.14
 opencv-python-headless
 typing-extensions
 

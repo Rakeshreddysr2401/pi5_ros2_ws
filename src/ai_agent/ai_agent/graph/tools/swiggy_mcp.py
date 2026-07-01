@@ -28,6 +28,26 @@ async def _fetch_food_tools() -> list:
     return await client.get_tools()
 
 
+def _root_cause(exc: BaseException) -> BaseException:
+    """Drill through ExceptionGroup/TaskGroup wrappers to the real error.
+
+    The MCP client raises its failures inside an anyio TaskGroup, so the top-level
+    message is the useless "unhandled errors in a TaskGroup" — unwrap to the leaf
+    (e.g. the httpx 401) so the log actually says what went wrong."""
+    seen = set()
+    while True:
+        if id(exc) in seen:
+            return exc
+        seen.add(id(exc))
+        subs = getattr(exc, "exceptions", None)
+        if subs:
+            exc = subs[0]
+        elif exc.__cause__ is not None:
+            exc = exc.__cause__
+        else:
+            return exc
+
+
 def _load_sync() -> list:
     try:
         try:
@@ -37,7 +57,11 @@ def _load_sync() -> list:
         except RuntimeError:
             return asyncio.run(_fetch_food_tools())
     except Exception as e:
-        logger.warning("Swiggy Food MCP unavailable — tools disabled: %s", e)
+        cause = _root_cause(e)
+        hint = ""
+        if "401" in str(cause) or "Unauthorized" in str(cause):
+            hint = " (check SWIGGY_ACCESS_TOKEN in .env)"
+        logger.warning("Swiggy Food MCP unavailable — tools disabled: %s%s", cause, hint)
         return []
 
 

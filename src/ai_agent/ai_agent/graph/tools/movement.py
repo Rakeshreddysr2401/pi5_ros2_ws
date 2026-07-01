@@ -101,7 +101,7 @@ def navigate_to_pose(location: str) -> str:
     Use for room-to-room or area navigation: 'kitchen', 'bedroom', 'entrance', etc.
 
     Returns immediately — the robot moves in the background. A system message will
-    arrive when navigation completes or fails. Call speak() first to acknowledge."""
+    arrive when navigation completes or fails."""
     bridge = _bridge.get()
 
     known = bridge.get_known_locations()
@@ -143,7 +143,7 @@ def navigate_to_visible_object(target: str) -> str:
 
     This blocks while approaching (up to ~30 s) and returns when it arrives, loses
     the object, or times out. No obstacle avoidance — it drives straight at the
-    target, so only use it with a clear path. Call speak() first to acknowledge."""
+    target, so only use it with a clear path."""
     from geometry_msgs.msg import Twist
 
     bridge = _bridge.get()

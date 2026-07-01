@@ -209,6 +209,10 @@ cd pi5_ros2_ws
 uv venv
 uv pip install -r requirements.txt
 
+# Make the local `ai_agent` package importable (it is NOT in requirements.txt).
+# --no-deps keeps the pinned versions from requirements.txt untouched.
+uv pip install -e ./src/ai_agent --no-deps
+
 # Activate the venv
 source .venv/bin/activate        # Linux/macOS
 # .venv\Scripts\activate         # Windows
@@ -216,6 +220,17 @@ source .venv/bin/activate        # Linux/macOS
 
 > `uv` resolves and installs all packages in seconds. No `--break-system-packages`
 > needed — the venv is fully isolated (no ROS2 on laptop, so no system packages to inherit).
+>
+> **Why the editable install?** `langgraph.json` references `graph_studio.py`, which
+> imports `ai_agent`. On the Pi5, sourcing the ROS2 workspace puts `ai_agent` on the
+> path; on a laptop there is no ROS2, so `langgraph dev` would fail with
+> `ModuleNotFoundError: No module named 'ai_agent'` unless the package is installed
+> editable as above. Do this once — after that a plain `langgraph dev` just works.
+
+> **Keep versions pinned.** If `langgraph dev` ever crashes with
+> `ImportError: cannot import name 'Graph' from 'langgraph.graph'`, the venv has drifted
+> to langgraph 1.x while the CLI stayed old. Restore the pinned set with
+> `uv pip install -r requirements.txt` (langgraph 0.3.34 / langgraph-cli 0.1.89).
 
 ### Step 3: Configure environment
 

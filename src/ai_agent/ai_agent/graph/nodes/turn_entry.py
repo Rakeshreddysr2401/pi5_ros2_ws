@@ -28,5 +28,5 @@ def turn_entry_node(state: AgentState) -> Command:
     target = incoming if incoming in STICKY_ELIGIBLE else "supervisor"
     return Command(
         goto=target,
-        update={"agent_turn_visits": {}, "always_speak": True},
+        update={"agent_turn_visits": {}, "agent_run_counts": {}, "always_speak": True},
     )
