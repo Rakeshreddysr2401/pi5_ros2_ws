@@ -33,6 +33,13 @@ agent_node:
     # OpenAI honors the same field. Set false only if your build lacks --jinja.
     strict_tool_calls: true
 
+    # Stream sentence chunks to /voice/robot_speech as the LLM generates, ending
+    # each utterance with the <|eou|> marker (see graph/utils/speech_stream.py).
+    # First audio starts after the first sentence instead of the full reply.
+    # Requires a llama.cpp build that streams tool calls (--jinja); set false to
+    # publish one full reply per turn (wire protocol stays chunks + marker).
+    stream_speech: true
+
     # ── local_agent (multimodal vision agent, Gemma via llama.cpp) ────────────
     # Dedicated llama.cpp KV-cache slot so its cached image prefix is never
     # evicted by other agents' calls. Requires the server started with

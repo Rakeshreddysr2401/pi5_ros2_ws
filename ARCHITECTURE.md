@@ -25,7 +25,7 @@ Jetson STT (Whisper small)
     │  /voice/user_input
     ▼
 Pi5 LangGraph brain
-    │  /voice/robot_speech     → Jetson tts_node (Kokoro) → USB speaker
+    │  /voice/robot_speech     → Jetson tts_node (Kokoro) → USB speaker (streamed sentence chunks + <|eou|> marker)
     │  /vision/target          → Jetson target_node (YOLOv8n) — COCO class to approach
     │  /goal_pose              → Jetson Nav2 → /cmd_vel → Pi5 micro-ROS → ESP32 (future)
     │  /cmd_vel (direct)       → Pi5 micro-ROS → ESP32 (fine movement + visual servoing)
@@ -63,7 +63,6 @@ src/
 │   │       ├── tools/
 │   │       │   ├── _bridge.py       Module-level bridge accessor (injected at startup)
 │   │       │   ├── handover.py      handover() tool — the routing mechanism
-│   │       │   ├── speech.py        speak()
 │   │       │   ├── look.py          look()          — capture frame into conversation as an image (vision/local_agent)
 │   │       │   ├── movement.py      move_robot(), navigate_to_pose(), navigate_to_visible_object() [YOLOv8n servoing]
 │   │       │   ├── system.py        get_robot_status(), ros2_publish(), set_active_order()
@@ -239,7 +238,7 @@ shared server.
 > speed-up needs this confirmed.
 
 > **GGUF token warning:** this build logs mislabeled `<|tool_response>` / `</s>` control
-> tokens. Since routing leans on tool calls (`look`, `handover`, `speak`), watch for
+> tokens. Since routing leans on tool calls (`look`, `handover`), watch for
 > flaky tool-call parsing or early stops — if seen, suspect the quant/chat template.
 
 ---
@@ -291,7 +290,9 @@ Publishes Twist directly to `/cmd_vel`. For small precise corrections after arri
 | Topic | Type | Direction | Notes |
 |-------|------|-----------|-------|
 | `/voice/user_input` | String | Jetson → Pi5 | STT output — triggers graph.invoke() |
-| `/voice/robot_speech` | String | Pi5 → Jetson | TTS text for Kokoro |
+| `/voice/robot_speech` | String | Pi5 → Jetson | TTS text for Kokoro — streamed sentence chunks; utterance ends with a `<|eou|>` marker message (see graph/utils/speech_stream.py) |
+| `/voice/tts_speaking` | Bool | Jetson → Pi5 | True from first chunk until `<|eou|>` played — mutes the mic (half-duplex) across chunk gaps |
+| `/diag/timing` | String (JSON) | both → probe | Per-stage latency events for scripts/latency_replay.py |
 | `/camera/color/image_raw` | Image | Jetson (Logitech) → Pi5 | Compressed frames — cached on Pi5, sent to Gemma when local_agent calls look() |
 | `/vision/target` | String | Pi5 → Jetson | COCO class to approach (`""` = stop) → target_node (YOLOv8n) |
 | `/vision/target_result` | String (JSON) | Jetson → Pi5 | `{target, found, bearing_x, rel_size, conf, stamp}` |
@@ -317,12 +318,13 @@ Publishes Twist directly to `/cmd_vel`. For small precise corrections after arri
 | Tool | File | Does |
 |------|------|------|
 | `handover(next_agent, reason, chain)` | `tools/handover.py` | Routes to another agent |
-| `speak(text)` | `tools/speech.py` | Publishes to `/voice/robot_speech` |
 | `look()` | `tools/look.py` | Captures the cached frame into the conversation as an image block (vision/local_agent) |
 | `navigate_to_pose(location)` | `tools/movement.py` | Publishes PoseStamped to `/goal_pose` → Jetson Nav2 (future) |
 | `navigate_to_visible_object(target)` | `tools/movement.py` | YOLOv8n visual servoing: set `/vision/target`, read `/vision/target_result`, turn/drive via `/cmd_vel` until close |
 | `move_robot(command)` | `tools/movement.py` | Fine Twist: `F:20` / `L:90` / `S` — direct to `/cmd_vel` |
 | `get_robot_status()` | `tools/system.py` | Calls `/robot/get_status` service |
+| `set_reminder(text, in_minutes\|at_time, day)` | `tools/reminders.py` | Schedules a reminder/timer (JSON-persisted at `~/.langrobo/reminders.json`) |
+| `list_reminders()` / `cancel_reminder(id)` | `tools/reminders.py` | Show / cancel pending reminders |
 | `ros2_publish(topic, data)` | `tools/system.py` | Generic String publisher |
 | `set_active_order(order_id)` | `tools/system.py` | Stores/clears Swiggy order ID for polling |
 | Swiggy MCP tools | `tools/swiggy_mcp.py` | Food ordering via `https://mcp.swiggy.com/food` |
@@ -334,12 +336,17 @@ Publishes Twist directly to `/cmd_vel`. For small precise corrections after arri
 | Agent | Tool Set |
 |-------|----------|
 | `supervisor` | `handover` |
-| `chat` | `CHAT_TOOLS`: `speak`, `get_robot_status` |
-| `local_agent` | `LOCAL_AGENT_TOOLS`: `speak`, `look`, `handover` — multimodal, sees real frames |
-| `navigate` | `NAVIGATE_TOOLS`: `speak`, `move_robot`, `navigate_to_pose`, `navigate_to_visible_object` |
-| `status` | `STATUS_TOOLS`: `speak`, `get_robot_status`, `ros2_publish` |
-| `swiggy` | Swiggy MCP tools + `speak` |
-| `tracker` | Swiggy MCP tools + `navigate_to_pose` + `speak` |
+| `chat` | `CHAT_TOOLS`: `get_robot_status`, `set_reminder`, `list_reminders`, `cancel_reminder`, `handover` + web search |
+| `local_agent` | `LOCAL_AGENT_TOOLS`: `look`, `handover` — multimodal, sees real frames |
+| `navigate` | `NAVIGATE_TOOLS`: `move_robot`, `navigate_to_pose`, `navigate_to_visible_object`, `handover` |
+| `status` | `STATUS_TOOLS`: `get_robot_status`, `ros2_publish`, `handover` |
+| `swiggy` | `SWIGGY_TOOLS`: `set_active_order`, `handover` + Swiggy MCP tools |
+| `tracker` | `TRACKER_TOOLS`: `set_active_order`, `navigate_to_pose`, `handover` + Swiggy MCP tools |
+
+There is no `speak()` tool — speech has a single channel. Each agent's reply text
+streams to TTS sentence-by-sentence as the LLM generates (`graph/utils/speech_stream.py`);
+text emitted alongside a tool call is spoken while the tool runs (the natural
+"let me check…" acknowledgement).
 
 ---
 
@@ -381,11 +388,14 @@ The supervisor never produces text. Any text alongside a handover call is stripp
 
 **Response contract** — every agent follows the same rule:
 
-- The actual answer goes in the agent's **message text**. `agent_node` auto-publishes the
-  final AI text to `/voice/robot_speech` (TTS); Studio displays it. An empty final message
-  shows as "No data".
-- `speak()` is **acknowledgement-only** — use it *before* a slow tool (e.g. "let me look"),
-  never to carry the final answer (that empties the message and creates a second TTS path).
+- The actual answer goes in the agent's **message text**. It streams to
+  `/voice/robot_speech` sentence-by-sentence as the LLM generates (see
+  `graph/utils/speech_stream.py`); `agent_node` closes the utterance with the `<|eou|>`
+  marker (or publishes the full text if it never streamed — fallbacks, `stream_speech:=false`).
+  Studio displays the same text. An empty final message shows as "No data".
+- There is **no `speak()` tool**. For a slow tool, brief text in the *same message as
+  the tool call* (e.g. "Let me check.") is streamed and spoken while the tool runs —
+  that is the acknowledgement path.
 
 **Loop safety** — `handle_handover` prevents runaway routing structurally, independent of
 the model:
@@ -398,6 +408,28 @@ the model:
 
 > Small models (Gemma 3n E4B) over-route — these guards make that safe; routing improves on
 > Gemma 12B.
+
+---
+
+## Self-Initiated Turns (proactive speech)
+
+The graph normally runs only when `/voice/user_input` fires. Proactive behaviour
+comes from **producers injecting `[SYSTEM]` turns** into agent_node's system
+queue (FIFO, never dropped — processed between user turns, always entering at
+the supervisor):
+
+| Producer | Timer | Injects |
+|----------|-------|---------|
+| Delivery poll | 120s | `[SYSTEM] Check if order {id} has been delivered` |
+| Reminder poll | 5s | `[SYSTEM] Reminder due — announce to the user now: …` |
+| Nav completion | event | `[SYSTEM] Navigation succeeded/failed: …` |
+
+Reminders/timers live in `graph/tools/reminders.py` (pure zone): a JSON-persisted
+`ReminderStore` (`~/.langrobo/reminders.json`, survives restarts) shared by the
+chat tools and agent_node's poll. Chat sets them (`set_reminder`), the poll pops
+due ones, the supervisor routes the `[SYSTEM]` turn to chat, and chat's reply text
+streams to TTS — the robot speaks unprompted. New proactive features (face-seen
+greeting, presence events) should follow this same producer pattern.
 
 ---
 
@@ -424,7 +456,7 @@ ROS2 timer fires, reads bridge.active_order_id
 supervisor → handover("tracker")
     │
 tracker: order delivered?
-    ├── YES: speak("Your order has arrived!")
+    ├── YES: "Your order has arrived!" (reply text → TTS)
     │         navigate_to_pose("entrance")   ← Nav2 navigates to door
     │         set_active_order(None)
     │         handover("chat")

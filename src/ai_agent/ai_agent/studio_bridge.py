@@ -75,6 +75,12 @@ class StubBridge:
     def publish_speech(self, text: str) -> None:
         logger.info("[STUB] speak: %s", text)
 
+    def publish_speech_chunk(self, text: str) -> None:
+        logger.info("[STUB] speak chunk: %s", text)
+
+    def publish_speech_end(self) -> None:
+        logger.info("[STUB] end of utterance")
+
     # ── Publishers ────────────────────────────────────────────────────────
 
     def publish_twist(self, twist) -> None:

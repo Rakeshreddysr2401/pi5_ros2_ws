@@ -19,6 +19,8 @@ import math
 from geometry_msgs.msg import PoseStamped, Twist
 from std_msgs.msg import Bool, String
 
+from .graph.utils.speech_stream import SPEECH_EOU
+
 
 class ROS2Bridge:
 
@@ -48,10 +50,12 @@ class ROS2Bridge:
         self._order_lock       = threading.Lock()
         self._active_order_id: str | None = None
 
-        # ── Speech queue + back-pressure against Kokoro TTS ───────────────────
+        # ── Speech state ───────────────────────────────────────────────────────
+        # No Pi5-side queue: sentence chunks are published immediately and the
+        # Jetson tts_node queues/plays them in order (utterance ends with the
+        # SPEECH_EOU marker). _is_speaking is informational (stop-keyword later).
         self._speech_lock    = threading.Lock()
-        self._speech_queue:  list[str] = []
-        self._is_speaking    = False   # updated by /voice/speaking subscription
+        self._is_speaking    = False   # updated by /voice/tts_speaking subscription
 
         # ── Active navigation state ────────────────────────────────────────────
         self._nav_lock      = threading.Lock()
@@ -78,11 +82,8 @@ class ROS2Bridge:
         self._twist_pub         = node.create_publisher(Twist, "/cmd_vel", 10)
         self._timing_pub        = node.create_publisher(String, "/diag/timing", 10)
 
-        # Subscribe to Kokoro speaking status for back-pressure
+        # Subscribe to Kokoro speaking status (half-duplex state, stop-keyword later)
         node.create_subscription(Bool, "/voice/tts_speaking", self._on_speaking, 10)
-
-        # Drain speech queue every 300ms
-        node.create_timer(0.3, self._drain_speech_queue)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 1 — Topics
@@ -147,22 +148,25 @@ class ROS2Bridge:
         """Sink for graph.utils.timing — one JSON stage event per message."""
         self._timing_pub.publish(String(data=json.dumps(event)))
 
-    # ── Speech with back-pressure ─────────────────────────────────────────
+    # ── Speech (streamed utterance protocol) ──────────────────────────────
+    # An utterance = 1..N text chunks followed by the SPEECH_EOU marker. The
+    # Jetson tts_node plays chunks in order and holds /voice/tts_speaking True
+    # (mic muted) until the marker arrives.
 
-    def publish_speech(self, text: str) -> None:
-        """Queue speech text. Drained by timer when Kokoro is not speaking."""
-        self.publish_timing({"stage": "speech_queued", "t": time.time(), "chars": len(text)})
-        with self._speech_lock:
-            self._speech_queue.append(text)
-
-    def _drain_speech_queue(self) -> None:
-        """Timer callback (spin thread): publish next queued string if not speaking."""
-        with self._speech_lock:
-            if self._is_speaking or not self._speech_queue:
-                return
-            text = self._speech_queue.pop(0)
+    def publish_speech_chunk(self, text: str) -> None:
+        """Publish one sentence chunk immediately (SpeechStreamHandler sink)."""
         self.publish_timing({"stage": "speech_publish", "t": time.time(), "chars": len(text)})
         self._speech_pub.publish(String(data=text))
+
+    def publish_speech_end(self) -> None:
+        """Terminate the current utterance — lets tts_node release the mic."""
+        self.publish_timing({"stage": "speech_eou", "t": time.time()})
+        self._speech_pub.publish(String(data=SPEECH_EOU))
+
+    def publish_speech(self, text: str) -> None:
+        """Publish a complete utterance (non-streamed path: startup, fallbacks)."""
+        self.publish_speech_chunk(text)
+        self.publish_speech_end()
 
     # ── Publishers ─────────────────────────────────────────────────────────
 

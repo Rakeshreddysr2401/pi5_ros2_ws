@@ -6,8 +6,8 @@ messages update automatically — no other files need touching.
 
 AGENTS: dict[str, dict] = {
     "chat": {
-        "description": "general questions, web search, system status, small talk, anything not covered by other agents",
-        "examples": ["what's the weather?", "tell me a joke", "what time is it"],
+        "description": "general questions, web search, reminders and timers (setting, listing, announcing due ones), system status, small talk, anything not covered by other agents",
+        "examples": ["what's the weather?", "tell me a joke", "remind me in 10 minutes", "[SYSTEM] Reminder due"],
     },
     "local_agent": {
         "description": "anything about what the robot sees — scene description, object/person detection, visual queries, and follow-up questions about the same scene (reasons over the actual camera image and remembers it)",

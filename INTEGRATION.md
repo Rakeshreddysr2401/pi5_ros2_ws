@@ -275,7 +275,8 @@ All ROS2 devices must be on the same subnet with `ROS_DOMAIN_ID=0`.
 | `/cmd_vel` | `geometry_msgs/Twist` | Pi5 → ESP32 | Wheel velocities: `linear.x` m/s, `angular.z` rad/s |
 | `/goal_pose` | `geometry_msgs/PoseStamped` | Pi5 → Jetson Nav2 | Map-based navigation goal |
 | `/voice/user_input` | `std_msgs/String` | Jetson → Pi5 | STT transcription (triggers LangGraph) |
-| `/voice/robot_speech` | `std_msgs/String` | Pi5 → Jetson | TTS text to Kokoro |
+| `/voice/robot_speech` | `std_msgs/String` | Pi5 → Jetson | TTS text to Kokoro — streamed as sentence chunks, one message each; the utterance ends with a message whose data is exactly `<|eou|>` (constant shared by `ai_agent/graph/utils/speech_stream.py` and `voice_pkg/tts_node.py`) |
+| `/voice/tts_speaking` | `std_msgs/Bool` | Jetson → Pi5 | True from the first chunk until `<|eou|>` is played out — mic stays muted across chunk gaps; tts_node force-releases after `eou_timeout` (default 8s) if the marker never arrives |
 | `/camera/color/image_raw` | `sensor_msgs/Image` | Jetson (Logitech) → Pi5 | Compressed frames (~640×480, ~5fps); cached on Pi5, sent to Gemma on `look()` |
 | `/vision/target` | `std_msgs/String` | Pi5 → Jetson | COCO class to hunt for (`""` = stop) — drives `target_node` (YOLOv8n) |
 | `/vision/target_result` | `std_msgs/String` (JSON) | Jetson → Pi5 | `{target, found, bearing_x[-1..1], rel_size, conf, stamp}` — bearing/proximity for `navigate_to_visible_object` |

@@ -38,15 +38,28 @@ turn, no tools). Whole pipeline in scope — both repos.
    - TODO: rebuild `voice_pkg` on the Orin, run harness on Pi5 for true baseline
 2. ✅ **Persona block** — `graph/persona.py` in all 6 user-facing agent prompts (verified)
 3. ✅ **Default-to-chat routing** — fresh turns enter chat; verified 1 LLM call for general turns
-4. **Streaming TTS** — cross-repo, biggest perceived-latency win; streamed pre-tool
-   text becomes the natural "let me check…" acknowledgement (do after on-robot baseline)
+4. ✅ **Streaming TTS** — implemented 2026-07-03, both repos
+   - Protocol: sentence chunks on `/voice/robot_speech` (String unchanged) +
+     `<|eou|>` end-of-utterance marker; Jetson holds `/voice/tts_speaking` True
+     across chunk gaps (8s `eou_timeout` watchdog if the marker is lost)
+   - Brain: `graph/utils/speech_stream.py` (splitter + callback handler),
+     `ChatOpenAI(streaming=True)` behind `stream_speech` param (rollback:
+     `stream_speech:=false`); supervisor stays non-streaming; Pi5 speech queue +
+     300ms drain timer removed (publish immediately, Jetson orders)
+   - Pre-tool text now streams = natural "let me check…" acknowledgement
+   - Verified off-robot vs Mac Mini llama.cpp: sentences stream mid-generation,
+     tool calls parse in stream mode with NO raw JSON leaking to speech, final
+     text dedup works (marker-only close)
+   - TODO on-robot: rebuild `voice_pkg` on the Orin (tts_node changed), rebuild
+     `ai_agent` on Pi5, then `scripts/latency_replay.py` for before/after — the
+     metric is now first-sentence audio, and the harness anchors on FIRST
+     tts_audio_start
 5. **"Stop" keyword spotter** — halt TTS without open-mic barge-in
 
 ## Doc debt found along the way
 
-- ARCHITECTURE.md still documents `tools/speech.py` / `speak()` — removed; single
-  TTS channel is the final message text.
-- `graph/prompts.py` (reference-only) still mentions `speak()`.
+- ✅ ARCHITECTURE.md `speak()` references — cleaned up with the streaming-TTS pass.
+- ✅ `graph/prompts.py` speak() mentions — fixed (file stays reference-only).
 
 ---
 
@@ -54,8 +67,23 @@ turn, no tools). Whole pipeline in scope — both repos.
 
 Highest-value features the current infra genuinely supports:
 
+- ✅ Timers / reminders with proactive speech — done 2026-07-03. First
+  self-initiated turn path: `graph/tools/reminders.py` (persistent store +
+  chat tools) + 5s poll in agent_node injecting `[SYSTEM] Reminder due` turns
+  (system queue is now FIFO — events no longer clobber each other). Verified
+  live off-robot: set → list → due → spoken announcement. Ships with the same
+  Pi5 rebuild as streaming TTS (see DEPLOY.md).
 - Wake word ("Rakhi") — half-duplex today makes this natural
 - Face recognition + per-person memory (Jetson has headroom)
-- Timers / reminders with proactive speech
 - Full barge-in (needs acoustic echo cancellation on Jetson)
 - Depth camera arrives → nav, SLAM, nvblox, `/vision/find_object_pose`
+
+
+---
+
+# Product Direction
+
+See **PRODUCT.md** — LangRobo product thesis ("private household member"),
+ranked daily-use features, small hardware buys (mic array first, no wheels
+until depth cam), and the 7-phase roadmap. Key architectural gap after this
+phase: self-initiated turns (scheduler + event producers → `[SYSTEM]` turns).

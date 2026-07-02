@@ -18,10 +18,12 @@ Two modes:
 
 Stages (emitted by agent_node/ros2_bridge, stt_node, tts_node):
   stt_vad_end → stt_end → brain_receive → graph_start → llm_start/llm_end(×N)
-  → graph_end → speech_queued → speech_publish → tts_receive → tts_synth_start
-  → tts_audio_start → tts_end
+  → graph_end → speech_stream_done → speech_eou, with per-sentence-chunk
+  speech_publish → tts_receive → tts_synth_start → tts_audio_start → tts_end
+  interleaved (streaming TTS), then tts_eou_receive → tts_utterance_end.
 
-End-to-end = injection (or stt_end) → tts_audio_start, compared to --budget.
+End-to-end = injection (or stt_end) → FIRST tts_audio_start, compared to
+--budget. With streaming this fires on the first sentence, mid-generation.
 Cross-machine timestamps assume NTP-synced clocks; negative deltas are flagged.
 """
 
@@ -39,9 +41,9 @@ _DEFAULT_UTTERANCES = [
     "tell me a fun fact about space",
 ]
 
-# A turn is finished once one of these arrives (tts_end if TTS is running,
-# speech_publish alone if it is not) and the pipeline then goes quiet.
-_TERMINAL_STAGES = {"tts_end", "speech_publish"}
+# A turn is finished once one of these arrives (tts_utterance_end if TTS is
+# running, speech_eou alone if it is not) and the pipeline then goes quiet.
+_TERMINAL_STAGES = {"tts_utterance_end", "speech_eou", "tts_end", "speech_publish"}
 _QUIET_GRACE_S = 3.0
 
 
@@ -100,12 +102,17 @@ def print_waterfall(events: list[dict], t0: float, label: str, budget: float):
         print(f"  +{rel:7.3f}s  Δ{step:+7.3f}s  {e['stage']:<16} {extra}")
         prev = e["t"]
 
-    by_stage = {e["stage"]: e["t"] for e in events}
+    # First occurrence of each stage — streamed turns emit per-chunk events and
+    # the latency that matters is to the FIRST audio out.
+    by_stage: dict = {}
+    for e in events:
+        by_stage.setdefault(e["stage"], e["t"])
     end = by_stage.get("tts_audio_start") or by_stage.get("speech_publish")
     if end is not None:
         e2e = end - t0
         mark = "✅ within" if e2e <= budget else "❌ over"
-        anchor = "tts_audio_start" if "tts_audio_start" in by_stage else "speech_publish"
+        anchor = ("first tts_audio_start" if "tts_audio_start" in by_stage
+                  else "first speech_publish")
         print(f"  ── end-to-end: {e2e:.3f}s to {anchor} — {mark} {budget:.1f}s budget")
     if skew:
         print("  ⚠ negative step seen — check NTP sync between Pi5/Jetson")

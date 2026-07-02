@@ -23,17 +23,22 @@ def configure(
     max_tokens: int,
     agent_overrides: dict | None = None,
     strict_tools: bool = True,
+    streaming: bool = False,
 ) -> None:
     """Called once by agent_node before the graph is built.
 
     agent_overrides: {agent_name: {provider?, model?, base_url?, api_key?,
-                      max_tokens?, slot?}} — any subset of fields overrides
-                      the global config for that agent only.
+                      max_tokens?, slot?, streaming?}} — any subset of fields
+                      overrides the global config for that agent only.
     strict_tools:    when True, nodes that MUST emit a tool call (the supervisor's
                      handover) force it via tool_choice. On llama.cpp this becomes a
                      grammar constraint generated from the tool's JSON schema, so the
                      model can only emit a valid handover to a real agent. Disable if
                      your llama.cpp build lacks --jinja tool-call support.
+    streaming:       when True, invoke() streams under the hood and fires
+                     on_llm_new_token callbacks — this is what feeds sentence
+                     chunks to TTS (graph.utils.speech_stream). openai/llamacpp
+                     providers only.
     """
     global _config, _agent_overrides, _strict_tools
     _config = {
@@ -42,6 +47,7 @@ def configure(
         "base_url": base_url,
         "api_key": api_key,
         "max_tokens": max_tokens,
+        "streaming": streaming,
     }
     _agent_overrides = agent_overrides or {}
     _strict_tools = strict_tools
@@ -84,6 +90,12 @@ def get_llm(agent: str | None = None):
         # Forwarded verbatim into the request body via the OpenAI client's extra_body.
         if slot is not None and slot >= 0:
             kwargs["extra_body"] = {"id_slot": slot}
+        if cfg.get("streaming"):
+            # invoke() streams under the hood and fires on_llm_new_token so the
+            # speech stream handler can chunk sentences to TTS mid-generation.
+            # stream_usage keeps token counts in /diag/timing llm_end events.
+            kwargs["streaming"] = True
+            kwargs["stream_usage"] = True
         return ChatOpenAI(**kwargs)
 
     if provider == "anthropic":

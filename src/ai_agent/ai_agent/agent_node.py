@@ -21,6 +21,8 @@ from .graph import llm as llm_module
 from .graph.tools import _bridge as bridge_module
 from .graph.graph import build_graph
 from .graph.utils import timing
+from .graph.utils.speech_stream import SpeechStreamHandler
+from .graph.tools.reminders import get_store as get_reminder_store
 
 
 class AgentNode(Node):
@@ -40,6 +42,10 @@ class AgentNode(Node):
         # Force the supervisor's mandatory handover via tool_choice (grammar-constrained
         # on llama.cpp). Set False if your llama.cpp build lacks --jinja tool support.
         self.declare_parameter("strict_tool_calls", True)
+        # Stream sentence chunks to TTS as the LLM generates (needs a llama.cpp
+        # build that streams tool calls). Set False to publish one full reply
+        # per turn — the wire protocol (chunks + end marker) stays the same.
+        self.declare_parameter("stream_speech", True)
         # Per-agent overrides for the local multimodal agent (Gemma via llama.cpp).
         # local_agent_slot: dedicated llama.cpp KV-cache slot (-1 = none/auto).
         # local_agent_model: override model name for local_agent ("" = inherit global).
@@ -59,16 +65,22 @@ class AgentNode(Node):
         local_agent_slot     = self.get_parameter("local_agent_slot").value
         local_agent_model    = self.get_parameter("local_agent_model").value
         strict_tool_calls    = self.get_parameter("strict_tool_calls").value
+        self._stream_speech  = self.get_parameter("stream_speech").value
 
         api_key = os.environ.get(api_key_env, "") if api_key_env else "none"
 
         # Per-agent LLM overrides — local_agent gets its own slot (and optionally
         # its own multimodal model) so its cached image prefix isn't evicted.
+        # The supervisor never emits user-facing text (grammar-forced handover),
+        # so it gains nothing from streaming and skips it.
         agent_overrides = {
             "local_agent": {
                 "slot":  local_agent_slot,
                 "model": local_agent_model or None,
-            }
+            },
+            "supervisor": {
+                "streaming": False,
+            },
         }
 
         # ── Known map locations for Nav2 goal publishing ──────────────────
@@ -87,7 +99,8 @@ class AgentNode(Node):
         timing.set_sink(self._bridge.publish_timing)
         self._timing_handler = timing.TimingCallbackHandler()
         llm_module.configure(provider, model, base_url, api_key, max_tokens, agent_overrides,
-                             strict_tools=strict_tool_calls)
+                             strict_tools=strict_tool_calls,
+                             streaming=self._stream_speech)
 
         # Register navigation completion callback
         self._bridge.register_nav_done_callback(self._on_nav_done)
@@ -102,13 +115,14 @@ class AgentNode(Node):
         # it is STICKY_ELIGIBLE; [SYSTEM] events always force a fresh supervisor route.
         self._sticky_agent: str | None = None
 
-        # ── Two-slot input queue ──────────────────────────────────────────
+        # ── Input queue ───────────────────────────────────────────────────
         # _user_pending:   latest user message (replaced by newer ones)
-        # _system_pending: priority system event (delivery, nav done) — never dropped
-        # _input_event:    wakes the worker when either slot is filled
+        # _system_pending: FIFO of system events (delivery, nav done, reminder
+        #                  due) — never dropped, never clobber each other
+        # _input_event:    wakes the worker when anything is pending
         self._queue_lock     = threading.Lock()
         self._user_pending:   str | None = None
-        self._system_pending: str | None = None
+        self._system_pending: list[str] = []
         self._input_event    = threading.Event()
 
         # ── Startup readiness gate ────────────────────────────────────────
@@ -137,6 +151,9 @@ class AgentNode(Node):
 
         # ── Delivery polling timer (every 2 min) ──────────────────────────
         self.create_timer(120.0, self._poll_delivery)
+
+        # ── Reminder polling timer (every 5 s → proactive speech) ─────────
+        self.create_timer(5.0, self._poll_reminders)
 
         self.get_logger().info(
             f"Agent starting — provider: {provider}, base_url: {base_url}, "
@@ -187,7 +204,7 @@ class AgentNode(Node):
     def _enqueue_system(self, text: str) -> None:
         """Enqueue a system event — never dropped, fires after current graph run."""
         with self._queue_lock:
-            self._system_pending = text
+            self._system_pending.append(text)
         self._input_event.set()
 
     def _poll_delivery(self) -> None:
@@ -195,6 +212,21 @@ class AgentNode(Node):
         order_id = self._bridge.get_active_order()
         if order_id:
             self._enqueue_system(f"[SYSTEM] Check if order {order_id} has been delivered")
+
+    def _poll_reminders(self) -> None:
+        """Timer callback — fires due reminders as a proactive-speech turn."""
+        due = get_reminder_store().pop_due()
+        if not due:
+            return
+        lines = "; ".join(f'"{r.text}" (set for {self._fmt_clock(r.due)})' for r in due)
+        self.get_logger().info(f"Reminder(s) due: {lines}")
+        self._enqueue_system(
+            f"[SYSTEM] Reminder due — announce to the user now: {lines}")
+
+    @staticmethod
+    def _fmt_clock(t: float) -> str:
+        import datetime
+        return datetime.datetime.fromtimestamp(t).strftime("%I:%M %p").lstrip("0")
 
     # ── Worker loop ───────────────────────────────────────────────────────
 
@@ -204,16 +236,15 @@ class AgentNode(Node):
         while True:
             self._input_event.wait()
 
-            # Drain ONE slot per iteration — system takes priority, but a user
-            # message that arrived in the same window is NOT discarded: we leave
-            # it pending and keep the event armed so the next loop picks it up.
+            # Drain ONE item per iteration — system events take priority, but a
+            # user message that arrived in the same window is NOT discarded: we
+            # leave it pending and keep the event armed for the next loop.
             with self._queue_lock:
-                if self._system_pending is not None:
-                    text, is_system = self._system_pending, True
-                    self._system_pending = None
-                    if self._user_pending is None:
+                if self._system_pending:
+                    text, is_system = self._system_pending.pop(0), True
+                    if not self._system_pending and self._user_pending is None:
                         self._input_event.clear()
-                    # else: leave event set so user_pending is processed next
+                    # else: leave event set so remaining input is processed next
                 else:
                     text, is_system = self._user_pending, False
                     self._user_pending = None
@@ -245,10 +276,20 @@ class AgentNode(Node):
             self.get_logger().info(
                 f"Invoking graph with input: {text} (entry={incoming_agent})")
             timing.emit("graph_start", entry=incoming_agent, system=is_system)
+
+            # Fresh handler per turn: streams sentence chunks to TTS while the
+            # LLM generates. Pre-tool text ("Let me check.") is spoken as the
+            # tool runs; the turn's utterance is closed with the EOU marker below.
+            speech_stream = (
+                SpeechStreamHandler(self._bridge.publish_speech_chunk)
+                if self._stream_speech else None
+            )
+            callbacks = [self._timing_handler] + ([speech_stream] if speech_stream else [])
+
             result = None
             for event in self._graph.stream(
                 {"messages": messages, "active_agent": incoming_agent},
-                config={"callbacks": [self._timing_handler]},
+                config={"callbacks": callbacks},
                 stream_mode="values"):
                 if "messages" in event:
                     msg = event["messages"][-1]
@@ -264,6 +305,10 @@ class AgentNode(Node):
             response = self._extract_response(result)
 
             if not response:
+                if speech_stream and speech_stream.chunks_sent:
+                    # Something was streamed but the graph ended without a final
+                    # text — close the utterance so the Jetson releases the mic.
+                    self._bridge.publish_speech_end()
                 self.get_logger().warning("Graph returned empty response")
                 return
 
@@ -276,7 +321,17 @@ class AgentNode(Node):
                 self._history = self._trim_history(new_history)
 
             self.get_logger().info(f"→ TTS: {response[:120]}")
-            self._bridge.publish_speech(response)
+            if speech_stream and speech_stream.spoke(response):
+                # Final text already went out sentence-by-sentence — just close
+                # the utterance. (Any pre-tool acks streamed earlier are part of
+                # the same utterance.)
+                timing.emit("speech_stream_done", chunks=speech_stream.chunks_sent)
+                self._bridge.publish_speech_end()
+            else:
+                # Streaming off, or the response never streamed (safe_invoke
+                # fallback, non-streaming provider) — speak it whole. This also
+                # closes any partial stream with the trailing EOU marker.
+                self._bridge.publish_speech(response)
 
         except Exception as e:
             self.get_logger().error(f"Graph error: {e}")

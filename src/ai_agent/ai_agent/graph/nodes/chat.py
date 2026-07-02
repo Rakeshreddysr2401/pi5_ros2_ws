@@ -1,6 +1,7 @@
-"""Chat agent — general conversation, web search, system status, small talk."""
+"""Chat agent — general conversation, web search, reminders, system status, small talk."""
 
 import logging
+from datetime import datetime
 
 from langchain_core.messages import SystemMessage
 
@@ -17,6 +18,9 @@ Answer the user naturally and concisely.
 
 == TOOLS ==
   get_robot_status()       — check battery, hardware, and operational state
+  set_reminder(text, in_minutes | at_time, day) — schedule a reminder or timer
+  list_reminders()         — show pending reminders
+  cancel_reminder(id)      — cancel a reminder by id
   tavily_search (if available) — search the web for current information
   handover(next_agent)     — transfer to a specialist agent
 
@@ -29,9 +33,20 @@ Answer the user naturally and concisely.
   with a good query, then answer from the results. Do NOT hand over for these — you
   own web search. If tavily_search is unavailable, say you can't look that up right now.
 - Keep replies short (1-3 sentences) unless the user needs detail.
-- Your reply text is spoken to the user automatically — it is the ONLY thing said,
-  so put your complete answer there. Don't narrate that you're about to use a tool;
-  just use it and answer.
+- Your reply text is spoken to the user automatically, sentence by sentence —
+  put your complete answer there.
+- When you call tavily_search, you MAY include ONE very short acknowledgement in
+  the same message as the tool call (e.g. "Let me check.") — it is spoken while
+  the search runs. Never answer from imagination instead of searching, and never
+  narrate a handover.
+- Reminders and timers are YOURS — never hand over for them.
+  "remind me to check the oven in 20 minutes" → set_reminder(text="Check the oven", in_minutes=20)
+  "set a 5 minute timer"                      → set_reminder(text="Your 5 minute timer is done", in_minutes=5)
+  "remind me at 7pm to call mom"              → set_reminder(text="Call mom", at_time="19:00")
+  text is announced verbatim when it fires — write it as something to SAY.
+- A "[SYSTEM] Reminder due" message means a reminder just fired: announce it to
+  the user naturally and briefly (e.g. "Rakesh, reminder: check the oven!").
+  Don't call set_reminder again unless asked to snooze/repeat.
 - Hand over ONLY for these specialist cases:
   - food ordering          → handover("swiggy", reason="food order request")
   - delivery tracking/ETA  → handover("tracker", reason="track order")
@@ -44,5 +59,10 @@ Answer the user naturally and concisely.
 def chat_node(state: AgentState) -> dict:
     llm = get_llm().bind_tools(CHAT_TOOLS)
     clean = prepare_messages_for_agent(state["messages"])
-    response = safe_invoke(llm, [SystemMessage(content=_PROMPT)] + clean, logger)
+    # Current time goes at the END of the system prompt so the static prefix
+    # above it stays reusable in the llama.cpp KV cache (minute resolution —
+    # needed for "what time is it" and at_time reminder math).
+    now = datetime.now().strftime("%A %B %d, %I:%M %p").replace(" 0", " ")
+    prompt = _PROMPT + f"\n== NOW ==\nCurrent local date and time: {now}.\n"
+    response = safe_invoke(llm, [SystemMessage(content=prompt)] + clean, logger)
     return {"messages": [response], "active_agent": "chat"}

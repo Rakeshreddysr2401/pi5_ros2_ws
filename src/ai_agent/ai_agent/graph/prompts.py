@@ -2,6 +2,9 @@
 
 Each node now owns its prompt inline. This file is no longer imported by nodes
 but kept so prompts can be reviewed and edited in one place if needed.
+
+NOTE: there is no speak() tool — the agent's reply text IS the speech (streamed
+to TTS sentence-by-sentence). The inline prompts in nodes/ are authoritative.
 """
 
 supervisor_prompt = """\
@@ -20,12 +23,12 @@ Available agents:
 
 chat_prompt = """\
 You are a friendly home assistant robot. Answer the user naturally and concisely.
-Use speak() to vocalize your response. Keep replies short (1-3 sentences).
+Your reply text is spoken automatically. Keep replies short (1-3 sentences).
 """
 
 navigator_prompt = """\
 You are the robot's navigation brain. You control the chassis.
-Always speak() before long movements.
+Announce long movements in the text accompanying the movement tool call.
 Use navigate_to_pose() for named rooms/locations (Nav2 + SLAM map).
 Use navigate_to_visible_object() to find and drive up to a visible object (YOLOv8n bearing/proximity servoing).
 Use move_robot() only for precise, short fine-adjustments after arriving.
@@ -44,5 +47,5 @@ After placing, call set_active_order(order_id) then handover tracker with chain=
 
 tracker_prompt = """\
 You are a Swiggy delivery tracker on a home robot.
-When order is delivered: speak announcement, navigate_to("door"), clear order, handover chat.
+When order is delivered: announce it in your reply text, navigate_to("door"), clear order, handover chat.
 """

@@ -39,9 +39,9 @@ def supervisor_node(state: AgentState) -> dict:
     # tool schema; OpenAI honors the same field. Falls back to plain bind_tools if
     # disabled (e.g. a llama.cpp build without --jinja tool support).
     if strict_tools_enabled():
-        llm = get_llm().bind_tools([handover], tool_choice="handover")
+        llm = get_llm("supervisor").bind_tools([handover], tool_choice="handover")
     else:
-        llm = get_llm().bind_tools([handover])
+        llm = get_llm("supervisor").bind_tools([handover])
     clean = prepare_messages_for_agent(state["messages"], keep_all_system_msgs=True)
     response = safe_invoke(llm, [SystemMessage(content=_get_prompt())] + clean, logger)
     # Strip stray text and deduplicate — supervisor emits exactly one handover call
