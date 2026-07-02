@@ -20,6 +20,7 @@ from .ros2_bridge import ROS2Bridge
 from .graph import llm as llm_module
 from .graph.tools import _bridge as bridge_module
 from .graph.graph import build_graph
+from .graph.utils import timing
 
 
 class AgentNode(Node):
@@ -83,6 +84,8 @@ class AgentNode(Node):
         # ── Inject config into graph layer ────────────────────────────────
         self._bridge = ROS2Bridge(self, known_locations=known_locations)
         bridge_module.init(self._bridge)
+        timing.set_sink(self._bridge.publish_timing)
+        self._timing_handler = timing.TimingCallbackHandler()
         llm_module.configure(provider, model, base_url, api_key, max_tokens, agent_overrides,
                              strict_tools=strict_tool_calls)
 
@@ -170,6 +173,7 @@ class AgentNode(Node):
         text = msg.data.strip()
         if not text:
             return
+        timing.emit("brain_receive", chars=len(text))
         # New user input cancels any active navigation AND interrupts any blocking
         # motion tool (visual servoing / timed drive), then replaces pending input.
         self._bridge.cancel_navigation()
@@ -234,18 +238,24 @@ class AgentNode(Node):
 
             # Sticky routing: re-enter the previous agent for a user follow-up;
             # [SYSTEM] events always get a fresh supervisor route. turn_entry
-            # enforces which agents are actually sticky-eligible.
-            incoming_agent = "supervisor" if is_system else (self._sticky_agent or "supervisor")
+            # enforces which agents are actually sticky-eligible and defaults
+            # everything else to chat (the single-call common path).
+            incoming_agent = "supervisor" if is_system else (self._sticky_agent or "chat")
 
             self.get_logger().info(
                 f"Invoking graph with input: {text} (entry={incoming_agent})")
+            timing.emit("graph_start", entry=incoming_agent, system=is_system)
             result = None
             for event in self._graph.stream(
-                {"messages": messages, "active_agent": incoming_agent}, stream_mode="values"):
+                {"messages": messages, "active_agent": incoming_agent},
+                config={"callbacks": [self._timing_handler]},
+                stream_mode="values"):
                 if "messages" in event:
                     msg = event["messages"][-1]
                     self.get_logger().info(f"Step message [{type(msg).__name__}]: {str(msg.content)[:200]} (tool_calls: {getattr(msg, 'tool_calls', None)})")
                 result = event
+
+            timing.emit("graph_end")
 
             # Remember where the turn ended so the next user follow-up can skip
             # the supervisor (turn_entry gates which agents are sticky-eligible).

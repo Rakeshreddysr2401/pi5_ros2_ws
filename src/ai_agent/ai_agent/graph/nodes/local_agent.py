@@ -16,15 +16,15 @@ import logging
 from langchain_core.messages import SystemMessage
 
 from ..llm import get_llm
+from ..persona import PERSONA
 from ..state import AgentState
 from ..tools import LOCAL_AGENT_TOOLS
 from ..utils.message_utils import prepare_messages_for_agent, safe_invoke
 
 logger = logging.getLogger(__name__)
 
-_PROMPT = """\
-You are the robot's visual intelligence, running on a multimodal model that can
-see camera images directly.
+_PROMPT = PERSONA + """\
+Right now you handle visual queries — you can see camera images directly.
 
 == TOOLS ==
   look()                 — capture the current camera view as an image you can see

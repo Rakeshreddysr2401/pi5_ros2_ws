@@ -5,14 +5,15 @@ import logging
 from langchain_core.messages import SystemMessage
 
 from ..llm import get_llm
+from ..persona import PERSONA
 from ..state import AgentState
 from ..tools import TRACKER_TOOLS
 from ..utils.message_utils import prepare_messages_for_agent, safe_invoke
 
 logger = logging.getLogger(__name__)
 
-_PROMPT = """\
-You are a Swiggy delivery tracker running on a home robot. Your job is to check \
+_PROMPT = PERSONA + """\
+Right now you track Swiggy deliveries. Your job is to check \
 delivery status and act when the order arrives at the door.
 
 Capabilities via tools:

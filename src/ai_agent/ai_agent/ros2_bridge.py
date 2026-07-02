@@ -11,6 +11,7 @@ graph.tools._bridge.get() which returns this object.
 
 import json
 import threading
+import time
 from typing import Callable, Optional
 
 import math
@@ -75,6 +76,7 @@ class ROS2Bridge:
         self._speech_pub        = node.create_publisher(String, "/voice/robot_speech", 10)
         self._vision_target_pub = node.create_publisher(String, "/vision/target", 10)
         self._twist_pub         = node.create_publisher(Twist, "/cmd_vel", 10)
+        self._timing_pub        = node.create_publisher(String, "/diag/timing", 10)
 
         # Subscribe to Kokoro speaking status for back-pressure
         node.create_subscription(Bool, "/voice/tts_speaking", self._on_speaking, 10)
@@ -139,10 +141,17 @@ class ROS2Bridge:
         with self._order_lock:
             return self._active_order_id
 
+    # ── Timing events (/diag/timing) ──────────────────────────────────────
+
+    def publish_timing(self, event: dict) -> None:
+        """Sink for graph.utils.timing — one JSON stage event per message."""
+        self._timing_pub.publish(String(data=json.dumps(event)))
+
     # ── Speech with back-pressure ─────────────────────────────────────────
 
     def publish_speech(self, text: str) -> None:
         """Queue speech text. Drained by timer when Kokoro is not speaking."""
+        self.publish_timing({"stage": "speech_queued", "t": time.time(), "chars": len(text)})
         with self._speech_lock:
             self._speech_queue.append(text)
 
@@ -152,6 +161,7 @@ class ROS2Bridge:
             if self._is_speaking or not self._speech_queue:
                 return
             text = self._speech_queue.pop(0)
+        self.publish_timing({"stage": "speech_publish", "t": time.time(), "chars": len(text)})
         self._speech_pub.publish(String(data=text))
 
     # ── Publishers ─────────────────────────────────────────────────────────

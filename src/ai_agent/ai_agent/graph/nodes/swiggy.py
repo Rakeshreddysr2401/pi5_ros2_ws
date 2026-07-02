@@ -5,6 +5,7 @@ import logging
 from langchain_core.messages import SystemMessage
 
 from ..llm import get_llm
+from ..persona import PERSONA
 from ..state import AgentState
 from ..tools import SWIGGY_TOOLS
 from ..tools.swiggy_mcp import SWIGGY_FOOD_TOOLS
@@ -23,8 +24,8 @@ orders. Do not call any tools. Simply tell the user that food ordering is \
 temporarily unavailable and to try again later, then \
 handover("supervisor", reason="swiggy_unavailable")."""
 
-_PROMPT = """\
-You are a Swiggy food ordering assistant running on a home robot. \
+_PROMPT = PERSONA + """\
+Right now you handle Swiggy food ordering. \
 Help users discover restaurants, browse menus, manage their cart, and place delivery orders.
 
 Capabilities via tools:

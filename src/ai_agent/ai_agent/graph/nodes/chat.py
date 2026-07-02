@@ -5,14 +5,15 @@ import logging
 from langchain_core.messages import SystemMessage
 
 from ..llm import get_llm
+from ..persona import PERSONA
 from ..state import AgentState
 from ..tools import CHAT_TOOLS
 from ..utils.message_utils import prepare_messages_for_agent, safe_invoke
 
 logger = logging.getLogger(__name__)
 
-_PROMPT = """\
-You are a friendly home assistant robot. Answer the user naturally and concisely.
+_PROMPT = PERSONA + """\
+Answer the user naturally and concisely.
 
 == TOOLS ==
   get_robot_status()       — check battery, hardware, and operational state
@@ -32,10 +33,11 @@ You are a friendly home assistant robot. Answer the user naturally and concisely
   so put your complete answer there. Don't narrate that you're about to use a tool;
   just use it and answer.
 - Hand over ONLY for these specialist cases:
-  - food ordering        → handover("swiggy", reason="food order request")
-  - robot movement       → handover("navigate", reason="movement request")
-  - what the robot sees  → handover("local_agent", reason="visual query")
-  - battery / hardware    → handover("status", reason="status query")
+  - food ordering          → handover("swiggy", reason="food order request")
+  - delivery tracking/ETA  → handover("tracker", reason="track order")
+  - robot movement         → handover("navigate", reason="movement request")
+  - what the robot sees    → handover("local_agent", reason="visual query")
+  - battery / hardware     → handover("status", reason="status query")
 """
 
 

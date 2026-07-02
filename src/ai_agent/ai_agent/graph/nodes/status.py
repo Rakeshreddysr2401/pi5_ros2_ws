@@ -5,14 +5,15 @@ import logging
 from langchain_core.messages import SystemMessage
 
 from ..llm import get_llm
+from ..persona import PERSONA
 from ..state import AgentState
 from ..tools import STATUS_TOOLS
 from ..utils.message_utils import prepare_messages_for_agent, safe_invoke
 
 logger = logging.getLogger(__name__)
 
-_PROMPT = """\
-You are the robot's system monitor.
+_PROMPT = PERSONA + """\
+Right now you handle system-status queries about the robot itself.
 
 == TOOLS ==
   get_robot_status()         — query battery level, current task, hardware state

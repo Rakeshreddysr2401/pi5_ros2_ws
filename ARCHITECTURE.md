@@ -141,7 +141,9 @@ START
   ▼
 turn_entry  ──► (resets agent_turn_visits, sets always_speak=True)
   │
-  ▼ Command(goto="supervisor")
+  ▼ Command(goto=…)  — sticky agent if one is active; supervisor only for
+  │                    [SYSTEM] events; otherwise chat (default responder,
+  │                    carries the routing table → one LLM call, no router hop)
 supervisor  ──► supervisor_tools  ──► handle_handover
                                             │
               ┌─────────────────────────────┼──────────────────────────────┐
@@ -355,7 +357,12 @@ forwards all Twist messages to ESP32 without any routing logic.
 
 ---
 
-## Supervisor Routing
+## Routing
+
+Fresh user turns enter at **chat**, which answers directly or hands over to a
+specialist (single LLM call in the common case). The **supervisor** runs only
+for [SYSTEM] events and mid-turn handbacks (`handover("supervisor")`). Both use
+the same routing table:
 
 | User says | Routes to |
 |-----------|-----------|
