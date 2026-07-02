@@ -88,9 +88,9 @@ A stranger buys a product; a family *keeps using* one. The metric:
    follow-up attention window; the mic array purchase covers the acoustics.)*
 3. **Self-initiated turns**: scheduler node + `[SYSTEM]` event producers →
    timers/reminders/lists with proactive speech. First "she reminded me" moment.
-   *(Shipped 2026-07-03: reminders/timers + household lists & memory — recall
-   is in-prompt by design, no vector RAG until per-person memory needs it.
-   Still open: recurring reminders.)*
+   *(Shipped in full 2026-07-03: reminders/timers incl. recurring, household
+   lists & memory — recall is in-prompt by design, no vector RAG until
+   per-person memory needs it.)*
 4. **Knows the family**: face recognition on Jetson + per-person memory store on
    Pi5 → greetings, per-person briefings, "tell Rakesh when you see him."
 5. **Embodied presence**: pan-tilt tracking + state LEDs + presence sensor.

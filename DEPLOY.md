@@ -80,6 +80,9 @@ persists at `~/.langrobo/reminders.json` on the Pi5.
 - "what reminders do I have" / "cancel reminder one".
 - "set a timer for one minute" → announcement when it fires.
 - Restart the brain with a pending reminder — it must still fire (persistence).
+- "every day at 9pm remind me to take my medicine" → "what reminders do I
+  have" shows "(repeats daily)"; after it fires it stays scheduled for
+  tomorrow. A reminder missed while the brain was off fires ONCE on boot.
 
 ---
 

@@ -323,7 +323,7 @@ Publishes Twist directly to `/cmd_vel`. For small precise corrections after arri
 | `navigate_to_visible_object(target)` | `tools/movement.py` | YOLOv8n visual servoing: set `/vision/target`, read `/vision/target_result`, turn/drive via `/cmd_vel` until close |
 | `move_robot(command)` | `tools/movement.py` | Fine Twist: `F:20` / `L:90` / `S` — direct to `/cmd_vel` |
 | `get_robot_status()` | `tools/system.py` | Calls `/robot/get_status` service |
-| `set_reminder(text, in_minutes\|at_time, day)` | `tools/reminders.py` | Schedules a reminder/timer (JSON-persisted at `~/.langrobo/reminders.json`) |
+| `set_reminder(text, in_minutes\|at_time, day, repeat_minutes)` | `tools/reminders.py` | Schedules a one-shot or recurring reminder/timer (JSON-persisted at `~/.langrobo/reminders.json`; recurring ones reschedule on fire, one catch-up after downtime) |
 | `list_reminders()` / `cancel_reminder(id)` | `tools/reminders.py` | Show / cancel pending reminders |
 | `update_list(list_name, add, remove, clear)` | `tools/household.py` | Named household lists (shopping, todo, …) — persisted at `~/.langrobo/household.json` |
 | `remember(fact)` / `forget(about)` | `tools/household.py` | Household facts. Reads need no tool: `household_context()` injects all lists+facts into chat's system prompt (deliberately no vector RAG — a household corpus fits in the prompt; upgrade path is llama.cpp embeddings when per-person memory outgrows it) |

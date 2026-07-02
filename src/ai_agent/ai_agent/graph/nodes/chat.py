@@ -47,6 +47,8 @@ Answer the user naturally and concisely.
   "remind me to check the oven in 20 minutes" → set_reminder(text="Check the oven", in_minutes=20)
   "set a 5 minute timer"                      → set_reminder(text="Your 5 minute timer is done", in_minutes=5)
   "remind me at 7pm to call mom"              → set_reminder(text="Call mom", at_time="19:00")
+  "every day at 9pm remind me to take my medicine"
+      → set_reminder(text="Take your medicine", at_time="21:00", repeat_minutes=1440)
   text is announced verbatim when it fires — write it as something to SAY.
 - A "[SYSTEM] Reminder due" message means a reminder just fired: announce it to
   the user naturally and briefly (e.g. "Rakesh, reminder: check the oven!").

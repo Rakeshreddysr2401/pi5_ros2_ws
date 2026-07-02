@@ -28,6 +28,18 @@ class Reminder:
     text: str
     due: float       # epoch seconds
     created: float
+    repeat_minutes: float = 0.0   # 0 = one-shot; 1440 = daily, 10080 = weekly
+
+
+def _fmt_repeat(minutes: float) -> str:
+    if minutes == 1440:
+        return "daily"
+    if minutes == 10080:
+        return "weekly"
+    if minutes % 60 == 0 and minutes >= 60:
+        h = int(minutes // 60)
+        return "every hour" if h == 1 else f"every {h} hours"
+    return f"every {int(minutes)} minutes"
 
 
 def _fmt_due(due: float) -> str:
@@ -71,9 +83,10 @@ class ReminderStore:
                        "reminders": [asdict(r) for r in self._reminders]}, f, indent=1)
         os.replace(tmp, self._path)
 
-    def add(self, text: str, due: float) -> Reminder:
+    def add(self, text: str, due: float, repeat_minutes: float = 0.0) -> Reminder:
         with self._lock:
-            r = Reminder(id=self._next_id, text=text, due=due, created=time.time())
+            r = Reminder(id=self._next_id, text=text, due=due, created=time.time(),
+                         repeat_minutes=repeat_minutes)
             self._next_id += 1
             self._reminders.append(r)
             self._save()
@@ -93,14 +106,24 @@ class ReminderStore:
             return None
 
     def pop_due(self, now: float | None = None) -> list[Reminder]:
-        """Remove and return all reminders that are due (agent_node's poll)."""
+        """Return all due reminders (agent_node's poll). One-shots are removed;
+        repeating ones are rescheduled to their next future occurrence — a long
+        downtime yields ONE announcement, not a backlog."""
         now = now or time.time()
         with self._lock:
             due = [r for r in self._reminders if r.due <= now]
-            if due:
-                self._reminders = [r for r in self._reminders if r.due > now]
-                self._save()
-            return sorted(due, key=lambda r: r.due)
+            if not due:
+                return []
+            fired = [Reminder(**asdict(r)) for r in due]  # snapshot: original due times
+            keep = [r for r in self._reminders if r.due > now]
+            for r in due:
+                if r.repeat_minutes > 0:
+                    while r.due <= now:
+                        r.due += r.repeat_minutes * 60
+                    keep.append(r)
+            self._reminders = keep
+            self._save()
+            return sorted(fired, key=lambda r: r.due)
 
 
 # Module-level singleton — tools and agent_node share it (same pattern as _bridge).
@@ -118,7 +141,8 @@ def get_store() -> ReminderStore:
 
 @tool
 def set_reminder(text: str, in_minutes: Optional[float] = None,
-                 at_time: Optional[str] = None, day: str = "today") -> str:
+                 at_time: Optional[str] = None, day: str = "today",
+                 repeat_minutes: float = 0.0) -> str:
     """Schedule a reminder or timer. The robot announces `text` out loud when it fires.
 
     Give exactly ONE of:
@@ -127,9 +151,15 @@ def set_reminder(text: str, in_minutes: Optional[float] = None,
                    with day="today" or "tomorrow". A today-time already past
                    rolls to tomorrow automatically.
 
-    text should be the thing to announce, e.g. "Check the oven" or "Timer done"."""
+    repeat_minutes — 0 for one-shot (default); repeat interval otherwise:
+      "every day at 21:00" → at_time="21:00", repeat_minutes=1440
+      "every week"=10080, "every 2 hours"=120. Minimum 5.
+
+    text should be the thing to announce, e.g. "Check the oven" or "Take your medicine"."""
     if (in_minutes is None) == (at_time is None):
         return "Error: give exactly one of in_minutes or at_time."
+    if repeat_minutes and repeat_minutes < 5:
+        return "Error: repeat_minutes must be at least 5 (or 0 for one-shot)."
     if in_minutes is not None:
         if in_minutes <= 0:
             return "Error: in_minutes must be positive."
@@ -146,8 +176,9 @@ def set_reminder(text: str, in_minutes: Optional[float] = None,
         elif target <= datetime.now():
             target += timedelta(days=1)  # past today → tomorrow
         due = target.timestamp()
-    r = get_store().add(text.strip(), due)
-    return f"Reminder #{r.id} set for {_fmt_due(r.due)}: {r.text}"
+    r = get_store().add(text.strip(), due, repeat_minutes)
+    rep = f", repeating {_fmt_repeat(repeat_minutes)}" if repeat_minutes else ""
+    return f"Reminder #{r.id} set for {_fmt_due(r.due)}{rep}: {r.text}"
 
 
 @tool
@@ -156,7 +187,11 @@ def list_reminders() -> str:
     active = get_store().active()
     if not active:
         return "No pending reminders."
-    return "\n".join(f"#{r.id} at {_fmt_due(r.due)}: {r.text}" for r in active)
+    return "\n".join(
+        f"#{r.id} at {_fmt_due(r.due)}"
+        + (f" (repeats {_fmt_repeat(r.repeat_minutes)})" if r.repeat_minutes else "")
+        + f": {r.text}"
+        for r in active)
 
 
 @tool

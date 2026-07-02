@@ -4,6 +4,20 @@ What changed, when, and where. Deployment steps for pending items: DEPLOY.md.
 
 ---
 
+## 2026-07-03 — Recurring reminders (closes the last phase-3 gap)
+
+"Every day at 9pm remind me to take my medicine."
+
+- `Reminder` gained `repeat_minutes` (0 = one-shot; 1440 daily, 10080 weekly,
+  min 5). One-shots are removed when fired; repeating ones reschedule to the
+  next future occurrence — a long brain downtime produces ONE catch-up
+  announcement, never a backlog. Announcements snapshot the original due time.
+- `set_reminder` / `list_reminders` show the cadence ("repeats daily");
+  cancelling a repeating reminder removes it for good. Old-format JSON stores
+  load unchanged (field defaults to one-shot).
+- Verified live: the LLM maps "every day at 9pm…" → at_time="21:00",
+  repeat_minutes=1440. Unit tests cover rescheduling, catch-up, back-compat.
+
 ## 2026-07-03 — Household lists & memory (completes roadmap phase 3 software)
 
 "Add milk to the shopping list", "remember that the spare key is in the blue
