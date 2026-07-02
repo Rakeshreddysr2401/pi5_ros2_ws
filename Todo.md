@@ -1,3 +1,6 @@
+> **Start at STATUS.md** — the done/next/priorities dashboard. This file holds
+> the current phase's working notes and decisions.
+
 # Goal
 
 Make a home robot that can see, listen, speak and interact with its environment.
