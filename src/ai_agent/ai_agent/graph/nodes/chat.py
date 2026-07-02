@@ -9,6 +9,7 @@ from ..llm import get_llm
 from ..persona import PERSONA
 from ..state import AgentState
 from ..tools import CHAT_TOOLS
+from ..tools.household import household_context
 from ..utils.message_utils import prepare_messages_for_agent, safe_invoke
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,9 @@ Answer the user naturally and concisely.
   set_reminder(text, in_minutes | at_time, day) — schedule a reminder or timer
   list_reminders()         — show pending reminders
   cancel_reminder(id)      — cancel a reminder by id
+  update_list(list_name, add, remove, clear) — change a household list
+  remember(fact)           — permanently store a household fact
+  forget(about)            — erase stored facts matching a phrase
   tavily_search (if available) — search the web for current information
   handover(next_agent)     — transfer to a specialist agent
 
@@ -47,6 +51,13 @@ Answer the user naturally and concisely.
 - A "[SYSTEM] Reminder due" message means a reminder just fired: announce it to
   the user naturally and briefly (e.g. "Rakesh, reminder: check the oven!").
   Don't call set_reminder again unless asked to snooze/repeat.
+- Lists and household memory are YOURS — never hand over for them.
+  "add milk and eggs to the shopping list" → update_list("shopping", add=["milk", "eggs"])
+  "remember that the spare key is in the blue drawer" → remember("The spare key is in the blue drawer")
+  Reading needs NO tool: current lists and facts are in HOUSEHOLD MEMORY below —
+  "what's on my shopping list" / "where's the spare key" → answer from there.
+  When the user states a lasting preference or household fact in passing, you
+  may remember() it — but never store secrets or anything they ask you not to.
 - Hand over ONLY for these specialist cases:
   - food ordering          → handover("swiggy", reason="food order request")
   - delivery tracking/ETA  → handover("tracker", reason="track order")
@@ -59,10 +70,11 @@ Answer the user naturally and concisely.
 def chat_node(state: AgentState) -> dict:
     llm = get_llm().bind_tools(CHAT_TOOLS)
     clean = prepare_messages_for_agent(state["messages"])
-    # Current time goes at the END of the system prompt so the static prefix
-    # above it stays reusable in the llama.cpp KV cache (minute resolution —
-    # needed for "what time is it" and at_time reminder math).
+    # Dynamic parts go at the END of the system prompt so the static prefix
+    # stays reusable in the llama.cpp KV cache: the household memory block only
+    # changes when memory changes; the time line (minute resolution — "what
+    # time is it", at_time reminder math) changes most, so it goes last.
     now = datetime.now().strftime("%A %B %d, %I:%M %p").replace(" 0", " ")
-    prompt = _PROMPT + f"\n== NOW ==\nCurrent local date and time: {now}.\n"
+    prompt = _PROMPT + household_context() + f"\n== NOW ==\nCurrent local date and time: {now}.\n"
     response = safe_invoke(llm, [SystemMessage(content=prompt)] + clean, logger)
     return {"messages": [response], "active_agent": "chat"}

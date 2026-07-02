@@ -4,6 +4,29 @@ Pending rollouts and how to verify them on the robot. Newest first.
 
 ---
 
+## Wake word "Rakhi" (implemented 2026-07-03 — Jetson rebuild only)
+
+stt_node now forwards ONLY utterances addressed to the robot (wake alias at
+start/end, alias stripped) or spoken within 15s of the robot's last speech.
+Everything else is logged as `Not addressed to me — ignored: "…"`.
+
+### Verify
+
+- "Rakhi, what time is it?" → answers. The same question WITHOUT the name,
+  cold → silence, and the Orin log shows the ignored transcript.
+- Ask something, then follow up naturally within ~15s without the name →
+  answers (attention window).
+- **Tune the aliases**: talk to it for a few minutes, then grep the Orin log
+  for ignored utterances that were actually addressed to it — Whisper's
+  spellings of "Rakhi" vary ("Rocky", "Raki", …). Add spellings to
+  `wake_aliases` in voice_params.yaml.
+- Known trade-offs: chatter during the 15s attention window still gets
+  answered (fix later with face/gaze attention); "Rocky" as a real name in
+  conversation can false-trigger — drop it from the aliases if it bites.
+- Kill switch: `wake_word:=false` restores answer-everything behaviour.
+
+---
+
 ## "Stop" keyword spotter (implemented 2026-07-03 — ships with the same rebuilds)
 
 Both repos again (stt_node, tts_node, tts_backend on the Jetson; agent_node on
@@ -23,6 +46,23 @@ the Pi5). While the robot speaks, the mic listens only for short bursts and
   `stop_keyword` params, GPU load from spot transcriptions (each ≤1.5s clip is
   one small Whisper call, only during playback). Kill switch:
   `stop_spotter:=false` on the voice launch.
+
+---
+
+## Household lists & memory (implemented 2026-07-03 — same Pi5 rebuild)
+
+Brain-only. Chat owns `update_list` / `remember` / `forget`; current lists and
+facts are injected into chat's prompt, so reads need no tool. Store:
+`~/.langrobo/household.json` on the Pi5.
+
+### Verify (after the Pi5 rebuild below)
+
+- "Rakhi, add milk and eggs to the shopping list" → "what's on my shopping
+  list?" → both items back.
+- "remember that the spare key is in the blue drawer" → restart the brain →
+  "where's the spare key?" → recalled (persistence).
+- "we bought the milk, take it off the list" → removed.
+- "forget where the spare key is" → confirms what was forgotten.
 
 ---
 

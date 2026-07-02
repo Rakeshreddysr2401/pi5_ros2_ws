@@ -4,6 +4,44 @@ What changed, when, and where. Deployment steps for pending items: DEPLOY.md.
 
 ---
 
+## 2026-07-03 — Household lists & memory (completes roadmap phase 3 software)
+
+"Add milk to the shopping list", "remember that the spare key is in the blue
+drawer", "where's the spare key?" — persistent, local, no cloud.
+
+- **`graph/tools/household.py`** (new, pure zone): `HouseholdStore` (one JSON
+  file, `~/.langrobo/household.json`, atomic writes) holding named lists +
+  free-form facts. Chat tools: `update_list(name, add, remove, clear)` (single
+  tool for all list ops — keeps chat's tool count small-model-friendly),
+  `remember(fact)`, `forget(about)`.
+- **Recall design — deliberately no vector RAG / Mem0**: a household corpus is
+  a few hundred short facts; `household_context()` injects the whole compact
+  block into chat's system prompt, so reads need no tool call and recall can't
+  silently miss. Bounds: 150 facts × 200 chars, 60 items/list, "memory almost
+  full" nudge. Block sits between the static prompt and the time line, so the
+  llama.cpp prefix cache only re-prefills when memory changes. Upgrade path
+  (phase 4 per-person memory): llama.cpp `/v1/embeddings` + local index.
+- Verified live off-robot: add → remember → recall-from-prompt → conversational
+  removal ("we bought the milk") all correct, store state checked each turn.
+
+## 2026-07-03 — Wake word "Rakhi" (software half of roadmap phase 2)
+
+The robot stops answering every utterance in the room — the single biggest
+daily-usability fix available without new hardware.
+
+- **Jetson `wake_gate.py`** (new, pure/unit-tested): forward an utterance only
+  if it starts or ends with a wake alias (alias stripped before forwarding;
+  bare "Rakhi?" forwards as-is so the robot responds to being called), or the
+  attention window is open. Alias list covers Whisper's spellings of "Rakhi".
+- **Jetson `stt_node`**: applies the gate after transcription; a 15s attention
+  window opens whenever the robot finishes speaking or is addressed, so
+  follow-ups need no name. Ignored chatter is logged with its transcript
+  (+ `wake_ignored` timing event) for alias tuning. `wake_word` /
+  `wake_aliases` / `attention_s` params; `wake_word:=false` disables.
+- Brain untouched — proactive `[SYSTEM]` turns (reminders) speak regardless
+  and open the attention window via the robot's own speech.
+- On-robot: tune `wake_aliases` from the ignored-transcript logs (DEPLOY.md).
+
 ## 2026-07-03 — "Stop" keyword spotter (phase step 5) — needs on-robot tuning
 
 Halt speech (and wheels) mid-reply without open-mic barge-in or AEC.

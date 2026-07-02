@@ -325,6 +325,8 @@ Publishes Twist directly to `/cmd_vel`. For small precise corrections after arri
 | `get_robot_status()` | `tools/system.py` | Calls `/robot/get_status` service |
 | `set_reminder(text, in_minutes\|at_time, day)` | `tools/reminders.py` | Schedules a reminder/timer (JSON-persisted at `~/.langrobo/reminders.json`) |
 | `list_reminders()` / `cancel_reminder(id)` | `tools/reminders.py` | Show / cancel pending reminders |
+| `update_list(list_name, add, remove, clear)` | `tools/household.py` | Named household lists (shopping, todo, …) — persisted at `~/.langrobo/household.json` |
+| `remember(fact)` / `forget(about)` | `tools/household.py` | Household facts. Reads need no tool: `household_context()` injects all lists+facts into chat's system prompt (deliberately no vector RAG — a household corpus fits in the prompt; upgrade path is llama.cpp embeddings when per-person memory outgrows it) |
 | `ros2_publish(topic, data)` | `tools/system.py` | Generic String publisher |
 | `set_active_order(order_id)` | `tools/system.py` | Stores/clears Swiggy order ID for polling |
 | Swiggy MCP tools | `tools/swiggy_mcp.py` | Food ordering via `https://mcp.swiggy.com/food` |
@@ -336,7 +338,7 @@ Publishes Twist directly to `/cmd_vel`. For small precise corrections after arri
 | Agent | Tool Set |
 |-------|----------|
 | `supervisor` | `handover` |
-| `chat` | `CHAT_TOOLS`: `get_robot_status`, `set_reminder`, `list_reminders`, `cancel_reminder`, `handover` + web search |
+| `chat` | `CHAT_TOOLS`: `get_robot_status`, `set_reminder`, `list_reminders`, `cancel_reminder`, `update_list`, `remember`, `forget`, `handover` + web search |
 | `local_agent` | `LOCAL_AGENT_TOOLS`: `look`, `handover` — multimodal, sees real frames |
 | `navigate` | `NAVIGATE_TOOLS`: `move_robot`, `navigate_to_pose`, `navigate_to_visible_object`, `handover` |
 | `status` | `STATUS_TOOLS`: `get_robot_status`, `ros2_publish`, `handover` |

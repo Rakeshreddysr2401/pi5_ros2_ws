@@ -1,5 +1,6 @@
 """Tool set exports — each agent node binds only the tools it needs."""
 
+from .household import forget, remember, update_list
 from .look import look
 from .movement import move_robot, navigate_to_pose, navigate_to_visible_object
 from .reminders import cancel_reminder, list_reminders, set_reminder
@@ -17,7 +18,8 @@ from .web import WEB_TOOLS
 # Visual Q&A is handled by look() (camera frame → Gemma multimodal). The old
 # query_vision() (Jetson Moondream) was retired — no local VLM fits the 8GB Jetson.
 CHAT_TOOLS         = [get_robot_status, set_reminder, list_reminders,
-                      cancel_reminder, handover] + WEB_TOOLS
+                      cancel_reminder, update_list, remember, forget,
+                      handover] + WEB_TOOLS
 LOCAL_AGENT_TOOLS  = [look, handover]
 NAVIGATE_TOOLS     = [move_robot, navigate_to_pose, navigate_to_visible_object, handover]
 STATUS_TOOLS       = [get_robot_status, ros2_publish, handover]

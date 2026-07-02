@@ -82,7 +82,13 @@ Highest-value features the current infra genuinely supports:
   (system queue is now FIFO — events no longer clobber each other). Verified
   live off-robot: set → list → due → spoken announcement. Ships with the same
   Pi5 rebuild as streaming TTS (see DEPLOY.md).
-- Wake word ("Rakhi") — half-duplex today makes this natural
+- ✅ Wake word ("Rakhi"), software half — done 2026-07-03. Transcript-based
+  gate in stt_node (`voice_pkg/wake_gate.py`, pure + unit-tested): utterances
+  must start/end with a wake alias or fall in the 15s attention window after
+  the robot spoke; alias stripped before forwarding; ignored chatter logged
+  (+ `wake_ignored` timing event) for alias tuning. `wake_word:=false`
+  disables. Hardware half (far-field mic array for across-the-room pickup)
+  still pending purchase.
 - Face recognition + per-person memory (Jetson has headroom)
 - Full barge-in (needs acoustic echo cancellation on Jetson)
 - Depth camera arrives → nav, SLAM, nvblox, `/vision/find_object_pose`
