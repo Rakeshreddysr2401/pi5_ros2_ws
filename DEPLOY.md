@@ -4,6 +4,28 @@ Pending rollouts and how to verify them on the robot. Newest first.
 
 ---
 
+## "Stop" keyword spotter (implemented 2026-07-03 — ships with the same rebuilds)
+
+Both repos again (stt_node, tts_node, tts_backend on the Jetson; agent_node on
+the Pi5). While the robot speaks, the mic listens only for short bursts and
+"stop" halts speech mid-sentence — and the Pi5 cancels any motion (safety word).
+
+### Verify (acoustics can only be tested on the robot)
+
+- Ask for something long ("tell me a story"), then say **"stop!"** firmly while
+  it talks → speech halts within ~1s, robot goes quiet, mic unmutes normally,
+  next question works.
+- Let it speak several long replies WITHOUT saying stop → no false halts
+  (self-echo + duration filters working). If it self-stops, check the Orin log
+  for `Stop keyword spotted` transcripts to see what triggered it.
+- While it drives AND talks, say "stop" → wheels and voice both stop.
+- Tuning knobs: `_SPOT_*` constants in stt_node.py (burst window), the
+  `stop_keyword` params, GPU load from spot transcriptions (each ≤1.5s clip is
+  one small Whisper call, only during playback). Kill switch:
+  `stop_spotter:=false` on the voice launch.
+
+---
+
 ## Reminders & timers (implemented 2026-07-03 — ships with the same Pi5 rebuild)
 
 Brain-only change (no Jetson rebuild). Chat owns `set_reminder` /

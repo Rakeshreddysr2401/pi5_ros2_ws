@@ -54,7 +54,16 @@ turn, no tools). Whole pipeline in scope — both repos.
      `ai_agent` on Pi5, then `scripts/latency_replay.py` for before/after — the
      metric is now first-sentence audio, and the harness anchors on FIRST
      tts_audio_start
-5. **"Stop" keyword spotter** — halt TTS without open-mic barge-in
+5. ✅ **"Stop" keyword spotter** — implemented 2026-07-03, needs on-robot tuning
+   - While TTS plays, stt_node transcribes ONLY short isolated bursts (0.2–1.5s;
+     longer = robot's own voice, discarded pre-Whisper) and publishes
+     `/voice/tts_stop` when the transcript is ≤3 words containing "stop"
+   - tts_node: halts playback mid-chunk (interruptible Kokoro backend), flushes
+     the queue, swallows in-flight chunks until the brain's `<|eou|>`; self-echo
+     guard skips stop signals while the playing chunk contains "stop"
+   - Pi5 brain: `/voice/tts_stop` also cancels nav + motion (safety word)
+   - NOT verifiable off-robot (mic+speaker acoustics) — tune `_SPOT_*` constants
+     and check false-trigger rate on the Orin; `stop_spotter:=false` disables
 
 ## Doc debt found along the way
 

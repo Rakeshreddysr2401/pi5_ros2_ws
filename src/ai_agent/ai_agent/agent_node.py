@@ -133,6 +133,9 @@ class AgentNode(Node):
 
         # ── Subscribers ───────────────────────────────────────────────────
         self.create_subscription(String, "/voice/user_input", self._on_user_input, 10)
+        # Stop keyword spotted by the Jetson while TTS plays: the Jetson halts
+        # speech itself; here we make it a safety word — halt wheels too.
+        self.create_subscription(String, "/voice/tts_stop", self._on_tts_stop, 10)
 
         if self._use_vision:
             from sensor_msgs.msg import CompressedImage
@@ -200,6 +203,12 @@ class AgentNode(Node):
                 self.get_logger().warning("User queue: replacing pending message with newer input")
             self._user_pending = text
         self._input_event.set()
+
+    def _on_tts_stop(self, msg: String) -> None:
+        """Stop keyword heard during robot speech — halt any motion as well."""
+        self.get_logger().info(f'Stop keyword ("{msg.data}") — cancelling motion')
+        self._bridge.cancel_navigation()
+        self._bridge.request_motion_stop()
 
     def _enqueue_system(self, text: str) -> None:
         """Enqueue a system event — never dropped, fires after current graph run."""
