@@ -4,6 +4,50 @@ What changed, when, and where. Deployment steps for pending items: DEPLOY.md.
 
 ---
 
+## 2026-07-03 — "Order this": deictic routing + visual confirmation loop
+
+Live multi-turn test of the pointing flow ("order this" with no item named),
+with the camera watching the room. Two gaps found and fixed:
+
+- **chat claimed it can't see** — "can you order this for me?" got "I'm sorry,
+  I can't see what you're referring to. Could you tell me the name…". chat's
+  projection is image-stripped, but the ROBOT can see; nothing told chat that.
+  New top-level guideline: on an unnamed physical reference ("order THIS",
+  "what am I holding") never say you can't see / never ask for a description —
+  handover("local_agent", reason="identify object"). (A first, softer version
+  of the rule buried in the specialist list was ignored by the 12B; the blunt
+  top-of-guidelines wording works.)
+- **local_agent confirmation step (new)** — for vision→action requests it now
+  look()s, names what it identified, and ASKS before acting: "I see a black
+  mesh office chair. Is this the item you'd like me to order?" — user
+  corrections re-examine the same frame ("no, the bottle on the desk" →
+  "I see a clear water bottle on the desk. Is that the one?", 5.9s, no
+  re-look, cache hit), and only after "yes" does it hand over with the
+  confirmed details in the reason: "user confirmed: order the clear water
+  bottle on the desk". Swiggy end still blocked by the stale token (spoke the
+  proper unavailable message) — every link before it verified live.
+
+## 2026-07-03 — Vision→action flows: visual details now travel across handovers
+
+"Look at my shelf and order the fruit you see" exercised live through the full
+graph. Found: local_agent handed over with reason "user wants to order fruit
+seen on shelf" — WITHOUT looking and without naming the fruit. Text agents get
+the image-stripped projection, so the handover reason is the ONLY channel that
+can carry what the robot saw; nothing told the model that.
+
+- `local_agent` prompt: new VISION→ACTION rule — look() first, then hand over
+  with every needed visual detail spelled out in the reason (+ a rule to answer
+  another agent's relayed visual question and hand back). Verified live:
+  reason now reads "order fruit: I can see a bunch of bananas and some other
+  fruit on the shelf." and swiggy takes over correctly (order itself blocked
+  only by the stale SWIGGY_ACCESS_TOKEN → spoke the proper unavailable message).
+- `swiggy` prompt: knows it cannot see; when a visually-derived detail is
+  missing it hands over to local_agent with a "look and answer: <question>"
+  reason instead of stalling or asking the user about things the robot can see.
+- Reminder flow re-verified through the graph ("remind me in 25 minutes to
+  check the oven" → correct store entry, correct spoken confirmation); general
+  Q&A and visual Q&A verified earlier today.
+
 ## 2026-07-03 — Vision path verified live end-to-end; stale-frame guard
 
 With Jetson camera + Mac Mini both up, exercised the whole vision stack on

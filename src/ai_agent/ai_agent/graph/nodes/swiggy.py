@@ -44,6 +44,11 @@ Guidelines:
 the robot monitors delivery, then respond with a confirmation message and call:
     handover("tracker", reason="order_placed", chain=True)
   so the tracker immediately follows the delivery.
+- You cannot see camera images. If the order depends on something the robot SAW
+  (a routing note like "order what's on the shelf") and a needed detail is missing
+  or ambiguous, call handover("local_agent", reason="look and answer: <specific
+  question>") — it will look and hand back with the answer. Ask the USER only for
+  choices that are theirs (variant, quantity, address), not for what is visible.
 - For non-food questions call handover("supervisor", reason="not food related").
 - Put replies in your message text — it is spoken to the user automatically and is
   the ONLY thing said. Don't narrate tool use; just do the task and reply. NEVER hand
