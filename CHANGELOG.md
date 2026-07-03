@@ -4,6 +4,28 @@ What changed, when, and where. Deployment steps for pending items: DEPLOY.md.
 
 ---
 
+## 2026-07-03 — Vision path verified live end-to-end; stale-frame guard
+
+With Jetson camera + Mac Mini both up, exercised the whole vision stack on
+server slot 3 (robot slots untouched): real `/camera/color/image_raw/compressed`
+frame → look() → Gemma 4 12B multimodal → answer.
+
+- **Image KV-cache reuse CONFIRMED on the fork** — the slot-pinning design's
+  core assumption. Turn 1 with a frame prefilled 902 tokens (13.2s); the
+  follow-up prefilled only 224 (3.6s) — the image's KV survived, no re-encode.
+- **Full graph verified**: "what do you see" → one look(), correct scene
+  description; follow-up answered from the cached frame WITHOUT re-looking;
+  chat→local_agent handover for "look around"; non-visual question while
+  sticky on local_agent routes back out (answered by chat). All live.
+- **Stale-frame guard (new)** — `ROS2Bridge` now stamps each cached frame;
+  `get_frame(max_age_s)` refuses frames older than the cutoff and look()
+  passes 10s. Previously a dead camera node / dropped Jetson link meant
+  look() silently served an arbitrarily old frame and the robot confidently
+  described a scene that was long gone. Now it says it cannot see right now
+  (verified through the graph with a simulated 1-hour-old frame).
+- Not tested (moves the robot): `/vision/target` + `navigate_to_visible_object`
+  servo loop — needs a supervised session.
+
 ## 2026-07-03 — Production hardening: append-only projections, 3-way slot map, cache warming
 
 Adversarial pass over the KV-cache design plus robustness fixes. Verified live

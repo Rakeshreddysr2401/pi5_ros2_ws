@@ -28,11 +28,20 @@ def look(tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
     scene may have changed.
     """
     bridge = get()
-    frame = bridge.get_frame()
+    # Reject frames older than this: the camera publishes continuously, so a
+    # stale cache means the camera node or the Jetson link is down — describing
+    # a long-gone scene as "current" is worse than admitting blindness.
+    frame = bridge.get_frame(max_age_s=10.0)
     if frame is None:
+        age = bridge.frame_age()
+        detail = (
+            f"the last frame is {age:.0f}s old — the camera feed appears to be down"
+            if age is not None else "the camera may be off"
+        )
         return Command(update={"messages": [
             ToolMessage(
-                "No camera frame is available right now — the camera may be off.",
+                f"No current camera frame is available ({detail}). "
+                "Tell the user you cannot see right now.",
                 tool_call_id=tool_call_id,
             )
         ]})

@@ -45,6 +45,7 @@ class ROS2Bridge:
 
         # ── Latest camera frame (bytes, JPEG-encoded) ─────────────────────────
         self._latest_frame: bytes | None = None
+        self._frame_stamp: float = 0.0   # time.monotonic() of last frame
 
         # ── Active Swiggy order (for background delivery polling) ─────────────
         self._order_lock       = threading.Lock()
@@ -94,6 +95,7 @@ class ROS2Bridge:
     def on_image(self, frame_bytes: bytes) -> None:
         with self._frame_lock:
             self._latest_frame = frame_bytes
+            self._frame_stamp = time.monotonic()
 
     def on_target_result(self, msg) -> None:
         """Cache the latest /vision/target_result (JSON string) as a parsed dict."""
@@ -110,9 +112,23 @@ class ROS2Bridge:
 
     # ── Cached reads (worker thread) ──────────────────────────────────────
 
-    def get_frame(self) -> bytes | None:
+    def get_frame(self, max_age_s: float | None = None) -> bytes | None:
+        """Latest camera JPEG, or None if there is none — or it is older than
+        max_age_s (camera node dead / Jetson link down: better to admit
+        blindness than confidently describe a scene that is long gone)."""
         with self._frame_lock:
+            if self._latest_frame is None:
+                return None
+            if max_age_s is not None and time.monotonic() - self._frame_stamp > max_age_s:
+                return None
             return self._latest_frame
+
+    def frame_age(self) -> float | None:
+        """Seconds since the last camera frame arrived (None = never)."""
+        with self._frame_lock:
+            if self._latest_frame is None:
+                return None
+            return time.monotonic() - self._frame_stamp
 
     def get_known_locations(self) -> dict:
         return self._known_locations
