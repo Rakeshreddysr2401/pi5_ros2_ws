@@ -1,18 +1,16 @@
-langgraph==0.3.34
+# LangRobo Pi5 brain — Python dependencies.
+# Install:  pip3 install --break-system-packages -r requirements.txt
+# The brain itself (graph, agents, tools, services) is the editable package
+# below; its own dependencies (langgraph/langchain stack, qdrant-client,
+# fastembed, fastapi, uvicorn) are declared in src/langrobo_core/pyproject.toml.
+-e ./src/langrobo_core
+
+# LangGraph Studio dev server (langgraph dev) — dev tool, not a core dependency.
 langgraph-sdk==0.1.74
 langgraph-cli[inmem]==0.1.89
-python-dotenv
-langchain-core==0.3.86
-langchain-openai
-langchain-anthropic
-langchain-google-genai
-langchain-ollama
-langchain-community
-# 0.2.0+ imports langchain_core.messages.content (langchain-core 1.x only); pin to
-# the last 0.1.x that works with the langchain-core 0.3.x stack pinned above.
-langchain-mcp-adapters==0.1.14
+
+# Camera frame handling on the ROS side.
 opencv-python-headless
-typing-extensions
 
 # colcon --symlink-install needs setup.py develop (removed in setuptools 80+)
 setuptools<80

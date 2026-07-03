@@ -1,0 +1,70 @@
+# LangRobo brain — ROS parameters (LLM + robot behaviour).
+# Service settings (cloud fallback, Qdrant memory, health API, tracing) are
+# NOT here — they live in .env, validated by langrobo_core.services.config.
+# See OPERATIONS.md for the full reference of both.
+
+agent_node:
+  ros__parameters:
+    # LLM provider — "llamacpp" uses the ChatOpenAI class with a custom base_url.
+    # Options: llamacpp | openai | anthropic | gemini | ollama
+    # The launch file overrides provider/base_url (prod default: llamacpp + Mac Mini).
+    provider: "llamacpp"
+
+    # Model name — the llama.cpp server ignores this field, so any string works.
+    model: "default"
+
+    # Environment variable that holds the API key (leave empty for llama.cpp).
+    api_key_env: ""
+
+    # Mac Mini llama.cpp server endpoint (launch arg base_url overrides).
+    base_url: "http://singireddys-mac-mini.local:8080/v1"
+
+    # Max tokens per LLM response.
+    max_tokens: 3000
+
+    # User/assistant turn pairs kept in conversation memory (x4 for tool/image
+    # messages). Each trim resets the llama.cpp prompt cache (the kept suffix
+    # re-prefills), so bigger = fewer resets; the reset cost is hidden by the
+    # background cache warmer in agent_node anyway.
+    history_turns: 12
+
+    # Subscribe to the Jetson camera topic and cache the latest frame so
+    # local_agent's look() can see and reason over it.
+    use_vision: true
+
+    # Force the supervisor's mandatory handover() via tool_choice. On llama.cpp
+    # the server grammar-constrains the output (from the tool's JSON schema,
+    # incl. the next_agent enum) so a small model can only emit a valid
+    # handover. Requires a llama.cpp server started with --jinja.
+    strict_tool_calls: true
+
+    # Stream sentence chunks to /voice/robot_speech as the LLM generates,
+    # ending each utterance with the <|eou|> marker (utils/speech_stream.py).
+    # First audio starts after the first sentence instead of the full reply.
+    stream_speech: true
+
+    # ── llama.cpp KV-cache slot map (id_slot) ─────────────────────────────
+    # Pinning keeps each prompt prefix cached — a multi-slot server
+    # (--parallel N) otherwise scatters requests across cold slots and
+    # re-prefills ~2k tokens per turn (~20s on a 12B model).
+    #   llm_slot (0):         chat, the default responder — its prefix stays
+    #                         hot across every specialist excursion.
+    #   local_agent_slot (1): local_agent's image prefix, never evicted by
+    #                         text agents (and vice versa).
+    #   specialist_slot (2):  supervisor + navigate/status/swiggy/tracker.
+    # -1 = no pinning (cloud providers ignore it either way).
+    llm_slot: 0
+    local_agent_slot: 1
+    specialist_slot: 2
+
+    # Override model for local_agent only ("" = inherit the global model).
+    # Set to your multimodal GGUF if the global model is text-only.
+    local_agent_model: ""
+
+    # ── Named map locations (phase-2 nav/SLAM slot) ───────────────────────
+    # navigate_to_pose() targets. Update with real coordinates once a SLAM map
+    # exists (drive to each spot, read /visual_slam/tracking/odometry).
+    locations.kitchen:     [2.5,  1.0,   0.0]   # [x_m, y_m, yaw_deg]
+    locations.living_room: [0.0,  3.0,  90.0]
+    locations.bedroom:     [-2.0, 2.0, 180.0]
+    locations.entrance:    [0.0,  0.0,   0.0]

@@ -11,7 +11,7 @@ Usage on Pi5:
     langgraph dev                        # run from repo root
 
 Usage on dev machine (no ROS2):
-    langgraph dev                        # chat + Swiggy tools work; robot tools log
+    langgraph dev                        # chat + memory tools work; robot tools log
 """
 
 import atexit
@@ -21,12 +21,20 @@ import threading
 
 from dotenv import load_dotenv
 
-load_dotenv()  # reads .env from cwd (repo root) before any ai_agent imports
+load_dotenv()  # reads .env from cwd (repo root) before any langrobo imports
 
-from ai_agent.graph import llm as llm_module
-from ai_agent.graph.tools import _bridge as bridge_module
+from langrobo_core.services import config as config_service
+from langrobo_core.services import llm as llm_module
+from langrobo_core.services import memory as memory_service
+from langrobo_core.tools import _bridge as bridge_module
 
 logger = logging.getLogger(__name__)
+
+# ── Services (same wiring as agent_node, minus the health API — Studio is a
+#    dev tool; the robot process owns the health port) ────────────────────────
+
+config_service.sanitize_tracing_env()
+_settings = config_service.load_settings()
 
 # ── Known map locations (same defaults as agent_params.yaml) ─────────────────
 
@@ -56,6 +64,8 @@ _key_env = _PROVIDER_KEY_MAP.get(_provider, "OPENAI_API_KEY")
 _api_key = os.getenv(_key_env, "none") if _key_env else "none"
 
 llm_module.configure(_provider, _model, _base_url, _api_key, _max_tokens)
+llm_module.configure_fallback(_settings.fallback)
+memory_service.init(_settings.memory)
 logger.info("Studio LLM: provider=%s model=%s", _provider, _model)
 
 # ── Bridge: real ROS2 or stub ─────────────────────────────────────────────────
@@ -72,7 +82,7 @@ def _try_ros2_bridge():
     global _ros2_node
     try:
         import rclpy
-        from ai_agent.ros2_bridge import ROS2Bridge
+        from langrobo_ros.ros2_bridge import ROS2Bridge
 
         # Destroy previous node on hot-reload
         if _ros2_node is not None:
@@ -114,7 +124,7 @@ def _shutdown_rclpy():
 
 
 def _make_stub_bridge():
-    from ai_agent.studio_bridge import StubBridge
+    from langrobo_core.bridges import StubBridge
     bridge = StubBridge(known_locations=_DEFAULT_LOCATIONS)
     logger.info("Stub bridge active — robot tools will log instead of publishing")
     return bridge
@@ -125,7 +135,7 @@ bridge_module.init(_active_bridge)
 
 # ── Build and export graph ────────────────────────────────────────────────────
 
-from ai_agent.graph.graph import build_graph
+from langrobo_core.graph import build_graph
 
 graph = build_graph()
 

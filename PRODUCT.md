@@ -1,7 +1,7 @@
-# LangRobo — Product Direction
+# LangRobo — Product Direction & Roadmap
 
 What Rakhi has to become for people to buy one and use it every day.
-Written 2026-07-03, continues from the "Harden the Core Voice Loop" phase in Todo.md.
+Written 2026-07-03; updated for the production restructure (langrobo_core/langrobo_ros).
 
 ---
 
@@ -80,21 +80,37 @@ A stranger buys a product; a family *keeps using* one. The metric:
 > being reminded she exists? Log per-feature usage counts (extend `/diag/timing`
 > events) and let the numbers pick which features live.
 
+## Where we are (2026-07-03, post-restructure)
+
+Code-complete and verified off-robot; the pending step is one deploy session
+(OPERATIONS.md deploy checklist) rebuilding Pi5 + Jetson together:
+
+- Streaming TTS (first-sentence audio, `<|eou|>` protocol), stop keyword,
+  wake word "Rakhi" (Jetson), KV-cache discipline (warm turns pure-decode).
+- Reminders/timers (incl. recurring) + household lists/facts with proactive
+  spoken announcements via the `[SYSTEM]` producer pattern.
+- **Production hardening (new)**: langrobo_core/langrobo_ros split, systemd
+  auto-restart, structured JSON logs with per-turn trace IDs, health/metrics
+  API, validated config, LLM cloud-fallback policy, episodic memory (Qdrant +
+  on-device embeddings) with `recall_memory` — schema carries `person` for
+  phase 4 and a reserved collection for phase 6.
+
+Still open from the latency work: swap the Mac Mini loop model to the 3n E4B
+(12B decode speed is what blocks the ≤2s budget), tune `wake_aliases` from
+real transcripts, chrony-peer Pi5↔Jetson clocks.
+
 ## Roadmap (each phase ships something a household feels)
 
-1. **Now — latency phase** (Todo.md): streaming TTS, stop keyword. Finish it.
-2. **Hear me anywhere**: mic array + wake word "Rakhi" + better speaker.
-   *(Wake-word gate shipped 2026-07-03 — transcript-based, with a 15s
-   follow-up attention window; the mic array purchase covers the acoustics.)*
-3. **Self-initiated turns**: scheduler node + `[SYSTEM]` event producers →
-   timers/reminders/lists with proactive speech. First "she reminded me" moment.
-   *(Shipped in full 2026-07-03: reminders/timers incl. recurring, household
-   lists & memory — recall is in-prompt by design, no vector RAG until
-   per-person memory needs it.)*
-4. **Knows the family**: face recognition on Jetson + per-person memory store on
-   Pi5 → greetings, per-person briefings, "tell Rakesh when you see him."
+1. **Deploy & verify** the hardened voice loop on-robot (OPERATIONS.md checklist).
+2. **Hear me anywhere**: mic array + better speaker (hardware list above);
+   wake-word gate already shipped, acoustics need the array.
+3. **Self-initiated turns**: ✅ shipped (reminders, lists, proactive speech).
+4. **Knows the family**: face recognition on Jetson + per-person memory →
+   greetings, briefings, "tell Rakesh when you see him." Memory schema is
+   ready (`person` field); fills the wake-word gap with gaze attention.
 5. **Embodied presence**: pan-tilt tracking + state LEDs + presence sensor.
 6. **Visual memory**: periodic frame snapshots indexed by Gemma → "where are my
-   keys," "did I leave the stove on," door watch.
-7. **Depth camera arrives**: mobility with a job — patrol route, come-when-called,
-   follow-me. Now the wheels earn their cost.
+   keys," "did I leave the stove on," door watch (`visual` collection reserved).
+7. **Depth camera arrives — nav/SLAM phase**: Nav2/nvblox on Jetson, mobility
+   with a job — patrol, come-when-called, follow-me. The brain's slot is ready:
+   `navigate_to_pose`, `/goal_pose`, locations config, odometry topic.

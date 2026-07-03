@@ -1,0 +1,17 @@
+[Unit]
+Description=LangRobo brain (LangGraph agent_node)
+After=network-online.target langrobo-microros.service
+Wants=network-online.target langrobo-microros.service
+
+[Service]
+Type=exec
+User=rakhi24
+ExecStart=/home/rakhi24/ros2_ws/scripts/run_brain.sh
+Restart=always
+RestartSec=10
+# The brain talks to the Mac Mini LLM + Jetson over the LAN; give the network
+# and mDNS a moment on cold boot before the first try.
+ExecStartPre=/bin/sleep 3
+
+[Install]
+WantedBy=multi-user.target

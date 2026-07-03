@@ -1,6 +1,8 @@
 {
   "$schema": "https://langgra.ph/schema.json",
-  "dependencies": ["./src/ai_agent"],
+  "dependencies": [
+    "./src/langrobo_core"
+  ],
   "graphs": {
     "agent": "./graph_studio.py:graph"
   },

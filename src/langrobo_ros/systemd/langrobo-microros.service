@@ -1,0 +1,14 @@
+[Unit]
+Description=LangRobo micro-ROS agent (Pi5 <-> ESP32 WiFi UDP bridge)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=rakhi24
+ExecStart=/home/rakhi24/ros2_ws/scripts/run_microros.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

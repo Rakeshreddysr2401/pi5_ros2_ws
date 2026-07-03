@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>langrobo_ros</name>
+  <version>1.0.0</version>
+  <description>ROS2 shim for the LangRobo brain: agent_node + ROS2Bridge + launch (core logic lives in the pure-Python langrobo_core package)</description>
+  <maintainer email="sumanasomineni09@gmail.com">rakhi24</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav2_msgs</depend>
+  <depend>action_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>robot_interfaces</depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
