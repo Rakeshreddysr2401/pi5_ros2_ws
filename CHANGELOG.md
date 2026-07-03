@@ -4,6 +4,33 @@ What changed, when, and where. Deployment steps for pending items: DEPLOY.md.
 
 ---
 
+## 2026-07-03 — KV-cache fixes: warm turns every time (20s → ~0s prefill)
+
+Latency replay showed cache-miss turns re-prefilling the full ~2.1k-token chat
+prompt on the Mac Mini 12B at ~105 tok/s ≈ 18–20s. Two root causes, both fixed:
+
+- **Slot scatter** — the llama-server runs `--parallel 4`; unpinned sequential
+  requests can land on different slots, each a cold KV cache. `llm.py` gained a
+  global `slot` config (new `llm_slot` param, default 0) so every text agent's
+  request carries `id_slot: 0`; `local_agent_slot` default changed -1 → 1 so
+  vision turns get their own slot instead of evicting the text prefix.
+  (Per-agent override plumbing already existed; only the global pin was new.)
+- **Per-minute clock in the prompt** — chat's `== NOW ==` line (minute
+  resolution) made consecutive turns diverge mid-prompt; measured on the robot
+  server, that reliably produced a FULL re-prefill (the fork's cache matcher
+  found zero reuse), i.e. a 20s turn on every wall-clock minute tick. The
+  prompt now carries only the date (changes once/day); the exact clock moved
+  to a new `get_current_time` chat tool (`tools/system.py`). "What time is
+  it?" costs one extra warm LLM roundtrip (~2s) instead of taxing every turn.
+- Verified via `scripts/latency_replay.py` + the server's `/slots` counters:
+  turns across minute boundaries now show `n_prompt_tokens_processed` ≈ new
+  tokens only (llm 4.2s for a 39-token reply = pure decode; was 20.6s).
+  Remaining first-audio latency is decode-bound (~9.5 tok/s on the 12B) —
+  model choice, not caching.
+- Diagnosis artifacts: request-capture proxy + slot A/B tests (scratchpad,
+  not committed). Observed unattributed ~42-token requests occasionally landing
+  on slot 0 — worth identifying if cold turns reappear.
+
 ## 2026-07-03 — Recurring reminders (closes the last phase-3 gap)
 
 "Every day at 9pm remind me to take my medicine."

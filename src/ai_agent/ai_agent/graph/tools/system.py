@@ -1,8 +1,20 @@
+from datetime import datetime
 from typing import Optional
 
 from langchain_core.tools import tool
 
 from . import _bridge
+
+
+@tool
+def get_current_time() -> str:
+    """Current local clock time (and date). Call when the user asks the time
+    or something depends on the exact time of day.
+
+    The clock is deliberately NOT in your prompt: a per-minute timestamp there
+    would invalidate the llama.cpp prompt-prefix cache every minute and cost
+    ~20s of re-prefill per turn on the 12B model."""
+    return datetime.now().strftime("%A %B %d, %Y, %I:%M %p").replace(" 0", " ")
 
 
 @tool

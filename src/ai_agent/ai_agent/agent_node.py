@@ -46,10 +46,19 @@ class AgentNode(Node):
         # build that streams tool calls). Set False to publish one full reply
         # per turn — the wire protocol (chunks + end marker) stays the same.
         self.declare_parameter("stream_speech", True)
+        # llama.cpp KV-cache slot pinning (id_slot). llm_slot pins ALL text agents
+        # to one server slot so the shared static prompt prefix stays cached —
+        # without it a multi-slot server (--parallel N) scatters sequential
+        # requests across cold slots and re-prefills ~2k tokens every turn
+        # (~20s on the 12B Mac Mini). -1 disables (e.g. for --parallel 1 servers
+        # that reject explicit ids, or cloud providers, which just ignore it).
+        self.declare_parameter("llm_slot", 0)
         # Per-agent overrides for the local multimodal agent (Gemma via llama.cpp).
-        # local_agent_slot: dedicated llama.cpp KV-cache slot (-1 = none/auto).
+        # local_agent_slot: dedicated KV-cache slot for its image prefix, kept
+        # SEPARATE from llm_slot so vision turns never evict the text agents'
+        # cached prompt (-1 = none/auto).
         # local_agent_model: override model name for local_agent ("" = inherit global).
-        self.declare_parameter("local_agent_slot",  -1)
+        self.declare_parameter("local_agent_slot",  1)
         self.declare_parameter("local_agent_model", "")
 
         provider      = self.get_parameter("provider").value
@@ -62,6 +71,7 @@ class AgentNode(Node):
         self._max_history    = self.get_parameter("history_turns").value * 4
         self._use_vision     = self.get_parameter("use_vision").value
         self._vision_timeout = self.get_parameter("vision_query_timeout").value
+        llm_slot             = self.get_parameter("llm_slot").value
         local_agent_slot     = self.get_parameter("local_agent_slot").value
         local_agent_model    = self.get_parameter("local_agent_model").value
         strict_tool_calls    = self.get_parameter("strict_tool_calls").value
@@ -100,7 +110,8 @@ class AgentNode(Node):
         self._timing_handler = timing.TimingCallbackHandler()
         llm_module.configure(provider, model, base_url, api_key, max_tokens, agent_overrides,
                              strict_tools=strict_tool_calls,
-                             streaming=self._stream_speech)
+                             streaming=self._stream_speech,
+                             slot=llm_slot if llm_slot >= 0 else None)
 
         # Register navigation completion callback
         self._bridge.register_nav_done_callback(self._on_nav_done)

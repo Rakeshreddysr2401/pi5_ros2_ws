@@ -40,11 +40,19 @@ agent_node:
     # publish one full reply per turn (wire protocol stays chunks + marker).
     stream_speech: true
 
+    # llama.cpp KV-cache slot for ALL text agents (id_slot). Pinning every
+    # sequential request to one slot keeps the shared static prompt prefix
+    # cached — a multi-slot server (--parallel N) otherwise scatters requests
+    # across cold slots and re-prefills ~2k tokens per turn (~20s on the 12B).
+    # -1 = no pinning (cloud providers ignore it either way).
+    llm_slot: 0
+
     # ── local_agent (multimodal vision agent, Gemma via llama.cpp) ────────────
     # Dedicated llama.cpp KV-cache slot so its cached image prefix is never
-    # evicted by other agents' calls. Requires the server started with
-    # --parallel N (N > slot index). -1 = no pinning / auto slot.
-    local_agent_slot: -1
+    # evicted by other agents' calls — and vision turns never evict llm_slot's
+    # text prefix. Requires the server started with --parallel N (N > slot
+    # index). -1 = no pinning / auto slot.
+    local_agent_slot: 1
     # Override model for local_agent only ("" = inherit the global model above).
     # Set this to your multimodal GGUF (e.g. "gemma-3n-e4b") if the global model
     # is text-only.

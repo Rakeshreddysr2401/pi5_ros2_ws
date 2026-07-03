@@ -24,6 +24,7 @@ def configure(
     agent_overrides: dict | None = None,
     strict_tools: bool = True,
     streaming: bool = False,
+    slot: int | None = None,
 ) -> None:
     """Called once by agent_node before the graph is built.
 
@@ -39,6 +40,13 @@ def configure(
                      on_llm_new_token callbacks — this is what feeds sentence
                      chunks to TTS (graph.utils.speech_stream). openai/llamacpp
                      providers only.
+    slot:            default llama.cpp KV-cache slot for ALL agents (id_slot).
+                     Sequential requests land on the same server slot, so the
+                     shared static prompt prefix stays cached — without this a
+                     multi-slot server (--parallel N) scatters requests across
+                     cold slots and re-prefills the whole prompt (~20s on a
+                     12B model). Per-agent `slot` overrides still win
+                     (e.g. local_agent's image cache slot). None/-1 = no pin.
     """
     global _config, _agent_overrides, _strict_tools
     _config = {
@@ -48,6 +56,7 @@ def configure(
         "api_key": api_key,
         "max_tokens": max_tokens,
         "streaming": streaming,
+        "slot": slot,
     }
     _agent_overrides = agent_overrides or {}
     _strict_tools = strict_tools

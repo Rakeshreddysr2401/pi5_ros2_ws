@@ -4,7 +4,7 @@ from .household import forget, remember, update_list
 from .look import look
 from .movement import move_robot, navigate_to_pose, navigate_to_visible_object
 from .reminders import cancel_reminder, list_reminders, set_reminder
-from .system import get_robot_status, ros2_publish, set_active_order
+from .system import get_current_time, get_robot_status, ros2_publish, set_active_order
 from .handover import handover
 from .swiggy_mcp import SWIGGY_FOOD_TOOLS
 from .web import WEB_TOOLS
@@ -17,9 +17,9 @@ from .web import WEB_TOOLS
 #
 # Visual Q&A is handled by look() (camera frame → Gemma multimodal). The old
 # query_vision() (Jetson Moondream) was retired — no local VLM fits the 8GB Jetson.
-CHAT_TOOLS         = [get_robot_status, set_reminder, list_reminders,
-                      cancel_reminder, update_list, remember, forget,
-                      handover] + WEB_TOOLS
+CHAT_TOOLS         = [get_current_time, get_robot_status, set_reminder,
+                      list_reminders, cancel_reminder, update_list, remember,
+                      forget, handover] + WEB_TOOLS
 LOCAL_AGENT_TOOLS  = [look, handover]
 NAVIGATE_TOOLS     = [move_robot, navigate_to_pose, navigate_to_visible_object, handover]
 STATUS_TOOLS       = [get_robot_status, ros2_publish, handover]

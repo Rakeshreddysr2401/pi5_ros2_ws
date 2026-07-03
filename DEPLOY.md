@@ -4,6 +4,31 @@ Pending rollouts and how to verify them on the robot. Newest first.
 
 ---
 
+## KV-cache slot pinning + clock-as-tool (2026-07-03 — Pi5 only, ALREADY LIVE)
+
+Brain-only change, deployed and verified off-robot the same day (full story:
+`Issues/2026-07-03_kv_cache_cold_prefill.md`). Kills the random 18–20s replies:
+all text-agent requests pin llama.cpp slot 0 (`llm_slot`), vision pins slot 1
+(`local_agent_slot`), and the per-minute clock left the prompt for a
+`get_current_time` chat tool (prompt now carries the date only).
+
+### Verify (already done 2026-07-03; re-check after any Mac server restart)
+
+- `python3 scripts/latency_replay.py "hello" ` twice, a minute apart → the
+  second turn's `llm_end dur_s` must be pure decode (~2–5s), never ~20s.
+- "Rakhi, what time is it?" → correct time via a `get_current_time` tool call
+  (two LLM hops, ~5s total).
+- Cache forensics if it regresses: `curl mac:8080/slots` —
+  `n_prompt_tokens_processed` ≈ full prompt size means a miss; see the Issues
+  write-up for the capture-proxy workflow.
+
+### Tuning / rollback
+
+- `llm_slot:=-1` disables pinning (needed if the Mac server ever runs
+  `--parallel 1` and rejects explicit slot ids; cloud providers just ignore it).
+- The date line still invalidates the cache once per day (first turn after
+  midnight is slow) — accepted.
+
 ## Wake word "Rakhi" (implemented 2026-07-03 — Jetson rebuild only)
 
 stt_node now forwards ONLY utterances addressed to the robot (wake alias at

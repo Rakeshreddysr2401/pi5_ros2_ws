@@ -29,10 +29,16 @@ where everything else is documented. Updated: 2026-07-03.
 ### P0 — Robot deploy & verify session (blocks everything else)
 One `colcon build` per machine, then walk DEPLOY.md top to bottom.
 - Rebuild `voice_pkg` (Orin) + `ai_agent` (Pi5) — **both together** (protocol changed).
-- `scripts/latency_replay.py` before/after — first-sentence audio vs the **≤2s budget**.
+- ~~`scripts/latency_replay.py` — first-sentence audio vs the **≤2s budget**~~
+  **Done 2026-07-03**: found + fixed two KV-cache killers (slot scatter, per-minute
+  clock in the prompt — see CHANGELOG). Warm turns are now pure decode.
+  Remaining gap to the 2s budget is decode speed (~9.5 tok/s on the 12B) +
+  Kokoro synth — a model-choice question, not a caching one.
 - Tune `wake_aliases` from ignored-transcript logs; check stop-spotter false triggers.
-- Also check: Mac Mini is now serving Gemma 4 12B — confirm that's intended for
-  the robot loop (12B prefill is slower than the 3n E4B the config assumed).
+- Mac Mini serves Gemma 4 12B: decode-bound first-audio is ~4–7s. Swapping the
+  robot loop to the 3n E4B the config assumed would roughly meet the 2s budget.
+- Pi5↔Jetson clocks are ~1.2–1.8s apart (replay flags negative deltas) — peer
+  them with chrony (needs Jetson login; Pi5 NTP itself is synced).
 
 ### P1 — Hardware order (~$80–125, do alongside P0)
 - **Far-field mic array / USB conference speakerphone with AEC** — biggest UX

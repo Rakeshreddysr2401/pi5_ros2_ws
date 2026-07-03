@@ -13,7 +13,7 @@ resources (Jetson Orin Nano 8GB, Pi5 8GB, ESP32, speaker, mic, Mac Mini for LLM
 inference, Logi Brio 100 webcam). Nav/SLAM/nvblox wait for the depth camera —
 development doesn't stop until it arrives.
 
-**Repos:** this repo = Pi5 brain. Jetson repo = `/Users/rakeshreddy/PycharmProjects/speech_vision`.
+**Repos:** this repo = Pi5 brain. Jetson repo connect through ssh its in active mode
 
 ---
 

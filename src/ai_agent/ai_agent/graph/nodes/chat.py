@@ -18,6 +18,7 @@ _PROMPT = PERSONA + """\
 Answer the user naturally and concisely.
 
 == TOOLS ==
+  get_current_time()       — exact current clock time (user asks the time / time-of-day matters)
   get_robot_status()       — check battery, hardware, and operational state
   set_reminder(text, in_minutes | at_time, day) — schedule a reminder or timer
   list_reminders()         — show pending reminders
@@ -73,10 +74,11 @@ def chat_node(state: AgentState) -> dict:
     llm = get_llm().bind_tools(CHAT_TOOLS)
     clean = prepare_messages_for_agent(state["messages"])
     # Dynamic parts go at the END of the system prompt so the static prefix
-    # stays reusable in the llama.cpp KV cache: the household memory block only
-    # changes when memory changes; the time line (minute resolution — "what
-    # time is it", at_time reminder math) changes most, so it goes last.
-    now = datetime.now().strftime("%A %B %d, %I:%M %p").replace(" 0", " ")
-    prompt = _PROMPT + household_context() + f"\n== NOW ==\nCurrent local date and time: {now}.\n"
+    # stays reusable in the llama.cpp KV cache. Only the DATE is in-prompt
+    # (changes once a day); the clock is a tool (get_current_time) — a
+    # per-minute timestamp here made consecutive turns diverge mid-prompt and
+    # re-prefill all ~2k tokens (~20s on the 12B Mac Mini) every minute tick.
+    today = datetime.now().strftime("%A %B %d, %Y").replace(" 0", " ")
+    prompt = _PROMPT + household_context() + f"\n== TODAY ==\nToday's date: {today}. For the clock time, call get_current_time.\n"
     response = safe_invoke(llm, [SystemMessage(content=prompt)] + clean, logger)
     return {"messages": [response], "active_agent": "chat"}
