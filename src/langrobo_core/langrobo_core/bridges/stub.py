@@ -59,6 +59,28 @@ class StubBridge:
         logger.info("[STUB] get_target_result -> None")
         return None
 
+    # ── Music ─────────────────────────────────────────────────────────────
+
+    def music_command(self, cmd: dict) -> None:
+        logger.info("[STUB] music_command: %s", cmd)
+        # Simulate the Jetson music_node confirming playback so play_music's
+        # confirmation wait doesn't block Studio turns for 10s.
+        import time
+        if cmd.get("action") == "play":
+            self._music_state = {"playing": True, "paused": False,
+                                 "title": f"[stub] {cmd.get('query', '')}",
+                                 "volume": 70, "stamp": time.time()}
+        elif cmd.get("action") == "stop":
+            self._music_state = {"playing": False, "paused": False,
+                                 "title": "", "volume": 70, "stamp": time.time()}
+        elif cmd.get("action") in ("pause", "resume"):
+            if getattr(self, "_music_state", None):
+                self._music_state["paused"] = cmd["action"] == "pause"
+                self._music_state["stamp"] = time.time()
+
+    def get_music_state(self) -> dict | None:
+        return getattr(self, "_music_state", None)
+
     # ── Active order ──────────────────────────────────────────────────────
 
     def set_active_order(self, order_id: str | None) -> None:

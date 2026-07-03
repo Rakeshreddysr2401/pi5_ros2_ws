@@ -39,7 +39,7 @@ src/langrobo_core/langrobo_core/       pip package (editable install via require
 │   └── handover_resolver.py  Centralized handover: chain vs sticky, loop guard
 ├── agents/                One module per agent + persona.py (shared identity block)
 │   ├── supervisor.py      Pure router — grammar-forced handover(), never speaks
-│   ├── chat.py            Default responder — general Q&A, web search, reminders, memory
+│   ├── chat.py            Default responder — general Q&A, web search, reminders, memory, music
 │   ├── local_agent.py     Multimodal vision — reasons over real frames via look()
 │   ├── navigate.py        Movement: fine Twist + YOLO visual servoing + Nav2 slot
 │   ├── status.py          Robot operational state
@@ -214,6 +214,8 @@ Three modes, two live today:
 | `/camera/color/image_raw/compressed` | CompressedImage | Jetson → Pi5 | JPEG cached for look() |
 | `/vision/target` | String | Pi5 → Jetson | COCO class to hunt ("" = stop) |
 | `/vision/target_result` | String (JSON) | Jetson → Pi5 | `{target, found, bearing_x, rel_size, conf, stamp}` |
+| `/audio/music_cmd` | String (JSON) | Pi5 → Jetson | `{action: play\|pause\|resume\|stop\|volume, ...}` → music_node (see JETSON_VOICE_UPGRADE.md) |
+| `/audio/music_state` | String (JSON) | Jetson → Pi5 | `{playing, paused, title, volume, error, stamp}` — cached by bridge |
 | `/goal_pose` | PoseStamped | Pi5 → Jetson | Nav2 goal (phase 2) |
 | `/visual_slam/tracking/odometry` | Odometry | Jetson → Pi5 | robot pose (phase 2) |
 | `/cmd_vel` | Twist | Pi5 → ESP32 | wheels via micro-ROS |

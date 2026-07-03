@@ -179,6 +179,13 @@ class AgentNode(Node):
         self._user_pending:   str | None = None
         self._system_pending: list[str] = []
         self._input_event    = threading.Event()
+        # Barge-in: set when a NEW user utterance arrives while a turn is
+        # still running — the worker aborts the in-flight turn at the next
+        # graph step so the new utterance is answered instead of the stale one.
+        # (The Jetson forwards mid-TTS speech once AEC lands — see
+        # JETSON_VOICE_UPGRADE.md; without AEC this fires only on queued input.)
+        self._turn_interrupt = threading.Event()
+        self._turn_active    = False
 
         # ── Startup readiness gate ────────────────────────────────────────
         self._ready_event = threading.Event()
@@ -278,13 +285,21 @@ class AgentNode(Node):
             if self._user_pending is not None:
                 self.get_logger().warning("User queue: replacing pending message with newer input")
             self._user_pending = text
+            if self._turn_active:
+                # Barge-in: abandon the in-flight turn — the user has moved on.
+                self._turn_interrupt.set()
         self._input_event.set()
 
     def _on_tts_stop(self, msg: String) -> None:
-        """Stop keyword heard during robot speech — halt any motion as well."""
-        self.get_logger().info(f'Stop keyword ("{msg.data}") — cancelling motion')
+        """Stop keyword heard during robot speech — halt motion AND music.
+
+        The Jetson already halts its own TTS playback (and stops music locally
+        for instant response); this is the brain-side sweep so nothing keeps
+        moving or playing if the Jetson-local path missed it."""
+        self.get_logger().info(f'Stop keyword ("{msg.data}") — cancelling motion + music')
         self._bridge.cancel_navigation()
         self._bridge.request_motion_stop()
+        self._bridge.music_command({"action": "stop", "t": time.time()})
 
     def _enqueue_system(self, text: str) -> None:
         """Enqueue a system event — never dropped, fires after current graph run."""
@@ -347,6 +362,8 @@ class AgentNode(Node):
         metrics.inc("turns_total")
         if is_system:
             metrics.inc("system_turns_total")
+        self._turn_interrupt.clear()
+        self._turn_active = True
         self._pub_thinking.publish(Bool(data=True))
         try:
             with self._history_lock:
@@ -378,16 +395,31 @@ class AgentNode(Node):
             callbacks = [self._timing_handler] + ([speech_stream] if speech_stream else [])
 
             result = None
+            interrupted = False
             for event in self._graph.stream(
                 {"messages": messages, "active_agent": incoming_agent},
                 config={"callbacks": callbacks},
                 stream_mode="values"):
+                if self._turn_interrupt.is_set():
+                    # Barge-in: a newer utterance is waiting. Abandon this turn
+                    # at the step boundary — close any partial speech so the
+                    # Jetson releases the mic, keep history/sticky untouched,
+                    # and let the worker loop pick up the new input.
+                    interrupted = True
+                    break
                 if "messages" in event:
                     msg = event["messages"][-1]
                     self.get_logger().info(f"Step message [{type(msg).__name__}]: {str(msg.content)[:200]} (tool_calls: {getattr(msg, 'tool_calls', None)})")
                 result = event
 
-            timing.emit("graph_end")
+            timing.emit("graph_end", interrupted=interrupted)
+
+            if interrupted:
+                if speech_stream and speech_stream.chunks_sent:
+                    self._bridge.publish_speech_end()
+                self.get_logger().info("Turn abandoned — newer user input (barge-in)")
+                metrics.inc("turns_interrupted_total")
+                return
 
             # Remember where the turn ended so the next user follow-up can skip
             # the supervisor (turn_entry gates which agents are sticky-eligible).
@@ -443,6 +475,7 @@ class AgentNode(Node):
             metrics.inc("turn_errors_total")
             self._bridge.publish_speech("I'm having trouble right now. Please try again in a moment.")
         finally:
+            self._turn_active = False
             self._last_turn_ts = time.time()
             metrics.set_gauge("last_turn_duration_seconds",
                               round(time.time() - turn_start, 3))

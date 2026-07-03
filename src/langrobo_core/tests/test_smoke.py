@@ -106,3 +106,19 @@ def test_speech_stream_sentence_split():
     ready, rest = split_sentences("Hello there. How are you doing today? I am fi")
     assert ready == ["Hello there.", "How are you doing today?"]
     assert rest == "I am fi"
+
+
+def test_chat_has_music_tools():
+    names = [t.name for t in CHAT_TOOLS]
+    for expected in ("play_music", "stop_music", "pause_music",
+                     "resume_music", "set_music_volume"):
+        assert expected in names
+
+
+def test_music_tools_against_stub():
+    from langrobo_core.tools.music import music_context, play_music, stop_music
+    result = play_music.invoke({"query": "calm piano"})
+    assert "calm piano" in result
+    assert "NOW PLAYING" in music_context()
+    assert "stopped" in stop_music.invoke({}).lower()
+    assert music_context() == ""

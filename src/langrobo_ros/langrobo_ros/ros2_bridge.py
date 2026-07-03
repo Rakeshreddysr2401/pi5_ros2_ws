@@ -77,14 +77,21 @@ class ROS2Bridge:
         # ── Registered callback for navigation completion ──────────────────────
         self._nav_done_callback: Callable[[bool, str], None] | None = None
 
+        # ── Music playback state (Jetson music_node) ──────────────────────────
+        self._music_lock = threading.Lock()
+        self._music_state: dict | None = None
+
         # ── Fixed publishers (pre-created so tools never block on first call) ──
         self._speech_pub        = node.create_publisher(String, "/voice/robot_speech", 10)
         self._vision_target_pub = node.create_publisher(String, "/vision/target", 10)
         self._twist_pub         = node.create_publisher(Twist, "/cmd_vel", 10)
         self._timing_pub        = node.create_publisher(String, "/diag/timing", 10)
+        self._music_pub         = node.create_publisher(String, "/audio/music_cmd", 10)
 
         # Subscribe to Kokoro speaking status (half-duplex state, stop-keyword later)
         node.create_subscription(Bool, "/voice/tts_speaking", self._on_speaking, 10)
+        # Music playback state from the Jetson music_node (JSON)
+        node.create_subscription(String, "/audio/music_state", self._on_music_state, 10)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 1 — Topics
@@ -147,6 +154,25 @@ class ROS2Bridge:
         """Return the latest parsed /vision/target_result dict, or None if none yet."""
         with self._target_lock:
             return self._latest_target_result
+
+    # ── Music (Jetson music_node — see JETSON_VOICE_UPGRADE.md) ───────────
+
+    def _on_music_state(self, msg) -> None:
+        """Cache the latest /audio/music_state JSON as a parsed dict."""
+        try:
+            data = json.loads(msg.data)
+        except (ValueError, TypeError):
+            return
+        with self._music_lock:
+            self._music_state = data
+
+    def music_command(self, cmd: dict) -> None:
+        """Publish a music command: {"action": play|pause|resume|stop|volume, ...}."""
+        self._music_pub.publish(String(data=json.dumps(cmd)))
+
+    def get_music_state(self) -> dict | None:
+        with self._music_lock:
+            return self._music_state
 
     # ── Active order ──────────────────────────────────────────────────────
 

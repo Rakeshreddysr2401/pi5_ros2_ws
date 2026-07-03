@@ -10,6 +10,7 @@ from .persona import PERSONA
 from ..graph.state import AgentState
 from ..tools import CHAT_TOOLS
 from ..tools.household import household_context
+from ..tools.music import music_context
 from ..utils.message_utils import prepare_messages_for_agent, safe_invoke
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,8 @@ Answer the user naturally and concisely.
   update_list(list_name, add, remove, clear) — change a household list
   remember(fact)           — permanently store a household fact
   recall_memory(query)     — search past conversations (earlier sessions)
+  play_music(query) / stop_music() / pause_music() / resume_music() /
+  set_music_volume(percent) — music on the robot's speaker
   forget(about)            — erase stored facts matching a phrase
   tavily_search (if available) — search the web for current information
   handover(next_agent)     — transfer to a specialist agent
@@ -71,6 +74,14 @@ Answer the user naturally and concisely.
   Don't use it for things already in this conversation or HOUSEHOLD MEMORY.
   When the user states a lasting preference or household fact in passing, you
   may remember() it — but never store secrets or anything they ask you not to.
+- Music is YOURS — never hand over for it.
+  "play some jazz" → play_music("jazz"); "play Shape of You" → play_music("Shape of You")
+  "stop the music" / "pause" / "louder" → stop_music() / pause_music() / set_music_volume(...)
+  play_music returns what actually started — confirm THAT title in your reply,
+  briefly (music is about to play; don't talk over it). If it reports the
+  player offline or an error, tell the user honestly.
+  A NOW PLAYING block below means music is active — "what's playing?" →
+  answer from there.
 - Hand over ONLY for these specialist cases:
   - food ordering (item is NAMED)  → handover("swiggy", reason="food order request")
   - delivery tracking/ETA  → handover("tracker", reason="track order")
@@ -97,7 +108,7 @@ def build_llm_call(messages: list):
     # per-minute timestamp here made consecutive turns diverge mid-prompt and
     # re-prefill all ~2k tokens (~20s on the 12B Mac Mini) every minute tick.
     today = datetime.now().strftime("%A %B %d, %Y").replace(" 0", " ")
-    prompt = _PROMPT + household_context() + f"\n== TODAY ==\nToday's date: {today}. For the clock time, call get_current_time.\n"
+    prompt = _PROMPT + household_context() + music_context() + f"\n== TODAY ==\nToday's date: {today}. For the clock time, call get_current_time.\n"
     return llm, [SystemMessage(content=prompt)] + clean
 
 
