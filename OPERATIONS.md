@@ -75,9 +75,10 @@ Back this directory up; delete a file to reset that memory.
 
 ## Telegram channel
 
-Setup: create a bot with **@BotFather**, get each member's chat_id from
-**@userinfobot**, fill the two `.env` keys, restart the brain. Each member
-must message the bot once (Telegram forbids bots from initiating chats).
+Full setup + usage guide: **TELEGRAM.md**. Short version: create a bot with
+**@BotFather**, get each member's chat_id from **@userinfobot**, fill the two
+`.env` keys, restart the brain. Each member must message the bot once
+(Telegram forbids bots from initiating chats).
 Role capabilities live in `langrobo_core/services/permissions.py`
 (owner = everything; family = chat/relay/remind — no camera, no driving,
 no orders; voice turns act as owner until speaker ID exists).

@@ -14,6 +14,7 @@ ESP32     ──────  4-wheel drive chassis (micro-ROS over WiFi UDP 888
 **Docs:** [HOW_IT_WORKS.md](HOW_IT_WORKS.md) — end-to-end walkthrough (start here) ·
 [ARCHITECTURE.md](ARCHITECTURE.md) — reference: layout, rules, contracts ·
 [OPERATIONS.md](OPERATIONS.md) — deploy, systemd, health API, troubleshooting ·
+[TELEGRAM.md](TELEGRAM.md) — chat with the robot from your phone: setup + usage ·
 [PRODUCT.md](PRODUCT.md) — product thesis + roadmap
 
 ---
