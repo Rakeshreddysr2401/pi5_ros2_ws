@@ -11,7 +11,8 @@ Pi 5      ──────  THIS REPO — LangGraph brain + services + micro-R
 ESP32     ──────  4-wheel drive chassis (micro-ROS over WiFi UDP 8888)
 ```
 
-**Docs:** [ARCHITECTURE.md](ARCHITECTURE.md) — how the brain works ·
+**Docs:** [HOW_IT_WORKS.md](HOW_IT_WORKS.md) — end-to-end walkthrough (start here) ·
+[ARCHITECTURE.md](ARCHITECTURE.md) — reference: layout, rules, contracts ·
 [OPERATIONS.md](OPERATIONS.md) — deploy, systemd, health API, troubleshooting ·
 [PRODUCT.md](PRODUCT.md) — product thesis + roadmap
 

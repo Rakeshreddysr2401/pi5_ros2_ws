@@ -3,8 +3,9 @@
 Home robot "Rakhi": Pi5 (this repo) runs the LangGraph brain; Jetson Orin runs
 STT/TTS/camera/YOLO (separate `speech_vision` repo); Mac Mini serves the LLM
 (llama.cpp, `singireddys-mac-mini.local:8080`); ESP32 drives the wheels.
-Read ARCHITECTURE.md before touching graph/agent code; OPERATIONS.md for
-run/deploy/troubleshooting; PRODUCT.md for the roadmap.
+Read HOW_IT_WORKS.md for the end-to-end walkthrough (boot, turn lifecycle,
+failure paths); ARCHITECTURE.md before touching graph/agent code;
+OPERATIONS.md for run/deploy/troubleshooting; PRODUCT.md for the roadmap.
 
 ## Commands
 
