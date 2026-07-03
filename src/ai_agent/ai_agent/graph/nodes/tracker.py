@@ -42,7 +42,7 @@ can greet the delivery person or assist the user further.
 
 
 def tracker_node(state: AgentState) -> dict:
-    llm = get_llm().bind_tools(TRACKER_TOOLS)
+    llm = get_llm("tracker").bind_tools(TRACKER_TOOLS)
     clean = prepare_messages_for_agent(state["messages"])
     response = safe_invoke(llm, [SystemMessage(content=_PROMPT)] + clean, logger)
     return {"messages": [response], "active_agent": "tracker"}

@@ -52,7 +52,7 @@ the robot monitors delivery, then respond with a confirmation message and call:
 
 
 def swiggy_node(state: AgentState) -> dict:
-    llm = get_llm().bind_tools(SWIGGY_TOOLS)
+    llm = get_llm("swiggy").bind_tools(SWIGGY_TOOLS)
     prompt = _PROMPT if SWIGGY_FOOD_TOOLS else _PROMPT + _FOOD_UNAVAILABLE_NOTE
     clean = prepare_messages_for_agent(state["messages"])
     response = safe_invoke(llm, [SystemMessage(content=prompt)] + clean, logger)

@@ -42,7 +42,7 @@ def supervisor_node(state: AgentState) -> dict:
         llm = get_llm("supervisor").bind_tools([handover], tool_choice="handover")
     else:
         llm = get_llm("supervisor").bind_tools([handover])
-    clean = prepare_messages_for_agent(state["messages"], keep_all_system_msgs=True)
+    clean = prepare_messages_for_agent(state["messages"])
     response = safe_invoke(llm, [SystemMessage(content=_get_prompt())] + clean, logger)
     # Strip stray text and deduplicate — supervisor emits exactly one handover call
     if response.tool_calls and any(tc["name"] in HANDOVER_NAMES for tc in response.tool_calls):

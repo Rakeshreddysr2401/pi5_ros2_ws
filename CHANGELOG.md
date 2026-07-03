@@ -4,6 +4,46 @@ What changed, when, and where. Deployment steps for pending items: DEPLOY.md.
 
 ---
 
+## 2026-07-03 — Production hardening: append-only projections, 3-way slot map, cache warming
+
+Adversarial pass over the KV-cache design plus robustness fixes. Verified live
+against `/slots` on server slot 3: after warmup the first turn prefills 16
+tokens (was 2070), and a return-to-agent turn with multiple historical routing
+notes prefills 68 tokens (previously a full re-prefill).
+
+- **Append-only projection (cache bug)** — `prepare_messages_for_agent` kept
+  only the MOST RECENT SystemMessage, so every new handover bridge note deleted
+  the previous one from the projection → mid-history divergence → full
+  re-prefill, including local_agent's cached camera frames, exactly when
+  returning to it after a topic excursion. Now ALL historical SystemMessages
+  are kept; `handle_handover` words them as past-tense `[Routing note]`s so
+  stale ones read as history. `keep_all_system_msgs` param removed.
+- **Duplicate spoken text** — sticky handovers appended a COPY of the agent's
+  reply (`AIMessage(ai_content)`) although the original message (tool_call
+  stripped) already survives projection; every later prompt saw the utterance
+  twice. Copy removed.
+- **3-way slot map** — supervisor + navigate/status/swiggy/tracker moved off
+  chat's slot 0 to new `specialist_slot` (default 2): their different system
+  prompts were evicting chat's hot prefix, making the turn after any
+  specialist excursion a 20s re-prefill. Specialist nodes now call
+  `get_llm("<name>")` so overrides actually reach them. Map: 0=chat,
+  1=local_agent (images), 2=specialists, 3=free.
+- **Cache warming (`agent_node`)** — background `max_tokens=1` prefill of the
+  next turn's exact prompt (same bound tools via the nodes' new
+  `build_llm_call()`): at boot (first turn of the session was always cold) and
+  after a history trim (the one deliberate cache reset — now paid while idle,
+  not on the user's next utterance).
+- **Cache-aware trimming (`graph/utils/history.py`, unit-tested)** — trim cuts
+  only at a real user message (never a dangling look() camera frame) and, since
+  the kept suffix re-prefills anyway, evicts all but the newest 2 camera frames
+  at that moment (tombstone text tells the model to look() again).
+  `history_turns` 6 → 12 (86k ctx/slot; resets now hidden by the warmer).
+- **`safe_invoke` retries once** (0.5s pause) before speaking the failure
+  fallback — a single transient hiccup no longer surfaces to the user.
+- Tests: `test/test_message_utils.py` (projection append-only property — the
+  invariant that keeps every slot warm), `test/test_history.py` (trim
+  boundaries, frame eviction). 10 passing.
+
 ## 2026-07-03 — KV-cache fixes: warm turns every time (20s → ~0s prefill)
 
 Latency replay showed cache-miss turns re-prefilling the full ~2.1k-token chat

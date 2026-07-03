@@ -40,7 +40,7 @@ Right now you handle navigation — you control how the robot moves.
 
 
 def navigate_node(state: AgentState) -> dict:
-    llm = get_llm().bind_tools(NAVIGATE_TOOLS)
+    llm = get_llm("navigate").bind_tools(NAVIGATE_TOOLS)
     clean = prepare_messages_for_agent(state["messages"])
     response = safe_invoke(llm, [SystemMessage(content=_PROMPT)] + clean, logger)
     return {"messages": [response], "active_agent": "navigate"}

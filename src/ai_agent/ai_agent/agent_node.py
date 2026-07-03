@@ -21,6 +21,7 @@ from .graph import llm as llm_module
 from .graph.tools import _bridge as bridge_module
 from .graph.graph import build_graph
 from .graph.utils import timing
+from .graph.utils.history import trim_history
 from .graph.utils.speech_stream import SpeechStreamHandler
 from .graph.tools.reminders import get_store as get_reminder_store
 
@@ -60,6 +61,13 @@ class AgentNode(Node):
         # local_agent_model: override model name for local_agent ("" = inherit global).
         self.declare_parameter("local_agent_slot",  1)
         self.declare_parameter("local_agent_model", "")
+        # Slot for the supervisor + specialist agents (navigate/status/swiggy/
+        # tracker). Their system prompts differ from chat's, so running them on
+        # llm_slot would evict chat's hot prefix — a single navigate turn would
+        # make the NEXT chat turn re-prefill ~2k tokens (~20s). A third slot
+        # keeps chat's cache untouched across specialist excursions.
+        # -1 = share llm_slot (old behaviour).
+        self.declare_parameter("specialist_slot", 2)
 
         provider      = self.get_parameter("provider").value
         model         = self.get_parameter("model").value
@@ -74,23 +82,33 @@ class AgentNode(Node):
         llm_slot             = self.get_parameter("llm_slot").value
         local_agent_slot     = self.get_parameter("local_agent_slot").value
         local_agent_model    = self.get_parameter("local_agent_model").value
+        specialist_slot      = self.get_parameter("specialist_slot").value
         strict_tool_calls    = self.get_parameter("strict_tool_calls").value
         self._stream_speech  = self.get_parameter("stream_speech").value
 
         api_key = os.environ.get(api_key_env, "") if api_key_env else "none"
 
-        # Per-agent LLM overrides — local_agent gets its own slot (and optionally
-        # its own multimodal model) so its cached image prefix isn't evicted.
+        # Per-agent LLM overrides — three-way slot map:
+        #   llm_slot (0):        chat, the default responder — its prefix stays
+        #                        hot across every specialist excursion.
+        #   local_agent_slot(1): local_agent's image prefix, never evicted by
+        #                        text agents (and vice versa).
+        #   specialist_slot (2): supervisor + navigate/status/swiggy/tracker —
+        #                        different system prompts that would otherwise
+        #                        thrash chat's slot.
         # The supervisor never emits user-facing text (grammar-forced handover),
         # so it gains nothing from streaming and skips it.
+        _spec = {"slot": specialist_slot if specialist_slot >= 0 else None}
         agent_overrides = {
             "local_agent": {
                 "slot":  local_agent_slot,
                 "model": local_agent_model or None,
             },
-            "supervisor": {
-                "streaming": False,
-            },
+            "supervisor": {"streaming": False, **_spec},
+            "navigate":   dict(_spec),
+            "status":     dict(_spec),
+            "swiggy":     dict(_spec),
+            "tracker":    dict(_spec),
         }
 
         # ── Known map locations for Nav2 goal publishing ──────────────────
@@ -120,6 +138,8 @@ class AgentNode(Node):
         self._graph   = build_graph()
         self._history: list[dict] = []
         self._history_lock = threading.Lock()
+        # Background KV-cache warmer (boot + after history trims) — at most one.
+        self._warm_thread: threading.Thread | None = None
 
         # Sticky routing: the agent left active at the end of the previous turn.
         # turn_entry re-enters it directly (skipping the supervisor hop) only if
@@ -181,6 +201,9 @@ class AgentNode(Node):
         self._bridge.publish_speech("I'm ready.")
         self.get_logger().info("Startup complete")
         self._ready_event.set()
+        # Prefill chat's llama.cpp slot with the ~2k-token static prompt now,
+        # so the first user turn of the session doesn't pay the ~20s prefill.
+        self._start_cache_warm()
 
     # ── Navigation done callback (background nav thread → worker) ─────────
 
@@ -338,7 +361,7 @@ class AgentNode(Node):
             # a deliberate reset (never a per-turn front shift).
             new_history = result.get("messages", messages) if result else messages
             with self._history_lock:
-                self._history = self._trim_history(new_history)
+                self._history, history_reset = trim_history(new_history, self._max_history)
 
             self.get_logger().info(f"→ TTS: {response[:120]}")
             if speech_stream and speech_stream.spoke(response):
@@ -353,27 +376,61 @@ class AgentNode(Node):
                 # closes any partial stream with the trailing EOU marker.
                 self._bridge.publish_speech(response)
 
+            if history_reset:
+                # The trim shifted the prompt prefix — every slot serving this
+                # history is now cold. Re-prefill in the background while the
+                # robot is idle, so the NEXT turn doesn't pay ~20s+ up front.
+                self._start_cache_warm()
+
         except Exception as e:
             self.get_logger().error(f"Graph error: {e}")
             self._bridge.publish_speech("I'm having trouble right now. Please try again in a moment.")
         finally:
             self._pub_thinking.publish(Bool(data=False))
 
-    def _trim_history(self, messages: list) -> list:
-        """Cap history length, cutting only at a HumanMessage boundary.
+    # ── KV-cache warming (background) ─────────────────────────────────────
 
-        Append-only within the cap (cache-friendly). When the cap is exceeded we
-        drop whole leading turns — one cache reset at the boundary, never a
-        per-turn front shift — and never orphan a tool_call / tool-response pair.
+    def _start_cache_warm(self) -> None:
+        """Kick off one background prefill of the next-turn prompt (no-op if
+        one is already running)."""
+        if self._warm_thread and self._warm_thread.is_alive():
+            return
+        # Warm the agent the next turn will actually enter: the sticky
+        # specialist if one is active (local_agent keeps its image prefix on
+        # its own slot), otherwise chat — the default responder.
+        agent = self._sticky_agent if self._sticky_agent == "local_agent" else "chat"
+        self._warm_thread = threading.Thread(
+            target=self._warm_cache, args=(agent,), daemon=True)
+        self._warm_thread.start()
+
+    def _warm_cache(self, agent: str) -> None:
+        """Prefill `agent`'s llama.cpp slot with its current projected prompt.
+
+        Sends the IDENTICAL system prompt + bound tools + history the next real
+        turn will send (via the node's build_llm_call), with max_tokens=1, so
+        the server caches the prefix while the robot is idle. If the user
+        speaks mid-warm, the real request queues behind this one on the same
+        slot and then reuses the very prefix being computed — total prefill
+        work is the same, so the race is harmless.
         """
-        from langchain_core.messages import HumanMessage
-        msgs = list(messages)
-        if len(msgs) <= self._max_history:
-            return msgs
-        cut = len(msgs) - self._max_history
-        while cut < len(msgs) and not isinstance(msgs[cut], HumanMessage):
-            cut += 1
-        return msgs[cut:] if cut < len(msgs) else msgs
+        try:
+            from langchain_core.messages import HumanMessage
+            if self._input_event.is_set():
+                return  # a turn is already pending — it will pay the prefill itself
+            with self._history_lock:
+                history = list(self._history)
+            if agent == "local_agent":
+                from .graph.nodes.local_agent import build_llm_call
+            else:
+                from .graph.nodes.chat import build_llm_call
+            # The trailing "(warmup)" user message only diverges at the tail —
+            # everything before it (the expensive part) is cached for real turns.
+            llm, msgs = build_llm_call(history + [HumanMessage(content="(warmup)")])
+            llm.bind(max_tokens=1).invoke(msgs)
+            self.get_logger().info(
+                f"KV-cache warmed for '{agent}' ({len(history)} history messages)")
+        except Exception as e:
+            self.get_logger().warning(f"KV-cache warm failed (non-fatal): {e}")
 
     def _extract_response(self, result: dict) -> str | None:
         """Return the last non-empty AI text from the graph output."""

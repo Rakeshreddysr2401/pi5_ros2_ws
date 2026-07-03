@@ -30,7 +30,7 @@ supervisor can handle the user's next request.
 
 
 def status_node(state: AgentState) -> dict:
-    llm = get_llm().bind_tools(STATUS_TOOLS)
+    llm = get_llm("status").bind_tools(STATUS_TOOLS)
     clean = prepare_messages_for_agent(state["messages"])
     response = safe_invoke(llm, [SystemMessage(content=_PROMPT)] + clean, logger)
     return {"messages": [response], "active_agent": "status"}

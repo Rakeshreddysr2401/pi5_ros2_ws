@@ -50,8 +50,19 @@ Right now you handle visual queries — you can see camera images directly.
 """
 
 
-def local_agent_node(state: AgentState) -> dict:
+def build_llm_call(messages: list):
+    """Return (llm, prompt_messages) for a local_agent turn.
+
+    Shared by local_agent_node and agent_node's cache warmer — identical bound
+    tools and prompt so the warmed slot-1 prefix (including camera frames)
+    matches the next real request byte-for-byte.
+    """
     llm = get_llm("local_agent").bind_tools(LOCAL_AGENT_TOOLS)
-    clean = prepare_messages_for_agent(state["messages"], keep_images=True)
-    response = safe_invoke(llm, [SystemMessage(content=_PROMPT)] + clean, logger)
+    clean = prepare_messages_for_agent(messages, keep_images=True)
+    return llm, [SystemMessage(content=_PROMPT)] + clean
+
+
+def local_agent_node(state: AgentState) -> dict:
+    llm, msgs = build_llm_call(state["messages"])
+    response = safe_invoke(llm, msgs, logger)
     return {"messages": [response], "active_agent": "local_agent"}

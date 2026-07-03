@@ -63,26 +63,32 @@ def _resolve(state: AgentState, raw_next: str, reason: str) -> _Resolution:
     current = state.get("active_agent", "supervisor")
     user_query = _last_user_query(state)
 
+    # Routing notes are PERMANENT history: the projection keeps every historical
+    # SystemMessage so cached prompt prefixes never diverge mid-history (see
+    # message_utils). Word each note so a stale one reads as a past event
+    # ("control passed"), never as a standing instruction to whoever reads it.
     if raw_next == "supervisor":
         if reason == "cannot_answer":
             content = (
-                f"The previous agent ('{current}') could not answer the user's question. "
-                f"Do NOT route back to '{current}'. Try a different agent.\n"
+                f"[Routing note] The '{current}' agent could not answer the user's "
+                f"question. Do NOT route back to '{current}'. Try a different agent.\n"
                 f"The user asked: \"{user_query}\""
             )
         else:
             content = (
-                f"The agent '{current}' has completed its task (reason: '{reason or 'done'}'). "
-                f"Route to the next appropriate agent or back to 'chat' to respond to the user."
+                f"[Routing note] The '{current}' agent completed its task "
+                f"(reason: '{reason or 'done'}'). Route to the next appropriate "
+                f"agent or back to 'chat' to respond to the user."
             )
     else:
         meta = AGENTS.get(raw_next)
         desc = meta["description"] if meta else raw_next
         content = (
-            f"You are the {raw_next} agent, responsible for: {desc}.\n"
-            f"You were called because: \"{reason or 'user request'}\". "
+            f"[Routing note] Control passed to the '{raw_next}' agent ({desc}) "
+            f"because: \"{reason or 'user request'}\". "
             f"The user said: \"{user_query}\". "
-            f"Handle this directly without re-asking what was already provided."
+            f"The '{raw_next}' agent handles this directly without re-asking "
+            f"what was already provided."
         )
 
     logger.info("Handover: %s → %s (reason: %s)", current, raw_next, reason or "normal")
@@ -106,8 +112,9 @@ def handle_handover(state: AgentState):
         res = _Resolution(
             next_agent=current,
             bridge_messages=[SystemMessage(content=(
-                f"Do NOT call handover. You are the '{current}' agent — answer the "
-                f"user's request directly in plain text now: \"{_last_user_query(state)}\""
+                f"[Routing note] The '{current}' agent handed over to itself. "
+                f"For this request it must NOT call handover again — it answers the "
+                f"user directly in plain text now: \"{_last_user_query(state)}\""
             ))],
         )
         chain, ai_content = True, ""
@@ -132,9 +139,11 @@ def handle_handover(state: AgentState):
 
     should_chain = chain or not ai_content
 
-    messages_to_add = (
-        ([AIMessage(content=ai_content)] if ai_content else []) + res.bridge_messages
-    )
+    # Only the bridge note is added. The agent's spoken text already lives in
+    # its original AIMessage (the one carrying the handover tool_call) — the
+    # projection keeps that message with the tool_call stripped, so adding a
+    # copy here would duplicate the utterance in every later prompt.
+    messages_to_add = res.bridge_messages
 
     state_update = {
         "active_agent": res.next_agent,

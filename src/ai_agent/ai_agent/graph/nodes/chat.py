@@ -70,9 +70,15 @@ Answer the user naturally and concisely.
 """
 
 
-def chat_node(state: AgentState) -> dict:
-    llm = get_llm().bind_tools(CHAT_TOOLS)
-    clean = prepare_messages_for_agent(state["messages"])
+def build_llm_call(messages: list):
+    """Return (llm, prompt_messages) for a chat turn.
+
+    Shared by chat_node and agent_node's cache warmer — the warmer must send the
+    IDENTICAL bound tools and system prompt, otherwise it prefills a different
+    formatted prompt and warms nothing (tool schemas are part of the template).
+    """
+    llm = get_llm("chat").bind_tools(CHAT_TOOLS)
+    clean = prepare_messages_for_agent(messages)
     # Dynamic parts go at the END of the system prompt so the static prefix
     # stays reusable in the llama.cpp KV cache. Only the DATE is in-prompt
     # (changes once a day); the clock is a tool (get_current_time) — a
@@ -80,5 +86,10 @@ def chat_node(state: AgentState) -> dict:
     # re-prefill all ~2k tokens (~20s on the 12B Mac Mini) every minute tick.
     today = datetime.now().strftime("%A %B %d, %Y").replace(" 0", " ")
     prompt = _PROMPT + household_context() + f"\n== TODAY ==\nToday's date: {today}. For the clock time, call get_current_time.\n"
-    response = safe_invoke(llm, [SystemMessage(content=prompt)] + clean, logger)
+    return llm, [SystemMessage(content=prompt)] + clean
+
+
+def chat_node(state: AgentState) -> dict:
+    llm, msgs = build_llm_call(state["messages"])
+    response = safe_invoke(llm, msgs, logger)
     return {"messages": [response], "active_agent": "chat"}

@@ -16,8 +16,11 @@ agent_node:
     # Max tokens per LLM response
     max_tokens: 3000
 
-    # Number of user/assistant turn pairs to keep in conversation memory
-    history_turns: 6
+    # Number of user/assistant turn pairs to keep in conversation memory.
+    # Each trim resets the llama.cpp prompt cache (the kept suffix re-prefills),
+    # so bigger = fewer resets; the server has 86k ctx per slot, and the reset
+    # cost is hidden by the background cache warmer in agent_node anyway.
+    history_turns: 12
 
     # Subscribe to /camera/color/image_raw (Logitech cam on Jetson) and cache the
     # latest frame so local_agent's look() can see and reason over it.
@@ -40,12 +43,16 @@ agent_node:
     # publish one full reply per turn (wire protocol stays chunks + marker).
     stream_speech: true
 
-    # llama.cpp KV-cache slot for ALL text agents (id_slot). Pinning every
-    # sequential request to one slot keeps the shared static prompt prefix
+    # llama.cpp KV-cache slot map (id_slot). Pinning keeps each prompt prefix
     # cached — a multi-slot server (--parallel N) otherwise scatters requests
     # across cold slots and re-prefills ~2k tokens per turn (~20s on the 12B).
+    # Three-way map: chat (the default responder) owns llm_slot so specialist
+    # excursions never evict its hot prefix; local_agent owns its image slot;
+    # supervisor + navigate/status/swiggy/tracker share specialist_slot.
     # -1 = no pinning (cloud providers ignore it either way).
     llm_slot: 0
+    # Slot for supervisor + specialist agents (-1 = share llm_slot).
+    specialist_slot: 2
 
     # ── local_agent (multimodal vision agent, Gemma via llama.cpp) ────────────
     # Dedicated llama.cpp KV-cache slot so its cached image prefix is never
