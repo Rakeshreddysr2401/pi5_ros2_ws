@@ -76,6 +76,19 @@ build.py + handover Literal must stay in sync — the smoke tests catch drift).
   full table in OPERATIONS.md; template in example.env
 - Robot state lives in `~/.langrobo/` (household.json, reminders.json, qdrant/)
 
+## Working on the Jetson from here
+
+Passwordless SSH: `ssh rakhi24@192.168.2.20`. The speech_vision repo is at
+`~/robot` on the Jetson (branch dev-1.0.4_voice_upgrade+) and has its own
+CLAUDE.md + VOICE_PIPELINE.md — read those before editing; they document the
+container build/restart procedure and five hard-won gotchas (venv-python
+colcon builds, zombie launch children, pinned pip index, broken torchaudio,
+ec_speaker audio routing). Workflow: edit via ssh/rsync on the host paths
+(`~/robot/ai_ws` is bind-mounted into the `ai_stack` container), build and
+restart via `docker exec`, test over ROS2 topics from this machine, commit in
+`~/robot` over ssh. The `/voice/*` + `/audio/*` topic contract is shared —
+change both repos together or neither.
+
 ## Gotchas
 
 - Nav2/SLAM don't exist yet (phase 2): `navigate_to_pose` reports honestly

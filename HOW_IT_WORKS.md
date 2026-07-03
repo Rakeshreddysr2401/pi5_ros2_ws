@@ -60,9 +60,18 @@ cache warmer        → transient; prefills LLM slots while idle
 ## 2. A voice turn, end to end ("what time is it?")
 
 ```
-you speak → Jetson mic → Whisper STT → wake-word gate ("Rakhi") passes
+you speak → Jetson echo-cancelled mic (AEC: mic minus the robot's own audio)
+  → openWakeWord neural keyword model (every 80ms chunk; audio not addressed
+    to the robot is discarded BEFORE transcription)
+  → wake heard → capture window → Silero VAD endpoints the utterance
+  → Whisper STT → wake_gate strips the name
   → publishes String on /voice/user_input
 ```
+
+(Wake word is "hey jarvis" until the custom hey_rakhi model is trained — see
+JETSON_VOICE_UPGRADE.md. Saying the wake word while the robot is talking is
+barge-in: the Jetson halts TTS, captures your utterance, and this brain
+abandons its in-flight turn for the new one.)
 
 1. **Spin thread** (`_on_user_input`): cancels any active navigation, interrupts
    any blocking motion (a new utterance always wins), stores the text as the
