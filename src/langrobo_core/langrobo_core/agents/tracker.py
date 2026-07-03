@@ -22,6 +22,9 @@ Capabilities via tools:
 - track_food_order             : live delivery tracking
 - set_active_order(order_id)   : store/clear the order ID for background monitoring
 - navigate_to(target)          : drive the robot to a location
+- send_telegram_message(recipient, message) : text a household member's phone
+  (use when the user asked to be notified about the delivery while away)
+- send_telegram_photo(recipient, caption)   : send the current camera view to their phone
 - handover(next_agent, reason) : transfer to another agent
 
 Guidelines:

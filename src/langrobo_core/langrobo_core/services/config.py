@@ -19,6 +19,8 @@ import logging
 import os
 from dataclasses import dataclass, field
 
+from . import permissions
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,6 +80,76 @@ class MemoryConfig:
 
 
 @dataclass(frozen=True)
+class TelegramMember:
+    chat_id: int
+    name: str
+    role: str                  # one of permissions.ROLES
+
+
+@dataclass(frozen=True)
+class TelegramConfig:
+    """Telegram channel (services.telegram). Off unless both the bot token and
+    a non-empty allowlist are present — a bot with nobody to talk to stays off."""
+    token: str = ""            # from @BotFather, never logged
+    members: tuple = ()        # TelegramMember entries — the ONLY people the bot serves
+    configured: bool = False
+    # Proactive pings (reminder/delivery [SYSTEM] turns) queue during this
+    # window and flush after it; direct replies always go through. Minutes
+    # since midnight (start, end), overnight wrap allowed. None = no window.
+    quiet: tuple | None = None
+
+
+def _parse_quiet_hours(raw: str) -> tuple | None:
+    """LANGROBO_QUIET_HOURS = 'HH:MM-HH:MM' (e.g. 23:00-07:00)."""
+    if not raw:
+        return None
+    try:
+        start_s, end_s = raw.split("-")
+        parts = []
+        for s in (start_s, end_s):
+            hh, mm = s.strip().split(":")
+            hh, mm = int(hh), int(mm)
+            if not (0 <= hh <= 23 and 0 <= mm <= 59):
+                raise ValueError
+            parts.append(hh * 60 + mm)
+        if parts[0] == parts[1]:
+            raise ValueError   # zero-length window is a typo, not "all day"
+        return tuple(parts)
+    except ValueError:
+        raise ConfigError(
+            f"LANGROBO_QUIET_HOURS must be 'HH:MM-HH:MM' (e.g. 23:00-07:00), got {raw!r}")
+
+
+def _parse_telegram_allowlist(raw: str) -> tuple:
+    """LANGROBO_TELEGRAM_ALLOWLIST = 'chat_id:Name:role, chat_id:Name:role, …'."""
+    members: list[TelegramMember] = []
+    for entry in filter(None, (e.strip() for e in raw.split(","))):
+        parts = [p.strip() for p in entry.split(":")]
+        if len(parts) != 3 or not all(parts):
+            raise ConfigError(
+                f"LANGROBO_TELEGRAM_ALLOWLIST entry must be 'chat_id:Name:role', got {entry!r}")
+        chat_id_raw, name, role = parts
+        try:
+            chat_id = int(chat_id_raw)
+        except ValueError:
+            raise ConfigError(
+                f"LANGROBO_TELEGRAM_ALLOWLIST chat_id must be an integer, got {chat_id_raw!r}")
+        role = role.lower()
+        if role not in permissions.ROLES:
+            raise ConfigError(
+                f"LANGROBO_TELEGRAM_ALLOWLIST role must be one of {permissions.ROLES}, "
+                f"got {role!r} for {name!r}")
+        if any(m.chat_id == chat_id for m in members):
+            raise ConfigError(f"LANGROBO_TELEGRAM_ALLOWLIST has duplicate chat_id {chat_id}")
+        if any(m.name.casefold() == name.casefold() for m in members):
+            # Names are how the agent addresses recipients — ambiguity would
+            # let "send to Mom" pick the wrong person.
+            raise ConfigError(f"LANGROBO_TELEGRAM_ALLOWLIST has duplicate name {name!r}")
+        members.append(TelegramMember(chat_id=chat_id, name=name, role=role))
+    return tuple(members)
+
+
+@dataclass(frozen=True)
 class HealthConfig:
     """In-process health/status/metrics API (FastAPI)."""
     enabled: bool
@@ -91,6 +163,7 @@ class Settings:
     fallback: FallbackLLM = field(default_factory=lambda: FallbackLLM("", "", configured=False))
     memory: MemoryConfig = field(default_factory=lambda: MemoryConfig(True, "~/.langrobo/qdrant"))
     health: HealthConfig = field(default_factory=lambda: HealthConfig(True, "0.0.0.0", 8090))
+    telegram: TelegramConfig = field(default_factory=TelegramConfig)
     log_json: bool = True
 
 
@@ -143,18 +216,32 @@ def load_settings() -> Settings:
             "LANGROBO_HEALTH_HOST is LAN-exposed but LANGROBO_API_TOKEN is empty. "
             "Set a token, or bind to 127.0.0.1.")
 
+    # ── Telegram channel ──────────────────────────────────────────────────
+    tg_token = os.getenv("LANGROBO_TELEGRAM_TOKEN", "").strip()
+    tg_members = _parse_telegram_allowlist(os.getenv("LANGROBO_TELEGRAM_ALLOWLIST", ""))
+    if tg_token and not tg_members:
+        logger.warning(
+            "LANGROBO_TELEGRAM_TOKEN is set but LANGROBO_TELEGRAM_ALLOWLIST is empty — "
+            "Telegram stays disabled (the bot must never talk to strangers).")
+    telegram = TelegramConfig(
+        token=tg_token, members=tg_members,
+        configured=bool(tg_token and tg_members),
+        quiet=_parse_quiet_hours(os.getenv("LANGROBO_QUIET_HOURS", "").strip()))
+
     settings = Settings(
         fallback=fallback,
         memory=memory,
         health=health,
+        telegram=telegram,
         log_json=_bool_env("LANGROBO_LOG_JSON", True),
     )
     logger.info(
-        "Settings: fallback=%s memory=%s(%s) health=%s:%s(token=%s)",
+        "Settings: fallback=%s memory=%s(%s) health=%s:%s(token=%s) telegram=%s",
         fallback.provider or "none",
         "on" if memory.enabled else "off",
         memory.url or memory.path,
         health.host, health.port, "set" if token else "NONE — localhost only",
+        f"{len(tg_members)} members" if telegram.configured else "off",
     )
     return settings
 

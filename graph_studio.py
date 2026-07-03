@@ -26,6 +26,7 @@ load_dotenv()  # reads .env from cwd (repo root) before any langrobo imports
 from langrobo_core.services import config as config_service
 from langrobo_core.services import llm as llm_module
 from langrobo_core.services import memory as memory_service
+from langrobo_core.services import telegram as telegram_service
 from langrobo_core.tools import _bridge as bridge_module
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ _api_key = os.getenv(_key_env, "none") if _key_env else "none"
 llm_module.configure(_provider, _model, _base_url, _api_key, _max_tokens)
 llm_module.configure_fallback(_settings.fallback)
 memory_service.init(_settings.memory)
+telegram_service.init(_settings.telegram)
 logger.info("Studio LLM: provider=%s model=%s", _provider, _model)
 
 # ── Bridge: real ROS2 or stub ─────────────────────────────────────────────────

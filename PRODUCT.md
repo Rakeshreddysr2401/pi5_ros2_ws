@@ -105,6 +105,20 @@ real transcripts, chrony-peer Pi5↔Jetson clocks.
 2. **Hear me anywhere**: mic array + better speaker (hardware list above);
    wake-word gate already shipped, acoustics need the array.
 3. **Self-initiated turns**: ✅ shipped (reminders, lists, proactive speech).
+3b. **Reach me anywhere — Telegram channel**: ✅ shipped (2026-07-04).
+   Bidirectional text+photo chat with the same brain, capability roles
+   (owner/family/guest), relay + errand ledger ("tell Mom X and let me know
+   what she says"), quiet hours, person-tagged memory. Deliberately deferred:
+   memory consolidation (local sleep-time distillation of episodic turns into
+   a facts collection — v1.1); vision-triggered alerts ("stranger at the door
+   → photo to your phone" — v1.2, needs a Jetson event producer + presence
+   model, the flagship proactive feature); daily digest (rides on
+   consolidation); WhatsApp adapter (channel layer is abstracted, Meta
+   Business API costs not yet justified); DeepAgents-style background lane
+   for long-horizon tasks (rejected for the realtime loop — latency);
+   inbound voice notes (needs STT routing via Jetson). Mem0/cloud memory
+   extraction rejected outright: household conversations never leave the
+   house for bookkeeping.
 4. **Knows the family**: face recognition on Jetson + per-person memory →
    greetings, briefings, "tell Rakesh when you see him." Memory schema is
    ready (`person` field); fills the wake-word gap with gaze attention.

@@ -28,8 +28,10 @@ from langrobo_core.services import health as health_service
 from langrobo_core.services import llm as llm_module
 from langrobo_core.services import memory as memory_service
 from langrobo_core.services import metrics
+from langrobo_core.services import telegram as telegram_service
 from langrobo_core.services.logging import new_trace, setup_logging
 from langrobo_core.tools import _bridge as bridge_module
+from langrobo_core.tools.errands import get_store as get_errand_store
 from langrobo_core.tools.reminders import get_store as get_reminder_store
 from langrobo_core.graph import build_graph
 from langrobo_core.utils import timing
@@ -153,6 +155,7 @@ class AgentNode(Node):
                              slot=llm_slot if llm_slot >= 0 else None)
         llm_module.configure_fallback(settings.fallback)
         self._memory = memory_service.init(settings.memory)
+        self._telegram = telegram_service.init(settings.telegram)
 
         # Register navigation completion callback
         self._bridge.register_nav_done_callback(self._on_nav_done)
@@ -171,13 +174,16 @@ class AgentNode(Node):
         self._last_turn_ts: float | None = None
 
         # ── Input queue ───────────────────────────────────────────────────
-        # _user_pending:   latest user message (replaced by newer ones)
-        # _system_pending: FIFO of system events (delivery, nav done, reminder
-        #                  due) — never dropped, never clobber each other
-        # _input_event:    wakes the worker when anything is pending
+        # _user_pending:     latest user message (replaced by newer ones)
+        # _system_pending:   FIFO of system events (delivery, nav done, reminder
+        #                    due) — never dropped, never clobber each other
+        # _telegram_pending: FIFO of TelegramInbound — never dropped; drained
+        #                    after voice (the person in the room comes first)
+        # _input_event:      wakes the worker when anything is pending
         self._queue_lock     = threading.Lock()
         self._user_pending:   str | None = None
         self._system_pending: list[str] = []
+        self._telegram_pending: list = []
         self._input_event    = threading.Event()
         # Barge-in: set when a NEW user utterance arrives while a turn is
         # still running — the worker aborts the in-flight turn at the next
@@ -186,6 +192,10 @@ class AgentNode(Node):
         # JETSON_VOICE_UPGRADE.md; without AEC this fires only on queued input.)
         self._turn_interrupt = threading.Event()
         self._turn_active    = False
+        # Channel of the in-flight turn. Barge-in only applies to voice turns —
+        # a spoken answer goes stale when the user speaks over it, but a
+        # Telegram reply doesn't; new voice input queues behind it instead.
+        self._turn_channel   = "voice"
 
         # ── Startup readiness gate ────────────────────────────────────────
         self._ready_event = threading.Event()
@@ -217,6 +227,11 @@ class AgentNode(Node):
         threading.Thread(target=self._startup_check, daemon=True).start()
         threading.Thread(target=self._worker_loop,   daemon=True).start()
 
+        # ── Telegram inbound (long-poll daemon → worker queue) ────────────
+        # No-op when the channel is unconfigured. Messages sent while the
+        # brain was down arrive now (persisted getUpdates offset).
+        self._telegram.start_polling(self._on_telegram_inbound)
+
         # ── Delivery polling timer (every 2 min) ──────────────────────────
         self.create_timer(120.0, self._poll_delivery)
 
@@ -233,6 +248,7 @@ class AgentNode(Node):
     def _runtime_status(self) -> dict:
         with self._queue_lock:
             queued_system = len(self._system_pending)
+            queued_telegram = len(self._telegram_pending)
             user_pending = self._user_pending is not None
         return {
             "sticky_agent": self._sticky_agent,
@@ -240,7 +256,9 @@ class AgentNode(Node):
             "camera_frame_age_s": self._bridge.frame_age(),
             "active_order": self._bridge.get_active_order(),
             "queued_system_events": queued_system,
+            "queued_telegram_messages": queued_telegram,
             "user_input_pending": user_pending,
+            "telegram": self._telegram.status(),
         }
 
     # ── Startup readiness check ───────────────────────────────────────────
@@ -285,8 +303,9 @@ class AgentNode(Node):
             if self._user_pending is not None:
                 self.get_logger().warning("User queue: replacing pending message with newer input")
             self._user_pending = text
-            if self._turn_active:
+            if self._turn_active and self._turn_channel == "voice":
                 # Barge-in: abandon the in-flight turn — the user has moved on.
+                # Telegram turns are never abandoned; this input queues behind.
                 self._turn_interrupt.set()
         self._input_event.set()
 
@@ -305,6 +324,13 @@ class AgentNode(Node):
         """Enqueue a system event — never dropped, fires after current graph run."""
         with self._queue_lock:
             self._system_pending.append(text)
+        self._input_event.set()
+
+    def _on_telegram_inbound(self, inbound) -> None:
+        """Telegram poller thread → worker queue. Never barges in on a running
+        turn and never clobbers voice input — it waits its turn in FIFO order."""
+        with self._queue_lock:
+            self._telegram_pending.append(inbound)
         self._input_event.set()
 
     def _poll_delivery(self) -> None:
@@ -336,35 +362,77 @@ class AgentNode(Node):
         while True:
             self._input_event.wait()
 
-            # Drain ONE item per iteration — system events take priority, but a
-            # user message that arrived in the same window is NOT discarded: we
-            # leave it pending and keep the event armed for the next loop.
+            # Drain ONE item per iteration — priority: system events, then the
+            # voice user (someone is standing there), then Telegram. Nothing is
+            # discarded: whatever stays pending keeps the event armed for the
+            # next loop.
             with self._queue_lock:
+                telegram = None
                 if self._system_pending:
                     text, is_system = self._system_pending.pop(0), True
-                    if not self._system_pending and self._user_pending is None:
-                        self._input_event.clear()
-                    # else: leave event set so remaining input is processed next
-                else:
+                elif self._user_pending is not None:
                     text, is_system = self._user_pending, False
                     self._user_pending = None
+                elif self._telegram_pending:
+                    telegram = self._telegram_pending.pop(0)
+                    text, is_system = telegram.text, False
+                else:
+                    text, is_system = None, False
+                if not (self._system_pending or self._user_pending is not None
+                        or self._telegram_pending):
                     self._input_event.clear()
 
             if text:
-                self._process(text, is_system)
+                self._process(text, is_system, telegram=telegram)
+
+    # ── Telegram turn framing (worker thread) ─────────────────────────────
+
+    def _frame_telegram_turn(self, telegram, text: str) -> str:
+        """Compose the turn text for an inbound Telegram message: sender tag,
+        photo note, and — when this sender owes someone an answer — the open
+        errand, so the agent closes the loop even hours after history trimmed.
+
+        Errands asked out loud can't be answered in this turn (its reply sink
+        is the sender's chat, and there is no speak() tool), so they become a
+        [SYSTEM] turn right behind it — the existing proactive-speech path."""
+        tag = f"Telegram from {telegram.name}"
+        if telegram.photo:
+            tag += " — photo attached"
+        notes = []
+        for e in get_errand_store().pop_for_sender(telegram.name):
+            if e.asked_via == "voice":
+                self._enqueue_system(
+                    f'[SYSTEM] {telegram.name} replied to the message you relayed '
+                    f'for the user ("{e.gist}"). Their reply: "{text[:300]}" — '
+                    f'announce it to the user now.')
+            else:
+                notes.append(
+                    f' [This may answer the errand {e.asked_by} gave you '
+                    f'("{e.gist}") — forward the reply to {e.asked_by} with '
+                    f'send_telegram_message, then acknowledge {telegram.name}.]')
+        return f"[{tag}]{''.join(notes)} {text}".rstrip()
 
     # ── Graph invocation (worker thread) ──────────────────────────────────
 
-    def _process(self, text: str, is_system: bool = False) -> None:
+    def _process(self, text: str, is_system: bool = False, telegram=None) -> None:
+        """One turn. `telegram` (a TelegramInbound) switches the reply sink:
+        voice turns stream to TTS; telegram turns answer the sender's chat and
+        never touch the speaker. Both share the same history and graph."""
         from langchain_core.messages import HumanMessage
         trace = new_trace()   # stamps every log line + timing event this turn
         turn_start = time.time()
         metrics.inc("turns_total")
         if is_system:
             metrics.inc("system_turns_total")
+        if telegram:
+            metrics.inc("telegram_turns_total")
         self._turn_interrupt.clear()
+        self._turn_channel = "telegram" if telegram else "voice"
         self._turn_active = True
-        self._pub_thinking.publish(Bool(data=True))
+        if not telegram:
+            # /brain/thinking drives the robot's physical "thinking" cue —
+            # meaningless (and misleading) for a phone conversation.
+            self._pub_thinking.publish(Bool(data=True))
         try:
             with self._history_lock:
                 history = list(self._history)
@@ -373,7 +441,26 @@ class AgentNode(Node):
             # local_agent calls look() — no ambient frame-stapling. Per-agent
             # projection (langrobo_core.utils.message_utils) strips images for
             # text agents.
-            messages = history + [HumanMessage(content=text)]
+            # Telegram turns are framed with the sender so the model knows who
+            # is talking and from where — plain text, append-only, cache-safe.
+            turn_text = text
+            turn_msg = None
+            if telegram:
+                turn_text = self._frame_telegram_turn(telegram, text)
+                if telegram.photo:
+                    # Same shape look() uses: images ride in user-role messages
+                    # (llama.cpp honours them only there) and persist in the
+                    # shared history for follow-ups. Text agents get the
+                    # image-stripped projection and hand over to local_agent.
+                    import base64
+                    b64 = base64.b64encode(telegram.photo).decode()
+                    turn_msg = HumanMessage(content=[
+                        {"type": "text", "text": turn_text},
+                        {"type": "image_url",
+                         "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                    ])
+                self._telegram.send_typing(telegram.chat_id)
+            messages = history + [turn_msg or HumanMessage(content=turn_text)]
 
             # Sticky routing: re-enter the previous agent for a user follow-up;
             # [SYSTEM] events always get a fresh supervisor route. turn_entry
@@ -382,22 +469,32 @@ class AgentNode(Node):
             incoming_agent = "supervisor" if is_system else (self._sticky_agent or "chat")
 
             self.get_logger().info(
-                f"Invoking graph with input: {text} (entry={incoming_agent}, trace={trace})")
+                f"Invoking graph with input: {text} (entry={incoming_agent}, "
+                f"channel={self._turn_channel}, trace={trace})")
             timing.emit("graph_start", entry=incoming_agent, system=is_system, trace=trace)
 
             # Fresh handler per turn: streams sentence chunks to TTS while the
             # LLM generates. Pre-tool text ("Let me check.") is spoken as the
             # tool runs; the turn's utterance is closed with the EOU marker below.
+            # Telegram turns don't stream — the reply goes out whole as one
+            # phone message, and nothing may reach the speaker.
             speech_stream = (
                 SpeechStreamHandler(self._bridge.publish_speech_chunk)
-                if self._stream_speech else None
+                if self._stream_speech and not telegram else None
             )
             callbacks = [self._timing_handler] + ([speech_stream] if speech_stream else [])
 
             result = None
             interrupted = False
             for event in self._graph.stream(
-                {"messages": messages, "active_agent": incoming_agent},
+                {"messages": messages, "active_agent": incoming_agent,
+                 # "system" marks proactive turns (quiet-hours gate in the
+                 # telegram tools); _turn_channel stays voice/telegram — it
+                 # governs barge-in and the reply sink, and a [SYSTEM] turn
+                 # speaks aloud like any voice turn.
+                 "channel": "system" if is_system else self._turn_channel,
+                 "sender_name": telegram.name if telegram else None,
+                 "sender_role": telegram.role if telegram else None},
                 config={"callbacks": callbacks},
                 stream_mode="values"):
                 if self._turn_interrupt.is_set():
@@ -432,6 +529,10 @@ class AgentNode(Node):
                     # Something was streamed but the graph ended without a final
                     # text — close the utterance so the Jetson releases the mic.
                     self._bridge.publish_speech_end()
+                if telegram:
+                    # A texter gets an answer or an apology — never silence.
+                    self._telegram.send_message(
+                        telegram.chat_id, "Sorry, I couldn't come up with a reply.")
                 self.get_logger().warning("Graph returned empty response")
                 metrics.inc("empty_responses_total")
                 return
@@ -444,14 +545,21 @@ class AgentNode(Node):
             with self._history_lock:
                 self._history, history_reset = trim_history(new_history, self._max_history)
 
-            self.get_logger().info(f"→ TTS: {response[:120]}")
-            if speech_stream and speech_stream.spoke(response):
+            if telegram:
+                # Reply sink: the sender's chat, never the speaker.
+                self.get_logger().info(f"→ Telegram ({telegram.name}): {response[:120]}")
+                err = self._telegram.send_message(telegram.chat_id, response)
+                if err:
+                    self.get_logger().warning(f"Telegram reply not delivered — {err}")
+            elif speech_stream and speech_stream.spoke(response):
+                self.get_logger().info(f"→ TTS: {response[:120]}")
                 # Final text already went out sentence-by-sentence — just close
                 # the utterance. (Any pre-tool acks streamed earlier are part of
                 # the same utterance.)
                 timing.emit("speech_stream_done", chunks=speech_stream.chunks_sent)
                 self._bridge.publish_speech_end()
             else:
+                self.get_logger().info(f"→ TTS: {response[:120]}")
                 # Streaming off, or the response never streamed (safe_invoke
                 # fallback, non-streaming provider) — speak it whole. This also
                 # closes any partial stream with the trailing EOU marker.
@@ -459,10 +567,12 @@ class AgentNode(Node):
 
             # Long-term episodic memory: user turns only ([SYSTEM] events are
             # plumbing). Non-blocking — embedding happens on the memory
-            # service's writer thread, never on the turn path.
+            # service's writer thread, never on the turn path. Telegram turns
+            # carry verified identity → the reserved `person` field.
             if not is_system:
                 self._memory.record_turn(text, response,
-                                         agent=self._sticky_agent or "chat")
+                                         agent=self._sticky_agent or "chat",
+                                         person=telegram.name if telegram else None)
 
             if history_reset:
                 # The trim shifted the prompt prefix — every slot serving this
@@ -473,13 +583,18 @@ class AgentNode(Node):
         except Exception as e:
             self.get_logger().error(f"Graph error: {e}")
             metrics.inc("turn_errors_total")
-            self._bridge.publish_speech("I'm having trouble right now. Please try again in a moment.")
+            apology = "I'm having trouble right now. Please try again in a moment."
+            if telegram:
+                self._telegram.send_message(telegram.chat_id, apology)
+            else:
+                self._bridge.publish_speech(apology)
         finally:
             self._turn_active = False
             self._last_turn_ts = time.time()
             metrics.set_gauge("last_turn_duration_seconds",
                               round(time.time() - turn_start, 3))
-            self._pub_thinking.publish(Bool(data=False))
+            if not telegram:
+                self._pub_thinking.publish(Bool(data=False))
 
     # ── KV-cache warming (background) ─────────────────────────────────────
 

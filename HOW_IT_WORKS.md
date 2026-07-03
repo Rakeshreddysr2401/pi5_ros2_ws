@@ -150,6 +150,38 @@ events use the same producer pattern; future face-seen greetings will too.
 
 ---
 
+## 4b. A Telegram turn ("is anyone home? send me a pic")
+
+You text the bot from outside the house:
+
+1. The poller thread (`services/telegram.py`, `getUpdates` long-poll — no
+   public IP needed) matches your chat_id against the allowlist, rate-limits,
+   and drops the message into agent_node's **telegram FIFO**. Strangers are
+   ignored silently; the getUpdates offset persists on disk, so texts sent
+   while the robot was off are answered at boot.
+2. The worker drains it **after** system events and any voice input (the
+   person in the room wins) and runs a normal graph turn — same shared
+   history, same KV-cache prefix — framed as
+   `[Telegram from Rakesh] is anyone home? send me a pic`, with your name and
+   role in state.
+3. The agent answers with `look()` / `send_telegram_photo()` — the photo tool
+   grabs a fresh camera frame and posts it to your chat. Capability checks run
+   **inside the tools**: Mom (role `family`) texting "drive to the door" gets a
+   polite refusal, and the attempt lands in the audit log.
+4. The reply routes to your **chat, never the speaker** (typing indicator
+   while it thinks; no TTS streaming, no barge-in). Memory records the turn
+   with `person="Rakesh"`.
+
+Sending the bot a **photo** works too — it enters the turn as an image the
+multimodal model can see (chat hands over to local_agent, same as camera
+frames). The middleman flow — "tell Mom I'll be late **and let me know what
+she says**" — records an errand (`~/.langrobo/errands.json`, 24h expiry);
+Mom's eventual reply comes back framed with it, and if you asked out loud, the
+answer is announced through the section-4 proactive path. Proactive pings
+respect `LANGROBO_QUIET_HOURS`; replies to direct messages always go through.
+
+---
+
 ## 5. A movement turn ("move forward ten centimeters")
 
 1. chat → `handover("navigate")` → navigate agent calls `move_robot("F:10")`.

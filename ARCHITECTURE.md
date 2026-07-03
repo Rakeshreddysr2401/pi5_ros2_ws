@@ -236,6 +236,29 @@ dropped, processed between user turns, always entering at the supervisor):
 New proactive features (P2 face-seen greeting, presence events) follow the same
 producer pattern.
 
+## Telegram channel (second front door)
+
+`services/telegram.py` (pure zone) long-polls `getUpdates` on a daemon thread —
+no public IP needed. Allowlisted members' messages (text and photos) enter
+agent_node's telegram FIFO (drained after system events and voice: the person
+in the room wins), become turns framed `[Telegram from <name>]` in the SAME
+shared history and KV-cache prefix as voice, and route their reply back to the
+sender's chat — never the speaker. Telegram turns don't stream and can't be
+barge-in aborted; voice turns byte-for-byte unaffected.
+
+Trust model (`services/permissions.py`): Telegram gives verified identity
+(chat_id → name + role); role→capability checks are enforced **inside the
+tools** (`tools/telegram.py`, movement, photos), never only in prompts. Voice
+has no identity until P2 speaker/face recognition and acts as owner.
+Episodic memory writes for telegram turns fill the reserved `person` field.
+
+The middleman flow persists in `tools/errands.py` (`~/.langrobo/errands.json`):
+`send_telegram_message(report_back=True)` records an errand; the recipient's
+next message is framed with it (telegram-asked → agent forwards the answer;
+voice-asked → a `[SYSTEM]` turn announces it aloud — the standard proactive
+path). Proactive pings respect `LANGROBO_QUIET_HOURS` via a persisted deferred
+queue flushed by the poller.
+
 ## Observability
 
 - **Structured logs**: every line is one JSON object with a per-turn `trace_id`

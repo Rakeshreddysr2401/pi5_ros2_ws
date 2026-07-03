@@ -64,10 +64,31 @@ not here.
 | `OPENAI/ANTHROPIC/GOOGLE_API_KEY` | Cloud provider keys (referenced by name) |
 | `SWIGGY_ACCESS_TOKEN` | Food ordering (absent → feature off, no spam) |
 | `TAVILY_API_KEY` | Web search in chat (absent → feature off) |
+| `LANGROBO_TELEGRAM_TOKEN` | Bot token from @BotFather (absent → channel off) |
+| `LANGROBO_TELEGRAM_ALLOWLIST` | `chat_id:Name:role,…` — roles `owner`/`family`/`guest`; channel stays off while empty (bot never talks to strangers) |
+| `LANGROBO_QUIET_HOURS` | `HH:MM-HH:MM` — proactive pings queue in this window; replies always send |
 | `STUDIO_PROVIDER/MODEL/BASE_URL/MAX_TOKENS` | `langgraph dev` only |
 
 Robot state files: `~/.langrobo/` — `household.json`, `reminders.json`,
-`qdrant/`. Back this directory up; delete a file to reset that memory.
+`errands.json`, `qdrant/`, `telegram_offset`, `telegram_deferred.json`.
+Back this directory up; delete a file to reset that memory.
+
+## Telegram channel
+
+Setup: create a bot with **@BotFather**, get each member's chat_id from
+**@userinfobot**, fill the two `.env` keys, restart the brain. Each member
+must message the bot once (Telegram forbids bots from initiating chats).
+Role capabilities live in `langrobo_core/services/permissions.py`
+(owner = everything; family = chat/relay/remind — no camera, no driving,
+no orders; voice turns act as owner until speaker ID exists).
+
+Behavior: long-polls `getUpdates` (works behind NAT, no public IP); the
+update offset persists in `~/.langrobo/telegram_offset` so restarts neither
+replay nor drop messages — texts sent while the robot was off are answered at
+boot. Inbound is rate-limited to 10 msg/min per sender. `/status` shows the
+`telegram` block (`polling`, `last_poll_age_s`, `last_error`) and
+`queued_telegram_messages`. Privileged sends are auditable:
+`journalctl -u langrobo-brain -o cat | grep "AUDIT telegram"`.
 
 ## Deploy checklist (Pi5 + Jetson protocol change)
 

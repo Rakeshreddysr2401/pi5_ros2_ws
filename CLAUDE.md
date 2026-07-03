@@ -61,7 +61,9 @@ pip3 install --break-system-packages -r requirements.txt
 - `langrobo_core/tools/` — @tool functions; per-agent sets in `__init__.py`;
   robot I/O via `_bridge.get()`
 - `langrobo_core/services/` — config (validated .env), llm (slots + fallback),
-  memory (embedded Qdrant + fastembed), health (FastAPI :8090), logging, metrics
+  memory (embedded Qdrant + fastembed), telegram (channel: long-poll + sends),
+  permissions (role→capability policy — enforced in tools, never only prompts),
+  health (FastAPI :8090), logging, metrics
 - `langrobo_ros/` — agent_node (params, queues, worker loop, cache warmer),
   ros2_bridge (all topics/services/actions), launch, systemd units
 
@@ -74,7 +76,8 @@ build.py + handover Literal must stay in sync — the smoke tests catch drift).
   locations (ROS params)
 - `.env` (validated fail-fast at startup) — keys + LANGROBO_* service settings;
   full table in OPERATIONS.md; template in example.env
-- Robot state lives in `~/.langrobo/` (household.json, reminders.json, qdrant/)
+- Robot state lives in `~/.langrobo/` (household.json, reminders.json,
+  errands.json, qdrant/, telegram_offset, telegram_deferred.json)
 
 ## Working on the Jetson from here
 

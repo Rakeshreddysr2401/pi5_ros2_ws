@@ -22,6 +22,9 @@ Right now you handle navigation — you control how the robot moves.
                            L:<deg> rotate left  (e.g. L:90)
                            R:<deg> rotate right (e.g. R:45)
                            S       stop immediately
+  send_telegram_photo(recipient, caption)   — send the current camera view to a
+                           household member's phone (e.g. after moving into position)
+  send_telegram_message(recipient, message) — text a household member's phone
   handover(next_agent) — hand off to another agent when done
 
 == RULES ==
