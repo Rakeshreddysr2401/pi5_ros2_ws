@@ -1,9 +1,20 @@
 # Jetson Voice Upgrade — Siri/Alexa-grade listening
 
+> **STATUS: IMPLEMENTED 2026-07-03** on the Jetson, branch
+> `dev-1.0.4_voice_upgrade` of the `speech_vision` repo (~/robot). All five
+> changes below are live and verified (wake model 8/8 on synthesized voices,
+> Silero rejects white noise, music voice-loop round-trip works). Remaining
+> human work:
+> 1. **Say "hey jarvis"** for now — train the custom `hey_rakhi` model in the
+>    openWakeWord Colab (~1hr), drop it in `/model_store/wake/`, and change
+>    `wake_models: ["hey_rakhi"]` in voice_params.yaml.
+> 2. On-mic acoustic tests (stop over TTS from across the room, barge-in
+>    feel, wake range) — tune `wake_threshold` 0.3–0.7 from experience.
+> This document remains the design reference.
+
 Change spec for the `speech_vision` repo (`ai_ws/src/voice_pkg`), written against
 branch `dev-1.0.3_with_fable`. The Pi5 side is **already done and deployed**
-(music tools, `/audio/*` topic contract, barge-in turn abort) — this document is
-everything the Jetson needs to meet it.
+(music tools, `/audio/*` topic contract, barge-in turn abort).
 
 ## Why the current pipeline falls short (diagnosis of the actual code)
 
