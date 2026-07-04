@@ -42,12 +42,22 @@ def play_music(query: str) -> str:
     playing, so confirm it to the user in your reply."""
     bridge = _bridge.get()
     sent_at = time.time()
+    seq_before = bridge.get_music_state_seq()
     bridge.music_command({"action": "play", "query": query.strip(), "t": sent_at})
-    state = _await_state(
-        bridge,
-        lambda s: s.get("stamp", 0) >= sent_at and (s.get("playing") or s.get("error")),
-        _PLAY_CONFIRM_TIMEOUT_S,
-    )
+
+    def _confirms(s: dict) -> bool:
+        if not (s.get("playing") or s.get("error")):
+            return False
+        # music_node echoes the command's `t` back as cmd_t — an opaque token,
+        # so confirmation never compares the Jetson's clock against ours
+        # (the two drift ~1.5s) and a heartbeat of a previous song can't
+        # masquerade as this request starting.
+        if "cmd_t" in s:
+            return s["cmd_t"] == sent_at
+        # Older music_node without cmd_t: any state received after we sent.
+        return bridge.get_music_state_seq() > seq_before
+
+    state = _await_state(bridge, _confirms, _PLAY_CONFIRM_TIMEOUT_S)
     if state is None:
         return (f"Asked the speaker to play '{query}' but got no confirmation — "
                 "the music player may be offline. Tell the user honestly.")
@@ -91,7 +101,10 @@ def music_context() -> str:
     """One-line now-playing block for chat's prompt tail (dynamic zone —
     changes only when playback state changes, like household memory)."""
     bridge = _bridge.get()
-    state = bridge.get_music_state()
+    # music_node heartbeats at 1Hz while playing — a "playing" state with no
+    # heartbeat for 5s means the player died; don't leave a ghost NOW PLAYING
+    # in the prompt forever.
+    state = bridge.get_music_state(max_playing_age_s=5.0)
     if not state or not state.get("playing"):
         return ""
     title = state.get("title", "music")

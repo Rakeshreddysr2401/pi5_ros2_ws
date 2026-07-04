@@ -42,6 +42,7 @@ class ROS2Bridge:
         # approach loop in graph.tools.movement.
         self._target_lock = threading.Lock()
         self._latest_target_result: dict | None = None
+        self._target_result_at: float = 0.0   # time.monotonic() of last result
 
         # ── Latest camera frame (bytes, JPEG-encoded) ─────────────────────────
         self._latest_frame: bytes | None = None
@@ -80,6 +81,8 @@ class ROS2Bridge:
         # ── Music playback state (Jetson music_node) ──────────────────────────
         self._music_lock = threading.Lock()
         self._music_state: dict | None = None
+        self._music_state_at: float = 0.0   # time.monotonic() of last state msg
+        self._music_state_seq: int = 0      # counts received state messages
 
         # ── Fixed publishers (pre-created so tools never block on first call) ──
         self._speech_pub        = node.create_publisher(String, "/voice/robot_speech", 10)
@@ -112,6 +115,7 @@ class ROS2Bridge:
             return
         with self._target_lock:
             self._latest_target_result = data
+            self._target_result_at = time.monotonic()
 
     def _on_speaking(self, msg: Bool) -> None:
         with self._speech_lock:
@@ -150,9 +154,16 @@ class ROS2Bridge:
                 self._latest_target_result = None
         self._vision_target_pub.publish(String(data=target))
 
-    def get_target_result(self) -> dict | None:
-        """Return the latest parsed /vision/target_result dict, or None if none yet."""
+    def get_target_result(self, max_age_s: float | None = None) -> dict | None:
+        """Return the latest parsed /vision/target_result dict, or None if none
+        yet — or older than max_age_s (receive time on THIS machine, so the
+        Pi5↔Jetson clock drift doesn't matter). Staleness means the Jetson
+        detector/camera/link died: the servo loop must stop driving on it."""
         with self._target_lock:
+            if self._latest_target_result is None:
+                return None
+            if max_age_s is not None and time.monotonic() - self._target_result_at > max_age_s:
+                return None
             return self._latest_target_result
 
     # ── Music (Jetson music_node — see JETSON_VOICE_UPGRADE.md) ───────────
@@ -165,14 +176,32 @@ class ROS2Bridge:
             return
         with self._music_lock:
             self._music_state = data
+            self._music_state_at = time.monotonic()
+            self._music_state_seq += 1
 
     def music_command(self, cmd: dict) -> None:
         """Publish a music command: {"action": play|pause|resume|stop|volume, ...}."""
         self._music_pub.publish(String(data=json.dumps(cmd)))
 
-    def get_music_state(self) -> dict | None:
+    def get_music_state(self, max_playing_age_s: float | None = None) -> dict | None:
+        """Latest music state. With max_playing_age_s set, a PLAYING state older
+        than that is treated as gone: music_node heartbeats at 1Hz while playing,
+        so a stale "playing" means the player died mid-song — better to admit
+        silence than gate the mic / prompt on music that isn't there. (Idle
+        states have no heartbeat and never expire.)"""
         with self._music_lock:
-            return self._music_state
+            state = self._music_state
+            if (state and state.get("playing") and max_playing_age_s is not None
+                    and time.monotonic() - self._music_state_at > max_playing_age_s):
+                return None
+            return state
+
+    def get_music_state_seq(self) -> int:
+        """Count of music-state messages received — lets tools wait for a state
+        that arrived AFTER a command was sent without comparing the Jetson's
+        wall-clock stamp against ours (the two clocks drift ~1.5s)."""
+        with self._music_lock:
+            return self._music_state_seq
 
     # ── Active order ──────────────────────────────────────────────────────
 

@@ -314,7 +314,14 @@ class AgentNode(Node):
 
         The Jetson already halts its own TTS playback (and stops music locally
         for instant response); this is the brain-side sweep so nothing keeps
-        moving or playing if the Jetson-local path missed it."""
+        moving or playing if the Jetson-local path missed it.
+
+        Wake-word barge-in rides the same topic tagged "[wake:…]": it only
+        halts TTS on the Jetson — music keeps playing (AEC subtracts it) and
+        the user's new utterance does its own motion sweep on arrival — so it
+        must NOT trigger the stop-everything sweep here."""
+        if msg.data.startswith("[wake:"):
+            return
         self.get_logger().info(f'Stop keyword ("{msg.data}") — cancelling motion + music')
         self._bridge.cancel_navigation()
         self._bridge.request_motion_stop()
@@ -426,9 +433,13 @@ class AgentNode(Node):
             metrics.inc("system_turns_total")
         if telegram:
             metrics.inc("telegram_turns_total")
-        self._turn_interrupt.clear()
-        self._turn_channel = "telegram" if telegram else "voice"
-        self._turn_active = True
+        # Under _queue_lock: _on_user_input reads _turn_active/_turn_channel
+        # under the same lock to decide barge-in — unlocked writes here could
+        # let a new utterance miss the interrupt on a just-started turn.
+        with self._queue_lock:
+            self._turn_interrupt.clear()
+            self._turn_channel = "telegram" if telegram else "voice"
+            self._turn_active = True
         if not telegram:
             # /brain/thinking drives the robot's physical "thinking" cue —
             # meaningless (and misleading) for a phone conversation.
@@ -589,7 +600,8 @@ class AgentNode(Node):
             else:
                 self._bridge.publish_speech(apology)
         finally:
-            self._turn_active = False
+            with self._queue_lock:
+                self._turn_active = False
             self._last_turn_ts = time.time()
             metrics.set_gauge("last_turn_duration_seconds",
                               round(time.time() - turn_start, 3))
@@ -641,9 +653,15 @@ class AgentNode(Node):
             self.get_logger().warning(f"KV-cache warm failed (non-fatal): {e}")
 
     def _extract_response(self, result: dict) -> str | None:
-        """Return the last non-empty AI text from the graph output."""
-        from langchain_core.messages import AIMessage, ToolMessage
+        """Return the last non-empty AI text from THIS turn of the graph output.
+
+        Stops at the first HumanMessage: walking past it would pick up a
+        previous turn's reply and re-speak it whenever the current turn ended
+        without AI text (empty content, loop-guard edge cases)."""
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
         for msg in reversed(result.get("messages", [])):
+            if isinstance(msg, HumanMessage):
+                return None
             if isinstance(msg, ToolMessage):
                 continue
             if isinstance(msg, AIMessage):

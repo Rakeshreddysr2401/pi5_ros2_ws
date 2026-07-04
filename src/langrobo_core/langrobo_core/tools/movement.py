@@ -127,7 +127,12 @@ _APPROACH_BEARING_DEADBAND = 0.15  # |bearing_x| below this = "centred enough" t
 _APPROACH_TIMEOUT_S = 30.0       # hard cap on the whole approach
 _APPROACH_TURN_GAIN = 1.6        # bearing_x → angular.z scale (clamped to _ANGULAR_VEL_RS)
 _APPROACH_SCAN_GIVEUP_DEG = 400.0  # rotate up to ~full circle looking for the target
-_APPROACH_FIRST_RESULT_WAIT_S = 4.0  # grace period for the first detection to arrive
+# target_node publishes at 5 Hz; a result older than this means the detector,
+# camera, or Jetson link is gone — never steer (least of all drive forward) on it.
+_APPROACH_RESULT_MAX_AGE_S = 1.5
+# How long to hold still with NO fresh detection before giving up (covers both
+# detector startup and a feed that died mid-approach).
+_APPROACH_NO_RESULT_GIVEUP_S = 6.0
 
 
 @tool
@@ -152,34 +157,45 @@ def navigate_to_visible_object(target: str) -> str:
     bridge.clear_motion_stop()                  # deliberate move — start with a clean slate
     bridge.set_vision_target(target)            # tell Jetson target_node to start hunting
     try:
-        start = time.time()
+        start = prev = time.time()
         scanned_deg = 0.0
         last_pub = 0.0
-        tick = 1.0 / 20.0                       # 20 Hz control loop (feeds the watchdog)
+        no_result_since: float | None = None
 
         while True:
             now = time.time()
+            # Real elapsed time since the previous iteration — the loop wakes
+            # every ~5ms, so integrating a fixed per-iteration tick would count
+            # rotation ~10x too fast and trip the scan give-up after ~40°.
+            dt, prev = now - prev, now
             elapsed = now - start
             if bridge.motion_interrupted():
                 return f"Stopped approaching the {target}."
             if elapsed > _APPROACH_TIMEOUT_S:
                 return f"Approach timed out after {int(_APPROACH_TIMEOUT_S)}s before reaching the {target}."
 
-            result = bridge.get_target_result()
+            # Fresh detections only: a stale cached result (detector/camera/link
+            # down) must not keep steering the wheels — especially not forward.
+            result = bridge.get_target_result(max_age_s=_APPROACH_RESULT_MAX_AGE_S)
             twist = Twist()
 
             if result is None:
-                # No detection yet — wait briefly, then treat as "not found" and scan.
-                if elapsed > _APPROACH_FIRST_RESULT_WAIT_S:
-                    twist.angular.z = _ANGULAR_VEL_RS
-                    scanned_deg += math.degrees(_ANGULAR_VEL_RS) * tick
+                # No fresh detection — hold still (zero twist) rather than move
+                # blind; give up honestly if the feed stays silent.
+                if no_result_since is None:
+                    no_result_since = now
+                if now - no_result_since > _APPROACH_NO_RESULT_GIVEUP_S:
+                    return (f"I stopped — I'm not getting anything from my camera, "
+                            f"so I can't safely approach the {target}.")
             elif not result.get("found"):
                 # Target not in frame — rotate in place to search.
+                no_result_since = None
                 twist.angular.z = _ANGULAR_VEL_RS
-                scanned_deg += math.degrees(_ANGULAR_VEL_RS) * tick
+                scanned_deg += math.degrees(_STEADY_STATE_ANGULAR_VEL) * dt
                 if scanned_deg > _APPROACH_SCAN_GIVEUP_DEG:
                     return f"I scanned all the way around but couldn't find the {target}."
             else:
+                no_result_since = None
                 scanned_deg = 0.0               # found it — reset the search sweep
                 rel_size = float(result.get("rel_size", 0.0))
                 bearing_x = float(result.get("bearing_x", 0.0))

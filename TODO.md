@@ -1,5 +1,43 @@
 # TODO — pending on-device work
 
+## Deploy the cross-repo bug-fix batch (2026-07-04 — code done, robots not updated)
+
+Twelve production bugs fixed across BOTH repos (details in the commit messages).
+The music contract gained a `cmd_t` field, so deploy the Pi5 and the Jetson
+together. When at the devices:
+
+1. **Pi5** — pull branch `dev-1.0.7_with_fable_restructure_speech_imp`, then:
+   `colcon build --symlink-install && sudo systemctl restart langrobo-brain`
+2. **Jetson** — `ssh rakhi24@192.168.2.20`, in `~/robot` pull branch
+   `dev-1.0.4_voice_upgrade_improve`, then rebuild + restart the voice nodes
+   inside the `ai_stack` container (procedure in that repo's CLAUDE.md /
+   VOICE_PIPELINE.md — colcon build with the venv python, restart the launch).
+3. **Verify the fixed flows on-device** (each maps to a fix):
+   - Wake barge-in during music: "hey jarvis" while a song plays → TTS stops
+     listening-side, **music keeps playing** (previously the Pi5 sweep killed it).
+   - Wake barge-in while the robot is saying a sentence containing "stop" →
+     barge-in must still work (self-echo guard bypass).
+   - Say "stop" mid-reply, then `sudo systemctl restart langrobo-brain` on the
+     Pi5, then a fresh turn → the robot's next utterance must NOT be swallowed
+     ("I'm ready." should be heard after restart).
+   - A turn that ends with no reply must stay silent — the robot must never
+     repeat its previous answer.
+   - "Play Shape of You" while another song is already playing → the reply
+     must confirm the NEW title (cmd_t match, not the old song's heartbeat).
+   - Kill music_node mid-song (`docker exec … pkill -f music_node`) → within
+     ~5s "what's playing?" says nothing is playing, and the mic still wakes
+     normally (no stuck playback gating).
+   - "Go near the cup", then cover the camera mid-approach → wheels stop
+     within ~1.5s and the robot says it can't see (no blind driving).
+   - "Find the bottle" with no bottle in view → the robot scans a full circle
+     (~2.4s of rotation) before giving up, not ~40°.
+   - One normal voice turn + `python3 scripts/latency_replay.py "utterance"`
+     → latency waterfall unchanged.
+4. Long-uptime checks (passive): mic still live after days (pw-cat stderr
+   drain), no ghost NOW PLAYING in `curl -s localhost:8090/status | jq`.
+
+Delete this section when done.
+
 ## Deploy Telegram channel to the Pi5 (code is done, robot not yet updated)
 
 Everything is built, tested, and verified from the laptop (message really

@@ -235,11 +235,13 @@ Publish `/audio/music_state` (std_msgs/String, JSON) — on every change AND at
 1Hz while playing:
 ```json
 {"playing": true, "paused": false, "title": "Ed Sheeran - Shape of You",
- "volume": 70, "error": null, "stamp": 1783071004.2}
+ "volume": 70, "error": null, "stamp": 1783071004.2, "cmd_t": 1783071002.7}
 ```
-On a failed play: `{"playing": false, ..., "error": "no results for ...", "stamp": ...}`.
-`stamp` must be wall-clock (`time.time()`) — the Pi5's `play_music` tool waits
-for a state with `stamp >= command time` to confirm what started (10s timeout).
+On a failed play: `{"playing": false, ..., "error": "no results for ...", "cmd_t": ...}`.
+`cmd_t` echoes the play command's `t` verbatim — the Pi5's `play_music` tool
+confirms on `cmd_t == the t it sent` (an opaque token, 10s timeout). Never
+compare `stamp` against the Pi5 clock: the two machines drift ~1.5s, and a 1Hz
+heartbeat of a previous song must not confirm a new request.
 
 **Behaviour:**
 - `play`: resolve query via yt-dlp (`ytsearch1:<query>`, extract audio stream

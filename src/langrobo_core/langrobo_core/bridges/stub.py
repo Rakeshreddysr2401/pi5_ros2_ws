@@ -33,7 +33,7 @@ class StubBridge:
     def on_target_result(self, msg) -> None:
         pass
 
-    def get_frame(self) -> bytes | None:
+    def get_frame(self, max_age_s: float | None = None) -> bytes | None:
         """No live camera in Studio. For testing local_agent's look() + vision,
         set STUDIO_TEST_IMAGE to a JPEG/PNG path and that frame is served instead.
         """
@@ -47,15 +47,19 @@ class StubBridge:
             logger.warning("STUDIO_TEST_IMAGE unreadable (%s): %s", path, e)
             return None
 
+    def frame_age(self) -> float | None:
+        # The STUDIO_TEST_IMAGE frame (if any) is always "fresh".
+        return 0.0 if self.get_frame() is not None else None
+
     def get_known_locations(self) -> dict:
         return self._known_locations
 
     def set_vision_target(self, target: str) -> None:
         logger.info("[STUB] set_vision_target: %s", target)
 
-    def get_target_result(self) -> dict | None:
-        # No Jetson target_node in Studio — report "not found" so the approach
-        # loop scans briefly and exits instead of hanging.
+    def get_target_result(self, max_age_s: float | None = None) -> dict | None:
+        # No Jetson target_node in Studio — report "no detection" so the
+        # approach loop holds still and exits instead of hanging.
         logger.info("[STUB] get_target_result -> None")
         return None
 
@@ -64,12 +68,14 @@ class StubBridge:
     def music_command(self, cmd: dict) -> None:
         logger.info("[STUB] music_command: %s", cmd)
         # Simulate the Jetson music_node confirming playback so play_music's
-        # confirmation wait doesn't block Studio turns for 10s.
+        # confirmation wait doesn't block Studio turns for 10s. cmd_t echoes
+        # the command's `t` — the token play_music matches on.
         import time
         if cmd.get("action") == "play":
             self._music_state = {"playing": True, "paused": False,
                                  "title": f"[stub] {cmd.get('query', '')}",
-                                 "volume": 70, "stamp": time.time()}
+                                 "volume": 70, "stamp": time.time(),
+                                 "cmd_t": cmd.get("t")}
         elif cmd.get("action") == "stop":
             self._music_state = {"playing": False, "paused": False,
                                  "title": "", "volume": 70, "stamp": time.time()}
@@ -77,9 +83,13 @@ class StubBridge:
             if getattr(self, "_music_state", None):
                 self._music_state["paused"] = cmd["action"] == "pause"
                 self._music_state["stamp"] = time.time()
+        self._music_state_seq = getattr(self, "_music_state_seq", 0) + 1
 
-    def get_music_state(self) -> dict | None:
+    def get_music_state(self, max_playing_age_s: float | None = None) -> dict | None:
         return getattr(self, "_music_state", None)
+
+    def get_music_state_seq(self) -> int:
+        return getattr(self, "_music_state_seq", 0)
 
     # ── Active order ──────────────────────────────────────────────────────
 
