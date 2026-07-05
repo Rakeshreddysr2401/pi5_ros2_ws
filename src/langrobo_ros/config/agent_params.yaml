@@ -51,11 +51,18 @@ agent_node:
     #                         hot across every specialist excursion.
     #   local_agent_slot (1): local_agent's image prefix, never evicted by
     #                         text agents (and vice versa).
-    #   specialist_slot (2):  supervisor + navigate/status/swiggy/tracker.
+    #   specialist_slot (2):  navigate/status/swiggy/tracker/knowledge/
+    #                         briefing (+ the consolidation batch job).
+    #   supervisor_slot (3):  the supervisor alone. It runs on EVERY [SYSTEM]
+    #                         turn (reminders, watch alerts, briefings); on a
+    #                         shared slot it evicted whichever specialist was
+    #                         cached, and vice versa (~18-50s re-prefills,
+    #                         measured 2026-07-06). Own slot = both stay warm.
     # -1 = no pinning (cloud providers ignore it either way).
     llm_slot: 0
     local_agent_slot: 1
     specialist_slot: 2
+    supervisor_slot: 3
 
     # Override model for local_agent only ("" = inherit the global model).
     # Set to your multimodal GGUF if the global model is text-only.

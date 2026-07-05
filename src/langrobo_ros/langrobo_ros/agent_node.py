@@ -84,13 +84,18 @@ class AgentNode(Node):
         # local_agent_model: override model name for local_agent ("" = inherit global).
         self.declare_parameter("local_agent_slot",  1)
         self.declare_parameter("local_agent_model", "")
-        # Slot for the supervisor + specialist agents (navigate/status/swiggy/
-        # tracker). Their system prompts differ from chat's, so running them on
-        # llm_slot would evict chat's hot prefix — a single navigate turn would
-        # make the NEXT chat turn re-prefill ~2k tokens (~20s). A third slot
-        # keeps chat's cache untouched across specialist excursions.
-        # -1 = share llm_slot (old behaviour).
+        # Slot for the specialist agents (navigate/status/swiggy/tracker/
+        # knowledge/briefing). Their system prompts differ from chat's, so
+        # running them on llm_slot would evict chat's hot prefix — a single
+        # navigate turn would make the NEXT chat turn re-prefill ~2k tokens
+        # (~20s). A third slot keeps chat's cache untouched across specialist
+        # excursions. -1 = share llm_slot (old behaviour).
         self.declare_parameter("specialist_slot", 2)
+        # Slot for the supervisor ALONE. It runs on every [SYSTEM] turn
+        # (reminders, watch alerts, briefings); sharing the specialist slot
+        # meant each routed a full-history re-prefill onto the other
+        # (~18-50s, measured 2026-07-06). -1 = share specialist_slot.
+        self.declare_parameter("supervisor_slot", 3)
 
         provider      = self.get_parameter("provider").value
         model         = self.get_parameter("model").value
@@ -105,6 +110,7 @@ class AgentNode(Node):
         local_agent_slot     = self.get_parameter("local_agent_slot").value
         local_agent_model    = self.get_parameter("local_agent_model").value
         specialist_slot      = self.get_parameter("specialist_slot").value
+        supervisor_slot      = self.get_parameter("supervisor_slot").value
         strict_tool_calls    = self.get_parameter("strict_tool_calls").value
         self._stream_speech  = self.get_parameter("stream_speech").value
 
@@ -125,12 +131,16 @@ class AgentNode(Node):
         # The supervisor never emits user-facing text (grammar-forced handover),
         # so it gains nothing from streaming and skips it.
         _spec = {"slot": specialist_slot if specialist_slot >= 0 else None}
+        # Supervisor gets its OWN slot (falls back to the specialist slot when
+        # unset): it fires on every [SYSTEM] turn and must not evict — or be
+        # evicted by — whichever specialist is cached on slot 2.
+        _sup = {"slot": supervisor_slot if supervisor_slot >= 0 else _spec["slot"]}
         agent_overrides = {
             "local_agent": {
                 "slot":  local_agent_slot,
                 "model": local_agent_model or None,
             },
-            "supervisor": {"streaming": False, **_spec},
+            "supervisor": {"streaming": False, **_sup},
             "navigate":   dict(_spec),
             "status":     dict(_spec),
             "swiggy":     dict(_spec),
