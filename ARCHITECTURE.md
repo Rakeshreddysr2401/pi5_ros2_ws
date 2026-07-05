@@ -359,6 +359,12 @@ every extra LLM hop or cache-thrashing prompt costs real seconds.
   trimming + cache warming). Our confirms ("phone or aloud?") are plain
   conversational turns — the reply ends the turn, the user's answer is the
   next turn. Same UX, zero infra.
+- **`TimeoutPolicy` per-node timeouts (langgraph 1.2)**: evaluated during the
+  2026-07-06 upgrade to langgraph 1.2.7 and NOT adopted — it relies on
+  asyncio cancellation, and every node here is synchronous (blocking LLM
+  invoke, `time.sleep` servo loops), so it would never fire. Turn safety
+  stays with the existing layers: httpx timeouts inside safe_invoke, tool-
+  internal deadlines, and the loop guards. Revisit only if nodes go async.
 - **Custom stream modes (`custom`, `updates`)**: the pipeline already streams
   at the right grain — sentence chunks to TTS via callbacks
   (`speech_stream.py`) while `stream_mode="values"` drives turn logic.

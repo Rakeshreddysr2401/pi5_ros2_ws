@@ -6,8 +6,8 @@
 -e ./src/langrobo_core
 
 # LangGraph Studio dev server (langgraph dev) — dev tool, not a core dependency.
-langgraph-sdk==0.1.74
-langgraph-cli[inmem]==0.1.89
+langgraph-sdk>=0.4
+langgraph-cli[inmem]>=0.4
 
 # Camera frame handling on the ROS side.
 opencv-python-headless

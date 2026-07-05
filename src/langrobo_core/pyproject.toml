@@ -11,14 +11,14 @@ license = { text = "Apache-2.0" }
 dependencies = [
     # Pinned to the working stack (see repo requirements.txt for the rationale
     # behind the langchain-mcp-adapters pin).
-    "langgraph==0.3.34",
-    "langchain-core==0.3.86",
+    "langgraph>=1.2,<2",
+    "langchain-core>=1,<2",
     "langchain-openai",
     "langchain-anthropic",
     "langchain-google-genai",
     "langchain-ollama",
     "langchain-community",
-    "langchain-mcp-adapters>=0.1.4,<0.2",
+    "langchain-mcp-adapters>=0.3,<0.4",
     "python-dotenv",
     "typing-extensions",
     # Services layer
