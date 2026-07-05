@@ -157,8 +157,14 @@ def fake_channel(monkeypatch):
     return fake
 
 
+def _explicit(text="text Mom saying hi"):
+    """State whose user turn names the phone channel — passes the D10 gate."""
+    from langchain_core.messages import HumanMessage
+    return {"messages": [HumanMessage(content=text)]}
+
+
 def test_voice_turn_acts_as_owner(fake_channel):
-    out = send_telegram_message.func(recipient="Mom", message="hi", state={})
+    out = send_telegram_message.func(recipient="Mom", message="hi", state=_explicit())
     assert "delivered to Mom" in out
     out = send_telegram_photo.func(recipient="Rakesh", caption="", state={})
     assert "Photo sent to Rakesh" in out
@@ -166,7 +172,7 @@ def test_voice_turn_acts_as_owner(fake_channel):
 
 
 def test_family_sender_can_relay_but_not_photo(fake_channel):
-    state = {"channel": "telegram", "sender_name": "Mom", "sender_role": "family"}
+    state = {"channel": "telegram", "sender_name": "Mom", "sender_role": "family", **_explicit("message Rakesh saying hi")}
     out = send_telegram_message.func(recipient="Rakesh", message="hi", state=state)
     assert "delivered to Rakesh" in out
     out = send_telegram_photo.func(recipient="Mom", caption="", state=state)
@@ -350,7 +356,7 @@ def test_proactive_send_defers_during_quiet_hours(monkeypatch, fake_channel):
     assert "quiet hours" in out and deferred == [222]
     assert fake_channel.sent == []                   # nothing sent now
     # A direct (voice/telegram channel) request still goes through.
-    out = send_telegram_message.func(recipient="Mom", message="hi", state={})
+    out = send_telegram_message.func(recipient="Mom", message="hi", state=_explicit())
     assert fake_channel.sent == [("message", 222)]
 
 

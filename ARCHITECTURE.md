@@ -294,11 +294,16 @@ The one sanctioned Telegram→speaker path is `announce_at_home`
 (tools/announce.py, CAP_ANNOUNCE): it enqueues a `[SYSTEM]` turn — the
 standard producer pattern — so the robot says the message aloud via the
 normal proactive-speech path and it lands in shared history. Policy: a bare
-"tell Mom X" from Telegram asks the sender back (phone or aloud?); quiet
+"tell Mom X" (either channel) asks the sender back (phone or aloud?); quiet
 hours refuse with alternatives unless the sender explicitly insists
-(`override_quiet_hours`). Tools reach the system queue via
-`bridge.enqueue_system_turn()` (agent_node registers `_enqueue_system` at
-startup, mirroring the nav-done callback).
+(`override_quiet_hours`). The ask-back is ENFORCED in code, not prompts
+(`tools/_relay_confirm.py`): the send tools refuse a bare relay until the
+user's own words name the channel or a new user turn answers the pending
+ask — confirmation cannot be minted inside the requesting turn. Bypasses:
+`[SYSTEM]` scheduled relays, errand forwards, `report_back=True` (a
+collected answer needs the phone by construction). Tools reach the system
+queue via `bridge.enqueue_system_turn()` (agent_node registers
+`_enqueue_system` at startup, mirroring the nav-done callback).
 
 Trust model (`services/permissions.py`): Telegram gives verified identity
 (chat_id → name + role); role→capability checks are enforced **inside the

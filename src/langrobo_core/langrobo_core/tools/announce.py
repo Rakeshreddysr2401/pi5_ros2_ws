@@ -57,6 +57,16 @@ def announce_at_home(message: str, state: Annotated[dict, InjectedState],
                 f"announcements in the home. Politely refuse and offer to ask "
                 f"the owner instead.")
 
+    # D10 enforcement (same gate as send_telegram_message): a bare "tell X …"
+    # must not silently pick the speaker either.
+    from . import _relay_confirm
+    refusal = _relay_confirm.check(
+        state, "announce",
+        ask_hint="send it to their phone on Telegram, or say it out loud at home?")
+    if refusal:
+        logger.info("AUDIT announce sender=%s outcome=needs_channel_confirm", sender)
+        return refusal
+
     svc = telegram_service.get()
     if svc is not None and svc.quiet_now() and not override_quiet_hours:
         logger.info("AUDIT announce sender=%s outcome=quiet_hours", sender)

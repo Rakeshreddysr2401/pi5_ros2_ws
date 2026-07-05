@@ -68,10 +68,22 @@ def send_telegram_message(recipient: str, message: str,
     then come back to you marked as the answer to this errand, even hours
     later, so you can pass it on."""
     from .errands import get_store as get_errand_store
+    from . import _relay_confirm
     sender, _ = _sender(state)
     svc, member, refusal = _gate(state, permissions.CAP_RELAY, recipient)
     if refusal:
         return refusal
+    # D10 enforcement: a bare "tell X …" must not silently pick the phone —
+    # the gate refuses until the user names the channel or answers the ask.
+    # report_back relays are exempt: collecting the recipient's ANSWER needs
+    # the phone by construction, so there is no channel choice to make.
+    if not report_back:
+        refusal = _relay_confirm.check(
+            state, "telegram",
+            ask_hint=f"send it to {member.name} on Telegram, or say it out loud?")
+        if refusal:
+            _audit(sender, permissions.CAP_RELAY, member.name, "needs_channel_confirm")
+            return refusal
     if state.get("channel") == "system" and svc.quiet_now():
         # Proactive pings ([SYSTEM] turns: reminders, deliveries) respect quiet
         # hours; a person's direct request always goes through.

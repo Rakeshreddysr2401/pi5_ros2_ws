@@ -68,7 +68,9 @@ Coexistence decisions (grill session 2026-07-06, part 2):
   ready"). Bare "tell Mom X" → the robot asks the sender back: her phone or
   aloud? Quiet hours refuse with alternatives; explicit insistence overrides.
   Owner+family only. Walking to the person first remains phase 2 — it
-  announces from where it stands.
+  announces from where it stands. **The ask-back is enforced in the tools**
+  (`tools/_relay_confirm.py`), not just prompts — the 12B occasionally
+  skipped the question, so an unconfirmed relay cannot send at all.
 
 ## 5. Architecture
 

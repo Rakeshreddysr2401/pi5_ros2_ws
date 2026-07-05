@@ -21,6 +21,11 @@ def stub_bridge(monkeypatch):
 
 def _call(state: dict, message: str = "Rakesh says he'll be late",
           override: bool = False) -> str:
+    if "messages" not in state:
+        # A user turn that names the voice channel — passes the D10 gate,
+        # which has its own dedicated tests (test_relay_confirm.py).
+        from langchain_core.messages import HumanMessage
+        state["messages"] = [HumanMessage(content="announce that I'll be late")]
     return announce_at_home.func(message=message, state=state,
                                  override_quiet_hours=override)
 
