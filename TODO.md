@@ -6,8 +6,12 @@ Built and unit-tested on the Pi5 (77 tests green); needs a brain rebuild and
 the Jetson back online for full verification. **The Jetson was off/off-network
 on 2026-07-06** — the whole voice/vision side is down until it's powered.
 
-1. **Pi5** — on branch `dev-1.0.9_fable`: built 2026-07-06; still needs
-   `sudo systemctl restart langrobo-brain langrobo-microros` (password).
+1. **Pi5** — ✅ DONE 2026-07-06 01:20: rebuilt + restarted on
+   `dev-1.0.9_fable`. Verified live: full voice turn end-to-end (injection →
+   chat → get_current_time → streamed TTS), watch mode armed by voice, a REAL
+   person-detection alert (photo delivered to Rakesh's Telegram + spoken
+   announcement), disarm by voice. Camera frames flow after restart
+   (loopback discovery fix holds).
 2. **Jetson** — ✅ DONE 2026-07-06: ai_stack up (compose exit-127 was the
    sudo-compose gotcha), voice_pkg/vision_pkg/bringup_pkg rebuilt, stack
    launched, camera frames verified flowing to the Pi5. WiFi-only networking
@@ -18,12 +22,11 @@ on 2026-07-06** — the whole voice/vision side is down until it's powered.
    chotu" only works via the transcript fallback path. A custom openWakeWord
    model ("hey chotu" / "hey rakhi") must be trained offline for it to be a
    true wake word (stt_node.py wake_models param is the slot).
-4. **Verify watch mode**:
-   - "Rakhi, watch the house" → confirms armed;
-     `curl -s localhost:8090/status | jq .runtime.watch` → `"armed": true`
-   - walk into view → phone gets a photo within ~5s, robot announces aloud;
-     stand there → NO second alert within the 60s cooldown
-   - "stop watching" → disarmed; restart the brain while armed → still armed
+4. **Verify watch mode** — ✅ core loop verified live 2026-07-06 (arm by
+   voice → real person detection → photo delivered to Telegram → spoken
+   announcement → disarm by voice). Still worth spot-checking by hand:
+   - stand in view past one alert → NO second alert within the 60s cooldown
+   - restart the brain while armed → still armed
    - from Telegram: "watch the house" works; from a guest account: refused
 5. **Verify consolidation** (or wait a night):
    - temporarily set `LANGROBO_CONSOLIDATION_HOUR` to the current hour,
