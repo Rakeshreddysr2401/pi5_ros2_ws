@@ -688,11 +688,15 @@ class AgentNode(Node):
                                          agent=self._sticky_agent or "chat",
                                          person=telegram.name if telegram else None)
 
-            if history_reset:
-                # The trim shifted the prompt prefix — every slot serving this
-                # history is now cold. Re-prefill in the background while the
-                # robot is idle, so the NEXT turn doesn't pay ~20s+ up front.
-                self._start_cache_warm()
+            # Warm the next turn's prompt after EVERY turn, not just trims.
+            # A specialist excursion appends messages chat's slot has never
+            # seen; without this the NEXT user turn paid that delta prefill
+            # up front (~40s measured after a knowledge turn, 2026-07-06).
+            # When the prefix is already cached the warm is a near-free
+            # no-op, and it skips itself if input is pending.
+            # (history_reset — a trim — is the expensive case it originally
+            # covered; the same call handles both.)
+            self._start_cache_warm()
 
         except Exception as e:
             self.get_logger().error(f"Graph error: {e}")
