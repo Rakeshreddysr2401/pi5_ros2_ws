@@ -1,6 +1,42 @@
 # TODO — pending on-device work
 
+## Deploy the 2026-07-06 feature batch (watch mode + consolidation + prompts.py)
+
+Built and unit-tested on the Pi5 (77 tests green); needs a brain rebuild and
+the Jetson back online for full verification. **The Jetson was off/off-network
+on 2026-07-06** — the whole voice/vision side is down until it's powered.
+
+1. **Pi5** — on branch `dev-1.0.9_fable`:
+   `colcon build --symlink-install && sudo systemctl restart langrobo-brain`
+2. **Jetson** — power it on; check it registers with the discovery server
+   (`ROS_SUPER_CLIENT=1 ros2 node list` from the Pi5, see NETWORKING.md);
+   then pull + rebuild per the 2026-07-04 batch below (still undeployed there).
+3. **Jetson wake alias** — add "hey chotu" to the wake gate's `wake_aliases`
+   (speech_vision repo, wake_gate.py / its params) while in there.
+4. **Verify watch mode**:
+   - "Rakhi, watch the house" → confirms armed;
+     `curl -s localhost:8090/status | jq .runtime.watch` → `"armed": true`
+   - walk into view → phone gets a photo within ~5s, robot announces aloud;
+     stand there → NO second alert within the 60s cooldown
+   - "stop watching" → disarmed; restart the brain while armed → still armed
+   - from Telegram: "watch the house" works; from a guest account: refused
+5. **Verify consolidation** (or wait a night):
+   - temporarily set `LANGROBO_CONSOLIDATION_HOUR` to the current hour,
+     restart, stay idle ≤60s → journalctl shows "Consolidation complete";
+     `jq .runtime.consolidation` shows the run; "what do you know about me?"
+     → recall surfaces a learned fact. Revert the hour.
+6. **Verify follow-me deferral**: "follow me" → robot says person following
+   is coming soon (no wheel motion).
+7. One normal voice turn + `python3 scripts/latency_replay.py "utterance"`
+   → waterfall unchanged.
+
+Delete this section when done.
+
 ## Deploy the cross-repo bug-fix batch (2026-07-04 — code done, robots not updated)
+
+**Update 2026-07-06: the Pi5 half is live** (brain restarted after commit
+8d4eff9, services healthy). The Jetson half + all voice verification below
+are still pending — the Jetson was offline.
 
 Twelve production bugs fixed across BOTH repos (details in the commit messages).
 The music contract gained a `cmd_t` field, so deploy the Pi5 and the Jetson

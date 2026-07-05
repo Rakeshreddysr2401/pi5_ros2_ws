@@ -1,10 +1,15 @@
-"""Supervisor — pure router. Always calls handover(), never responds to the user."""
+"""Supervisor — pure router. Always calls handover(), never responds to the user.
+
+Prompt lives in langrobo_core/prompts.py (SUPERVISOR_PROMPT_TEMPLATE); the
+agent list is filled in from graph/registry.py at call time.
+"""
 
 import logging
 
 from langchain_core.messages import AIMessage, SystemMessage
 
 from ..services.llm import get_llm, strict_tools_enabled
+from ..prompts import SUPERVISOR_PROMPT_TEMPLATE
 from ..graph.state import AgentState
 from ..tools.handover import handover, HANDOVER_NAMES
 from ..utils.message_utils import prepare_messages_for_agent, safe_invoke
@@ -12,24 +17,9 @@ from ..graph.registry import build_supervisor_agent_list
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_TEMPLATE = """\
-You are a routing supervisor for a home robot. Your ONLY job is to decide which \
-agent should handle the user's request and call handover() immediately. \
-You NEVER respond to the user with text.
-
-Available agents:
-{agent_list}
-
-Rules:
-1. Always call handover() — never write a text response.
-2. Pass a short reason (e.g. "user wants to order food", "user asking about delivery").
-3. When unsure between chat and another agent, prefer the more specific agent.
-4. When in doubt or the request is ambiguous, route to "chat".
-"""
-
 
 def _get_prompt() -> str:
-    return _PROMPT_TEMPLATE.format(agent_list=build_supervisor_agent_list())
+    return SUPERVISOR_PROMPT_TEMPLATE.format(agent_list=build_supervisor_agent_list())
 
 
 def supervisor_node(state: AgentState) -> dict:

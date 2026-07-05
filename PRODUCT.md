@@ -108,11 +108,18 @@ real transcripts, chrony-peer Pi5↔Jetson clocks.
 3b. **Reach me anywhere — Telegram channel**: ✅ shipped (2026-07-04).
    Bidirectional text+photo chat with the same brain, capability roles
    (owner/family/guest), relay + errand ledger ("tell Mom X and let me know
-   what she says"), quiet hours, person-tagged memory. Deliberately deferred:
-   memory consolidation (local sleep-time distillation of episodic turns into
-   a facts collection — v1.1); vision-triggered alerts ("stranger at the door
-   → photo to your phone" — v1.2, needs a Jetson event producer + presence
-   model, the flagship proactive feature); daily digest (rides on
+   what she says"), quiet hours, person-tagged memory.
+3c. **Memory consolidation (v1.1)**: ✅ built (2026-07-06, deploy pending).
+   Nightly local distillation of episodic turns into a deduped `facts`
+   collection, merged into recall — the self-learning phase 1 (PRD §6).
+3d. **Watch mode — vision-triggered alerts (v1.2)**: ✅ built (2026-07-06,
+   deploy pending). Pulled forward without waiting for face-rec/presence by
+   making it explicit-arm ("watch the house"): person seen → photo to the
+   owner's phone + spoken announcement, cooldown, restart-safe, zero new
+   Jetson code (rides the existing /vision/target contract). Face-rec (P4)
+   upgrades it to stranger-only.
+   Deliberately deferred:
+   daily digest (rides on
    consolidation); WhatsApp adapter (channel layer is abstracted, Meta
    Business API costs not yet justified); DeepAgents-style background lane
    for long-horizon tasks (rejected for the realtime loop — latency);

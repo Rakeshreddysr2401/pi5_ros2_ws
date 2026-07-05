@@ -141,10 +141,12 @@ def navigate_to_visible_object(target: str) -> str:
 
     Visual servoing via the Jetson YOLOv8n target finder: the robot turns toward
     the named object and drives forward until it is close. Use for:
-    "go near the cup", "approach the bottle", "go to that chair", "come to me".
+    "go near the cup", "approach the bottle", "go to that chair".
 
-    `target` must be a common object class (cup, bottle, chair, person, laptop,
-    tv, book, …). For named rooms use navigate_to_pose() instead.
+    `target` must be a common object class (cup, bottle, chair, laptop, tv,
+    book, …). Do NOT use it for people — person following/approach is not
+    available until the depth camera lands (say so honestly). For named rooms
+    use navigate_to_pose() instead.
 
     This blocks while approaching (up to ~30 s) and returns when it arrives, loses
     the object, or times out. No obstacle avoidance — it drives straight at the

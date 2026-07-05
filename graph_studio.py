@@ -27,6 +27,7 @@ from langrobo_core.services import config as config_service
 from langrobo_core.services import llm as llm_module
 from langrobo_core.services import memory as memory_service
 from langrobo_core.services import telegram as telegram_service
+from langrobo_core.services import watch as watch_service
 from langrobo_core.tools import _bridge as bridge_module
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,9 @@ llm_module.configure(_provider, _model, _base_url, _api_key, _max_tokens)
 llm_module.configure_fallback(_settings.fallback)
 memory_service.init(_settings.memory)
 telegram_service.init(_settings.telegram)
+watch_service.init(_settings.watch)
+# Consolidation is not started here — it's the robot process's nightly job
+# (agent_node timer); Studio can exercise it via services.consolidation directly.
 logger.info("Studio LLM: provider=%s model=%s", _provider, _model)
 
 # ── Bridge: real ROS2 or stub ─────────────────────────────────────────────────

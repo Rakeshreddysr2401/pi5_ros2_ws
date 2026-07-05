@@ -24,11 +24,13 @@ from std_msgs.msg import Bool, String
 from dotenv import load_dotenv
 
 from langrobo_core.services import config as config_service
+from langrobo_core.services import consolidation as consolidation_service
 from langrobo_core.services import health as health_service
 from langrobo_core.services import llm as llm_module
 from langrobo_core.services import memory as memory_service
 from langrobo_core.services import metrics
 from langrobo_core.services import telegram as telegram_service
+from langrobo_core.services import watch as watch_service
 from langrobo_core.services.logging import new_trace, setup_logging
 from langrobo_core.tools import _bridge as bridge_module
 from langrobo_core.tools.errands import get_store as get_errand_store
@@ -132,6 +134,10 @@ class AgentNode(Node):
             "status":     dict(_spec),
             "swiggy":     dict(_spec),
             "tracker":    dict(_spec),
+            # Nightly memory consolidation is a background batch job — it must
+            # never stream and never touch chat's slot (a 3am run would evict
+            # the hot prefix and make the first morning turn pay ~20s prefill).
+            "consolidation": {"streaming": False, **_spec},
         }
 
         # ── Known map locations for Nav2 goal publishing (phase-2 nav slot) ─
@@ -156,6 +162,8 @@ class AgentNode(Node):
         llm_module.configure_fallback(settings.fallback)
         self._memory = memory_service.init(settings.memory)
         self._telegram = telegram_service.init(settings.telegram)
+        self._watch = watch_service.init(settings.watch)
+        self._consolidator = consolidation_service.init(settings.consolidation, self._memory)
 
         # Register navigation completion callback
         self._bridge.register_nav_done_callback(self._on_nav_done)
@@ -238,6 +246,15 @@ class AgentNode(Node):
         # ── Reminder polling timer (every 5 s → proactive speech) ─────────
         self.create_timer(5.0, self._poll_reminders)
 
+        # ── Home watch poll (every 2 s while armed → photo alert) ─────────
+        # Keeps the Jetson target finder hunting "person" while armed and
+        # turns confident detections into alerts (services/watch.py).
+        self._watch_target_set = False
+        self.create_timer(2.0, self._poll_watch)
+
+        # ── Memory consolidation check (every 60 s; runs ≤ once/day) ──────
+        self.create_timer(60.0, self._poll_consolidation)
+
         self.get_logger().info(
             f"Agent starting — provider: {provider}, base_url: {base_url}, "
             f"vision: {self._use_vision}"
@@ -259,6 +276,8 @@ class AgentNode(Node):
             "queued_telegram_messages": queued_telegram,
             "user_input_pending": user_pending,
             "telegram": self._telegram.status(),
+            "watch": self._watch.status(),
+            "consolidation": self._consolidator.status(),
         }
 
     # ── Startup readiness check ───────────────────────────────────────────
@@ -360,6 +379,61 @@ class AgentNode(Node):
     def _fmt_clock(t: float) -> str:
         import datetime
         return datetime.datetime.fromtimestamp(t).strftime("%I:%M %p").lstrip("0")
+
+    def _poll_watch(self) -> None:
+        """Timer callback (spin thread) — the home-watch detection loop.
+
+        While armed: keep the Jetson target finder hunting "person" and turn a
+        confident detection into an alert. All I/O that can block (Telegram
+        send) happens on a short-lived background thread, never here."""
+        if not self._watch.armed():
+            if self._watch_target_set:
+                # We set the hunt; idle it. (A servo tool that set its own
+                # target clears it in its finally block — not our flag.)
+                self._bridge.set_vision_target("")
+                self._watch_target_set = False
+            return
+        with self._queue_lock:
+            if self._turn_active:
+                return   # never fight an in-turn servo loop or alert mid-conversation
+        result = self._bridge.get_target_result(max_age_s=3.0)
+        if result is None or result.get("target") != "person":
+            # Nothing fresh, or a finished servo left a different target —
+            # (re)assert the person hunt. Also recovers from Jetson restarts.
+            # NB: set_vision_target drops the cached result, so assert-then-
+            # return and read on the next tick.
+            self._bridge.set_vision_target("person")
+            self._watch_target_set = True
+            return
+        self._watch_target_set = True
+        if self._watch.should_alert(bool(result.get("found")),
+                                    float(result.get("conf", 0.0))):
+            frame = self._bridge.get_frame(max_age_s=10.0)
+            threading.Thread(target=self._send_watch_alert, args=(frame,),
+                             daemon=True, name="watch_alert").start()
+
+    def _send_watch_alert(self, frame) -> None:
+        """Background thread: photo to owners' phones (deterministic — works
+        with the LLM down), then a [SYSTEM] turn for the spoken announcement."""
+        reached = self._watch.send_alert(frame)
+        delivered = (f"A photo was already sent to {', '.join(reached)} on Telegram"
+                     if reached else
+                     "The phone alert could NOT be delivered")
+        self._enqueue_system(
+            f"[SYSTEM] Watch alert — watch mode is armed and a person was just "
+            f"seen by the camera. {delivered}. Announce aloud briefly that you "
+            f"noticed someone and notified the owner.")
+
+    def _poll_consolidation(self) -> None:
+        """Timer callback — start the nightly memory consolidation when due.
+        The run itself is a background thread; it aborts between batches the
+        moment real input arrives (the robot's work always wins)."""
+        self._consolidator.maybe_run(should_abort=self._has_pending_work)
+
+    def _has_pending_work(self) -> bool:
+        with self._queue_lock:
+            return (self._turn_active or self._user_pending is not None
+                    or bool(self._system_pending) or bool(self._telegram_pending))
 
     # ── Worker loop ───────────────────────────────────────────────────────
 

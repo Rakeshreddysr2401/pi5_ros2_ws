@@ -8,6 +8,7 @@ from .music import (pause_music, play_music, resume_music, set_music_volume,
                     stop_music)
 from .reminders import cancel_reminder, list_reminders, set_reminder
 from .system import get_current_time, get_robot_status, ros2_publish, set_active_order
+from .watch import watch_home
 from .handover import handover
 from .swiggy_mcp import SWIGGY_FOOD_TOOLS
 from .telegram import TELEGRAM_TOOLS
@@ -25,7 +26,7 @@ CHAT_TOOLS         = [get_current_time, get_robot_status, set_reminder,
                       list_reminders, cancel_reminder, update_list, remember,
                       forget, recall_memory, play_music, stop_music,
                       pause_music, resume_music, set_music_volume,
-                      handover] + WEB_TOOLS + TELEGRAM_TOOLS
+                      watch_home, handover] + WEB_TOOLS + TELEGRAM_TOOLS
 LOCAL_AGENT_TOOLS  = [look, handover] + TELEGRAM_TOOLS
 NAVIGATE_TOOLS     = [move_robot, navigate_to_pose, navigate_to_visible_object,
                       handover] + TELEGRAM_TOOLS

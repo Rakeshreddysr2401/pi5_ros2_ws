@@ -57,11 +57,15 @@ pip3 install --break-system-packages -r requirements.txt
 
 - `langrobo_core/graph/` — topology (build.py), routing registry, handover
   resolution + loop guards
-- `langrobo_core/agents/` — one module per agent; prompts inline
+- `langrobo_core/prompts.py` — EVERY system prompt (agents + background jobs);
+  agents append only dynamic blocks (household, now-playing, date) in-module
+- `langrobo_core/agents/` — one module per agent (node fn + context assembly)
 - `langrobo_core/tools/` — @tool functions; per-agent sets in `__init__.py`;
   robot I/O via `_bridge.get()`
 - `langrobo_core/services/` — config (validated .env), llm (slots + fallback),
-  memory (embedded Qdrant + fastembed), telegram (channel: long-poll + sends),
+  memory (embedded Qdrant + fastembed), consolidation (nightly episodic→facts,
+  local model only), watch (armed person-detection alerts → Telegram),
+  telegram (channel: long-poll + sends),
   permissions (role→capability policy — enforced in tools, never only prompts),
   health (FastAPI :8090), logging, metrics
 - `langrobo_ros/` — agent_node (params, queues, worker loop, cache warmer),
@@ -77,7 +81,8 @@ build.py + handover Literal must stay in sync — the smoke tests catch drift).
 - `.env` (validated fail-fast at startup) — keys + LANGROBO_* service settings;
   full table in OPERATIONS.md; template in example.env
 - Robot state lives in `~/.langrobo/` (household.json, reminders.json,
-  errands.json, qdrant/, telegram_offset, telegram_deferred.json)
+  errands.json, qdrant/, telegram_offset, telegram_deferred.json, watch.json,
+  consolidation.json)
 
 ## Working on the Jetson from here
 

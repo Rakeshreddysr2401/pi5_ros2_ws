@@ -32,6 +32,10 @@ def recall_memory(query: str) -> str:
     lines = []
     for h in hits:
         date = time.strftime("%Y-%m-%d %H:%M", time.localtime(h.get("ts", 0)))
+        if h.get("fact"):
+            # Consolidated household fact (nightly distillation) — no dialogue.
+            lines.append(f"[learned {date}] {h['fact']}")
+            continue
         who = f" (with {h['person']})" if h.get("person") else ""
         lines.append(f"[{date}]{who} User: {h.get('user', '')} — You replied: {h.get('robot', '')}")
     return "\n".join(lines)

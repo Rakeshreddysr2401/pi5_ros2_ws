@@ -94,27 +94,90 @@ class EpisodicMemory:
             metrics.inc("memory_writes_dropped_total")
 
     def recall(self, query: str, k: int = 4, person: str | None = None) -> list[dict]:
-        """Semantic search over stored episodes. Returns [] when unavailable."""
+        """Semantic search over stored episodes AND consolidated facts, merged
+        by score. Fact hits carry a 'fact' key instead of user/robot; the
+        person filter applies to episodes only (facts are household-wide).
+        Returns [] when unavailable."""
         if not self.available():
             return []
         k = max(1, min(k, _RECALL_LIMIT_MAX))
         try:
             with self._lock:
                 vector = self._embed(query)
-                hits = self._client.query_points(
+                hits = list(self._client.query_points(
                     collection_name=self._cfg.collection,
                     query=vector,
                     limit=k,
                     query_filter=self._person_filter(person),
+                ).points)
+                hits += self._client.query_points(
+                    collection_name=self._cfg.facts_collection,
+                    query=vector,
+                    limit=k,
                 ).points
             metrics.inc("memory_recalls_total")
+            merged = sorted(hits, key=lambda h: h.score, reverse=True)[:k]
             return [
                 {**(h.payload or {}), "score": round(h.score, 3)}
-                for h in hits
+                for h in merged
             ]
         except Exception:
             logger.exception("memory recall failed")
             return []
+
+    # ── Consolidation support (services/consolidation.py, background thread) ─
+
+    def episodes_since(self, ts: float, limit: int = 200) -> list[dict]:
+        """Episode payloads newer than `ts`, oldest first, capped at `limit`.
+        The caller advances its cursor to the max ts it actually processed, so
+        a truncated read is picked up on the next run."""
+        if not self.available():
+            return []
+        from qdrant_client.models import FieldCondition, Filter, Range
+        try:
+            with self._lock:
+                points, _ = self._client.scroll(
+                    collection_name=self._cfg.collection,
+                    scroll_filter=Filter(must=[FieldCondition(key="ts", range=Range(gt=ts))]),
+                    limit=limit,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+            return sorted((p.payload or {} for p in points),
+                          key=lambda p: p.get("ts", 0.0))
+        except Exception:
+            logger.exception("memory episodes_since failed")
+            return []
+
+    _FACT_DUPLICATE_SCORE = 0.92   # cosine similarity above this = same fact
+
+    def store_fact(self, fact: str) -> bool:
+        """Embed + store one consolidated fact, deduplicated against the facts
+        collection. Returns True if stored, False if it was a near-duplicate
+        (re-running consolidation over the same episodes is harmless)."""
+        fact = (fact or "").strip()
+        if not self.available() or not fact:
+            return False
+        from qdrant_client.models import PointStruct
+        with self._lock:
+            vector = self._embed(fact)
+            existing = self._client.query_points(
+                collection_name=self._cfg.facts_collection,
+                query=vector,
+                limit=1,
+            ).points
+            if existing and existing[0].score >= self._FACT_DUPLICATE_SCORE:
+                return False
+            self._client.upsert(
+                collection_name=self._cfg.facts_collection,
+                points=[PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=vector,
+                    payload={"fact": fact, "ts": time.time()},
+                )],
+            )
+        metrics.inc("memory_facts_stored_total")
+        return True
 
     def count(self) -> int:
         if not self.available():
@@ -163,7 +226,8 @@ class EpisodicMemory:
             os.makedirs(path, exist_ok=True)
             self._client = QdrantClient(path=path)
 
-        for name in (self._cfg.collection, self._cfg.visual_collection):
+        for name in (self._cfg.collection, self._cfg.visual_collection,
+                     self._cfg.facts_collection):
             if not self._client.collection_exists(name):
                 self._client.create_collection(
                     collection_name=name,

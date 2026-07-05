@@ -37,7 +37,9 @@ src/langrobo_core/langrobo_core/       pip package (editable install via require
 │   ├── registry.py        Agent names/descriptions — single source of truth for routing
 │   ├── turn_entry.py      Start of every turn: resets loop guards, sticky routing
 │   └── handover_resolver.py  Centralized handover: chain vs sticky, loop guard
-├── agents/                One module per agent + persona.py (shared identity block)
+├── prompts.py             EVERY system prompt in the brain (agents + background jobs) —
+│                          agents import from here; only dynamic blocks are appended in-module
+├── agents/                One module per agent (node fn + dynamic context assembly)
 │   ├── supervisor.py      Pure router — grammar-forced handover(), never speaks
 │   ├── chat.py            Default responder — general Q&A, web search, reminders, memory, music
 │   ├── local_agent.py     Multimodal vision — reasons over real frames via look()
@@ -50,6 +52,8 @@ src/langrobo_core/langrobo_core/       pip package (editable install via require
 │   ├── config.py          Validated .env settings — fail fast on malformed values
 │   ├── llm.py             LLM factory + slot pinning + cloud-fallback policy
 │   ├── memory.py          Episodic memory (embedded Qdrant + on-device fastembed)
+│   ├── consolidation.py   Nightly episodic→facts distillation (local model only)
+│   ├── watch.py           Home watch mode — armed person-detection alerts
 │   ├── health.py          In-process FastAPI: /health /status /metrics (bearer token)
 │   ├── logging.py         JSON logs + per-turn trace IDs (ContextVar)
 │   └── metrics.py         Tiny thread-safe counter/gauge registry (Prometheus text)
@@ -177,6 +181,7 @@ image-preserving projection; every other agent gets image-stripped text.
 |---|---|---|---|
 | Household facts + lists | JSON (`~/.langrobo/household.json`) | **in-prompt** — always visible | dozens of facts; guaranteed recall beats retrieval |
 | Episodic (conversations) | **Qdrant** embedded (`~/.langrobo/qdrant`) | `recall_memory(query)` tool | unbounded history can't fit a prompt |
+| Consolidated facts | `facts` collection (same store) | merged into `recall_memory` results | nightly distillation of episodes — the "self-learning" tier |
 | Visual household memory | reserved `visual` collection | phase P4 | "where did I leave my keys" |
 
 Episodic details (`services/memory.py`): every user turn is embedded
@@ -232,9 +237,46 @@ dropped, processed between user turns, always entering at the supervisor):
 | Reminder poll | 5s timer | "[SYSTEM] Reminder due — announce to the user now: …" |
 | Delivery poll | 120s timer (order active) | "[SYSTEM] Check if order {id} has been delivered" |
 | Nav completion | event | "[SYSTEM] Navigation succeeded/failed: …" |
+| Watch poll | 2s timer (armed + person seen) | "[SYSTEM] Watch alert — … announce aloud …" |
 
 New proactive features (P2 face-seen greeting, presence events) follow the same
 producer pattern.
+
+## Home watch mode (vision-triggered proactive alerts)
+
+`services/watch.py` + `tools/watch.py` + agent_node's watch poll. Armed
+explicitly ("watch the house" — voice or Telegram, CAP_WATCH gated:
+owner/family only); while armed the poll keeps the Jetson target finder
+hunting the COCO class `person` over the EXISTING `/vision/target` contract —
+no new Jetson code. A confident detection outside the cooldown does two
+things, in order:
+
+1. **Deterministic photo alert** to every owner-role Telegram member
+   (spin-thread-safe: the send runs on a short-lived background thread).
+   This path has no LLM in it — a security alert must not depend on the Mac
+   Mini being up. It also bypasses quiet hours on purpose.
+2. **`[SYSTEM]` watch-alert turn** (the standard producer pattern) so the
+   robot announces aloud what it saw and did.
+
+Armed state persists in `~/.langrobo/watch.json` (a restart must not silently
+disarm the house). The poll never runs during a turn, so it can't fight the
+visual-servo loop over `/vision/target`. When face recognition lands (P2),
+the upgrade path is alert-on-strangers-only — same plumbing.
+
+## Memory consolidation (self-learning, phase 1)
+
+`services/consolidation.py`, prompt in `prompts.py` (CONSOLIDATION_PROMPT).
+Once per day at/after `LANGROBO_CONSOLIDATION_HOUR`, while idle and only on
+the LOCAL model (never the cloud — household chatter stays home): episodes
+newer than a persisted cursor are batched through the LLM, which returns a
+strict-JSON array of durable third-person facts; each is embedded, deduped
+(cosine ≥ 0.92 against existing facts) and stored in the `facts` collection.
+`recall_memory` merges facts with episodic hits, so "Rakesh likes his coffee
+black" survives months after the raw turn scrolled away. LLM calls ride the
+specialist slot — a 3am run never evicts chat's hot KV prefix. The run aborts
+between batches the moment real input arrives and resumes later the same day.
+A future fine-tune pipeline would consume the same `facts` collection as its
+curated dataset — that is the reserved slot for PRD §6's "train monthly".
 
 ## Telegram channel (second front door)
 
@@ -271,14 +313,16 @@ queue flushed by the poller.
 
 ## How to add an agent
 
-1. Create `agents/<name>.py` (copy `chat.py` as template)
-2. Add tools in `tools/`, a named tool set in `tools/__init__.py`
-3. Register in `graph/registry.py` (name + description + examples)
-4. Add one line to `_AGENT_SPECS` in `graph/build.py`
-5. Add the name to the `handover` tool's `next_agent` Literal (`tools/handover.py`)
+1. Write its system prompt in `prompts.py` (start from CHAT_PROMPT's shape;
+   prepend PERSONA for any user-facing agent)
+2. Create `agents/<name>.py` (copy `chat.py` as template) importing that prompt
+3. Add tools in `tools/`, a named tool set in `tools/__init__.py`
+4. Register in `graph/registry.py` (name + description + examples)
+5. Add one line to `_AGENT_SPECS` in `graph/build.py`
+6. Add the name to the `handover` tool's `next_agent` Literal (`tools/handover.py`)
 
 ## How to add a tool
 
 1. Write it in `tools/` with `@tool`, using `_bridge.get()` for robot I/O
 2. Add it to the agent's tool set in `tools/__init__.py`
-3. Mention it in that agent's system prompt
+3. Mention it in that agent's system prompt (`prompts.py`)

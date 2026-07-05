@@ -6,16 +6,16 @@ messages update automatically — no other files need touching.
 
 AGENTS: dict[str, dict] = {
     "chat": {
-        "description": "general questions, web search, reminders and timers (setting, listing, announcing due ones), system status, small talk, anything not covered by other agents",
-        "examples": ["what's the weather?", "tell me a joke", "remind me in 10 minutes", "[SYSTEM] Reminder due"],
+        "description": "general questions, web search, reminders and timers (setting, listing, announcing due ones), home watch mode (arm/disarm, announcing alerts), system status, small talk, anything not covered by other agents",
+        "examples": ["what's the weather?", "tell me a joke", "remind me in 10 minutes", "watch the house", "[SYSTEM] Reminder due", "[SYSTEM] Watch alert"],
     },
     "local_agent": {
         "description": "anything about what the robot sees — scene description, object/person detection, visual queries, and follow-up questions about the same scene (reasons over the actual camera image and remembers it)",
         "examples": ["what do you see?", "is there anyone in the room?", "did he wear spectacles?", "is this the real poster?"],
     },
     "navigate": {
-        "description": "moving the robot, going somewhere, finding and approaching objects, stopping",
-        "examples": ["go to the kitchen", "find the bottle", "come here", "stop"],
+        "description": "moving the robot, going somewhere, finding and approaching objects, stopping; also owns follow-me/come-to-me requests (it explains person following isn't available yet)",
+        "examples": ["go to the kitchen", "find the bottle", "come here", "follow me", "stop"],
     },
     "status": {
         "description": "robot battery level, hardware state, what the robot is currently doing",

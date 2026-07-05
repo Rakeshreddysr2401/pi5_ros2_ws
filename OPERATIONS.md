@@ -67,12 +67,39 @@ not here.
 | `TAVILY_API_KEY` | Web search in chat (absent → feature off) |
 | `LANGROBO_TELEGRAM_TOKEN` | Bot token from @BotFather (absent → channel off) |
 | `LANGROBO_TELEGRAM_ALLOWLIST` | `chat_id:Name:role,…` — roles `owner`/`family`/`guest`; channel stays off while empty (bot never talks to strangers) |
-| `LANGROBO_QUIET_HOURS` | `HH:MM-HH:MM` — proactive pings queue in this window; replies always send |
+| `LANGROBO_QUIET_HOURS` | `HH:MM-HH:MM` — proactive pings queue in this window; replies always send (watch alerts bypass it) |
+| `LANGROBO_WATCH` | `false` disables home watch mode entirely |
+| `LANGROBO_WATCH_COOLDOWN_S` | Min seconds between watch alerts (default 60) |
+| `LANGROBO_WATCH_MIN_CONF` | Person-detection confidence floor (default 0.5) |
+| `LANGROBO_CONSOLIDATION` | `false` disables nightly memory consolidation |
+| `LANGROBO_CONSOLIDATION_HOUR` | Local hour the nightly run becomes eligible (default 3) |
 | `STUDIO_PROVIDER/MODEL/BASE_URL/MAX_TOKENS` | `langgraph dev` only |
 
 Robot state files: `~/.langrobo/` — `household.json`, `reminders.json`,
-`errands.json`, `qdrant/`, `telegram_offset`, `telegram_deferred.json`.
+`errands.json`, `qdrant/`, `telegram_offset`, `telegram_deferred.json`,
+`watch.json` (armed state), `consolidation.json` (nightly-run cursor).
 Back this directory up; delete a file to reset that memory.
+
+## Home watch mode
+
+Arm by voice ("Rakhi, watch the house") or Telegram ("watch the house");
+disarm with "stop watching" / "I'm back". While armed the Jetson target
+finder hunts `person`; a confident detection sends a photo to every
+**owner-role** Telegram member (cooldown between alerts) and the robot
+announces it aloud. The photo send is deterministic — it works even when the
+LLM is down. Armed state survives restarts. Only owner/family may arm or
+disarm (guests must not switch the alarm off). Check `curl -s
+localhost:8090/status | jq .runtime.watch`.
+
+## Memory consolidation (self-learning)
+
+Once a day at/after `LANGROBO_CONSOLIDATION_HOUR`, while the robot is idle
+and the Mac Mini is reachable, new episodic turns are distilled into short
+household facts (`facts` Qdrant collection) by the LOCAL model — never the
+cloud. `recall_memory` surfaces them alongside episodes. The run aborts the
+moment real input arrives and resumes later; re-processing is harmless
+(facts deduplicate by embedding similarity). Check `curl -s
+localhost:8090/status | jq .runtime.consolidation`.
 
 ## Telegram channel
 

@@ -85,6 +85,9 @@ class TelegramService:
     def member_names(self) -> list[str]:
         return [m.name for m in self._cfg.members]
 
+    def members_with_role(self, role: str) -> list[TelegramMember]:
+        return [m for m in self._cfg.members if m.role == role]
+
     def member_by_name(self, name: str) -> TelegramMember | None:
         """Resolve a recipient the way the model refers to people: exact
         case-insensitive first, then an unambiguous prefix ('mom' → 'Mom')."""

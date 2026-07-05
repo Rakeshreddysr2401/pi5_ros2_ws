@@ -41,6 +41,19 @@ def _int_env(name: str, default: int, lo: int, hi: int) -> int:
     return val
 
 
+def _float_env(name: str, default: float, lo: float, hi: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        val = float(raw)
+    except ValueError:
+        raise ConfigError(f"{name} must be a number, got {raw!r}")
+    if not lo <= val <= hi:
+        raise ConfigError(f"{name} must be in [{lo}, {hi}], got {val}")
+    return val
+
+
 def _bool_env(name: str, default: bool) -> bool:
     raw = os.getenv(name, "").strip().lower()
     if not raw:
@@ -76,6 +89,8 @@ class MemoryConfig:
     collection: str = "episodic"
     # Reserved for roadmap P4 (visual household memory) — same store, own collection.
     visual_collection: str = "visual"
+    # Durable facts distilled from episodes by services/consolidation.py.
+    facts_collection: str = "facts"
     embed_model: str = "BAAI/bge-small-en-v1.5"   # fastembed ONNX, 384-dim
 
 
@@ -150,6 +165,30 @@ def _parse_telegram_allowlist(raw: str) -> tuple:
 
 
 @dataclass(frozen=True)
+class WatchConfig:
+    """Home watch mode (services/watch.py): while armed, a person detected by
+    the Jetson target finder triggers a photo alert to owners' phones. Armed
+    state persists across restarts (an armed house stays armed)."""
+    enabled: bool = True
+    state_path: str = "~/.langrobo/watch.json"
+    cooldown_s: int = 60           # min seconds between alerts (one visitor ≠ 50 pings)
+    min_confidence: float = 0.5    # YOLO person confidence below this is ignored
+
+
+@dataclass(frozen=True)
+class ConsolidationConfig:
+    """Nightly memory consolidation (services/consolidation.py): distill new
+    episodic turns into durable facts, locally. Runs only when the robot is
+    idle and the LOCAL model is up — never on the cloud fallback."""
+    enabled: bool = True
+    hour: int = 3                  # local hour of day the job becomes eligible
+    state_path: str = "~/.langrobo/consolidation.json"
+    min_episodes: int = 5          # skip the run below this many new episodes
+    max_episodes: int = 200        # cap one run's input (rest picked up next night)
+    batch_size: int = 25           # episodes per LLM call
+
+
+@dataclass(frozen=True)
 class HealthConfig:
     """In-process health/status/metrics API (FastAPI)."""
     enabled: bool
@@ -164,6 +203,8 @@ class Settings:
     memory: MemoryConfig = field(default_factory=lambda: MemoryConfig(True, "~/.langrobo/qdrant"))
     health: HealthConfig = field(default_factory=lambda: HealthConfig(True, "0.0.0.0", 8090))
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
+    watch: WatchConfig = field(default_factory=WatchConfig)
+    consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
     log_json: bool = True
 
 
@@ -228,11 +269,26 @@ def load_settings() -> Settings:
         configured=bool(tg_token and tg_members),
         quiet=_parse_quiet_hours(os.getenv("LANGROBO_QUIET_HOURS", "").strip()))
 
+    # ── Home watch mode ───────────────────────────────────────────────────
+    watch = WatchConfig(
+        enabled=_bool_env("LANGROBO_WATCH", True),
+        cooldown_s=_int_env("LANGROBO_WATCH_COOLDOWN_S", 60, 5, 3600),
+        min_confidence=_float_env("LANGROBO_WATCH_MIN_CONF", 0.5, 0.0, 1.0),
+    )
+
+    # ── Memory consolidation ──────────────────────────────────────────────
+    consolidation = ConsolidationConfig(
+        enabled=_bool_env("LANGROBO_CONSOLIDATION", True),
+        hour=_int_env("LANGROBO_CONSOLIDATION_HOUR", 3, 0, 23),
+    )
+
     settings = Settings(
         fallback=fallback,
         memory=memory,
         health=health,
         telegram=telegram,
+        watch=watch,
+        consolidation=consolidation,
         log_json=_bool_env("LANGROBO_LOG_JSON", True),
     )
     logger.info(
