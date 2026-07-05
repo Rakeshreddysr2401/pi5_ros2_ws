@@ -1,3 +1,4 @@
+
 # LangRobo — Operations
 
 Deploy, run, observe, and troubleshoot the Pi5 brain.
@@ -125,7 +126,7 @@ boot. Inbound is rate-limited to 10 msg/min per sender. `/status` shows the
 | Food ordering "not configured" | `SWIGGY_ACCESS_TOKEN` absent/401 — feature is off by design until a valid token lands |
 | Memory unavailable in /status | first boot downloads the embed model (~130MB) — check network, see journal |
 | ESP32 not moving | `langrobo-microros` unit down, or ESP32 not on WiFi → `systemctl status langrobo-microros`, then power-cycle ESP32 |
-| DDS discovery fails Pi5↔Jetson | `ROS_DOMAIN_ID` mismatch or `fastdds_unicast.xml` IP list stale |
+| DDS discovery fails Pi5↔Jetson | `ROS_DOMAIN_ID` mismatch, `langrobo-discovery` (meeting point) down, or a client started before the meeting point came up — see NETWORKING.md; restart the client (brain/microros/Jetson launch) after the meeting point is confirmed up |
 
 ## Pi5 system record
 
