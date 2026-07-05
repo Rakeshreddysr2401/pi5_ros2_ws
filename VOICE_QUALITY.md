@@ -30,6 +30,11 @@ Buy (PRODUCT.md already ranks these, ~$35–70 total):
 
 ## 2. Whisper settings that cut hallucination (free, do these first)
 
+**STATUS: ✅ all implemented on the Jetson (commit 28e0f58, 2026-07-06).**
+The vocabulary primer is tunable in voice_params.yaml (`initial_prompt`);
+the confidence filter drops segments with no_speech_prob > 0.6 AND
+avg_logprob < −1.0. Do the §5 A/B with the real mic to measure the gain.
+
 All in the Jetson repo (stt backend / voice_params.yaml). Each one targets a
 specific failure you're seeing:
 
