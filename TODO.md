@@ -1,5 +1,20 @@
 # TODO — pending on-device work
 
+## Investigate: supervisor never reuses its KV slot on [SYSTEM] turns
+
+Found 2026-07-06 ~04:45 while verifying the 4-slot map. Clean consecutive
+reminder cycles, `/slots` `n_prompt_tokens_processed` per slot:
+chat=24, local_agent=37, specialists=150 (all reusing) — **supervisor=1791,
+a FULL prefill every [SYSTEM] turn** (~15s of the ~50s system-turn cost).
+Grammar/tool_choice is NOT the cause (A/B'd directly: identical repeat 5s,
+appended tail 5.5s, both reused). Something in the supervisor's projected
+request must differ between calls. Next step (daytime session): point
+`base_url` at a logging proxy (workflow in the llamacpp-kv-cache-rules
+memory / ARCHITECTURE debug notes), capture two consecutive supervisor
+request bodies, and DIFF them — the first differing byte is the answer.
+User-facing impact: proactive announcements (reminders/watch alerts) take
+~20s+; user turns are unaffected (1.6s warm).
+
 ## Deploy the 2026-07-06 feature batch (watch mode + consolidation + prompts.py)
 
 Built and unit-tested on the Pi5 (77 tests green); needs a brain rebuild and
