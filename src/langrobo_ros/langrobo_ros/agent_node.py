@@ -625,7 +625,16 @@ class AgentNode(Node):
 
             # Remember where the turn ended so the next user follow-up can skip
             # the supervisor (turn_entry gates which agents are sticky-eligible).
-            self._sticky_agent = result.get("active_agent") if result else None
+            sticky = result.get("active_agent") if result else None
+            # A specialist ending its turn with handover("supervisor") leaves
+            # active_agent="supervisor" — persisting THAT as sticky made the
+            # next user turn enter at the supervisor: a routing hop whose
+            # prompt evicts the specialist slot and re-prefills the whole
+            # history (~20-50s measured on the 12B, 2026-07-06). Fresh turns
+            # belong at chat (the one-LLM-call common path; it carries the
+            # full routing table); only [SYSTEM] events force the supervisor,
+            # and agent_node does that explicitly via is_system.
+            self._sticky_agent = None if sticky == "supervisor" else sticky
 
             response = self._extract_response(result)
 
