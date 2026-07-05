@@ -72,6 +72,22 @@ Coexistence decisions (grill session 2026-07-06, part 2):
   (`tools/_relay_confirm.py`), not just prompts — the 12B occasionally
   skipped the question, so an unconfirmed relay cannot send at all.
 
+## 4b. New agents (2026-07-06 part 3 — "multi agents, proper outputs")
+
+- **knowledge agent** (ported from the SubAgents predecessor's RAG module,
+  adapted to embedded Qdrant + fastembed, zero new services): send the robot
+  a .pdf/.txt/.md on Telegram → chunked, embedded, stored locally; questions
+  like "what does error E4 mean on the washer?" are answered FROM the
+  documents, citing the source file. Re-sending replaces. CLI bulk ingest
+  when the brain is stopped (embedded store is single-process).
+- **briefing agent**: scheduled morning briefing (opt-in via
+  LANGROBO_BRIEFING_HOUR, once daily through the [SYSTEM] producer) and
+  on-demand "give me my briefing" — reminders due today, weather, list
+  highlights, one flowing spoken paragraph.
+- From that repo also evaluated and REJECTED: Mem0 (privacy moat), Redis
+  frame buffer (look()'s staleness contract is stronger), Redis web cache
+  (queries too rare to justify a service).
+
 ## 5. Architecture
 
 - Evolve, don't rewrite (D1). LangGraph StateGraph + supervisor routing +

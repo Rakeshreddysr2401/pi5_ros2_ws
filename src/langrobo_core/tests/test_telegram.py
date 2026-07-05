@@ -417,3 +417,58 @@ def test_relay_with_report_back_records_errand(fake_channel, tmp_path, monkeypat
     hits = store.pop_for_sender("Mom")
     assert len(hits) == 1
     assert (hits[0].asked_by, hits[0].asked_via) == ("Rakesh", "telegram")
+
+
+# ── Inbound documents → knowledge ingest gating ──────────────────────────────
+
+def _doc_update(chat_id, file_name, caption=None, size=1000, update_id=1):
+    msg = {"chat": {"id": chat_id},
+           "document": {"file_id": "f1", "file_name": file_name,
+                        "file_size": size}}
+    if caption:
+        msg["caption"] = caption
+    return {"update_id": update_id, "message": msg}
+
+
+def test_document_from_guest_is_refused(tmp_path, monkeypatch):
+    from langrobo_core.services.config import TelegramConfig, TelegramMember
+    cfg = TelegramConfig(token="T", configured=True, members=(
+        TelegramMember(chat_id=333, name="Guest", role="guest"),))
+    svc = TelegramService(cfg, offset_path=str(tmp_path / "o"))
+    sent, got = [], []
+    monkeypatch.setattr(svc, "send_message",
+                        lambda cid, txt: sent.append(txt) or None)
+    svc._handle_update(_doc_update(333, "manual.pdf"), got.append)
+    assert got == []                       # no turn created
+    assert sent and "household members" in sent[0]
+
+
+def test_document_wrong_extension_and_oversize_are_refused(inbound_svc, monkeypatch):
+    sent = []
+    monkeypatch.setattr(inbound_svc, "send_message",
+                        lambda cid, txt: sent.append(txt) or None)
+    inbound_svc._handle_update(_doc_update(111, "video.mp4"), lambda m: None)
+    assert ".pdf, .txt or .md" in sent[-1]
+    inbound_svc._handle_update(
+        _doc_update(111, "big.pdf", size=50_000_000, update_id=2), lambda m: None)
+    assert "too large" in sent[-1]
+
+
+def test_document_ingest_confirms_and_forwards_caption(inbound_svc, monkeypatch):
+    import time as _time
+    from langrobo_core.services import knowledge as knowledge_service
+    sent, got = [], []
+    monkeypatch.setattr(inbound_svc, "send_message",
+                        lambda cid, txt: sent.append(txt) or None)
+    monkeypatch.setattr(inbound_svc, "_fetch_file",
+                        lambda fid, cap: b"descale monthly")
+    monkeypatch.setattr(knowledge_service, "ingest_file",
+                        lambda name, data: (3, None))
+    inbound_svc._handle_update(
+        _doc_update(111, "manual.txt", caption="how do I descale?"), got.append)
+    deadline = _time.time() + 5            # ingest runs on a daemon thread
+    while (not sent or not got) and _time.time() < deadline:
+        _time.sleep(0.05)
+    assert sent and "Learned 'manual.txt' — 3 section(s)" in sent[0]
+    # The caption became a turn AFTER ingest, so the answer can use the doc.
+    assert got and got[0].text == "how do I descale?"

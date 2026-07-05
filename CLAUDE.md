@@ -64,8 +64,9 @@ pip3 install --break-system-packages -r requirements.txt
   robot I/O via `_bridge.get()`
 - `langrobo_core/services/` — config (validated .env), llm (slots + fallback),
   memory (embedded Qdrant + fastembed), consolidation (nightly episodic→facts,
-  local model only), watch (armed person-detection alerts → Telegram),
-  telegram (channel: long-poll + sends),
+  local model only), knowledge (document ingest for the knowledge agent),
+  briefing (once-daily scheduler), watch (armed person-detection alerts →
+  Telegram), telegram (channel: long-poll + sends),
   permissions (role→capability policy — enforced in tools, never only prompts),
   health (FastAPI :8090), logging, metrics
 - `langrobo_ros/` — agent_node (params, queues, worker loop, cache warmer),

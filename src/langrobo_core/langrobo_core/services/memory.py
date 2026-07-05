@@ -227,7 +227,7 @@ class EpisodicMemory:
             self._client = QdrantClient(path=path)
 
         for name in (self._cfg.collection, self._cfg.visual_collection,
-                     self._cfg.facts_collection):
+                     self._cfg.facts_collection, self._cfg.knowledge_collection):
             if not self._client.collection_exists(name):
                 self._client.create_collection(
                     collection_name=name,
@@ -250,6 +250,66 @@ class EpisodicMemory:
                     payload=item,
                 )],
             )
+
+    # ── Household knowledge base (services/knowledge.py, tools/knowledge.py) ─
+
+    def ingest_knowledge(self, chunks: list[str], source: str) -> int:
+        """Embed + store document chunks. Replaces any previous ingest of the
+        same source (re-sending a manual updates it instead of duplicating).
+        Runs on the caller's thread (Telegram ingest thread / CLI) — embedding
+        ~100ms/chunk on the Pi5, never the turn path."""
+        if not self.available() or not chunks:
+            return 0
+        from qdrant_client.models import (FieldCondition, Filter, FilterSelector,
+                                          MatchValue, PointStruct)
+        with self._lock:
+            self._client.delete(
+                collection_name=self._cfg.knowledge_collection,
+                points_selector=FilterSelector(filter=Filter(must=[
+                    FieldCondition(key="source", match=MatchValue(value=source))])),
+            )
+            points = []
+            for i, chunk in enumerate(chunks):
+                points.append(PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=self._embed(chunk),
+                    payload={"text": chunk, "source": source,
+                             "chunk": i, "ts": time.time()},
+                ))
+            self._client.upsert(collection_name=self._cfg.knowledge_collection,
+                                points=points)
+        metrics.inc("knowledge_chunks_ingested_total", len(chunks))
+        return len(chunks)
+
+    def search_knowledge(self, query: str, k: int = 5) -> list[dict]:
+        """Semantic search over ingested documents. [] when unavailable."""
+        if not self.available():
+            return []
+        try:
+            with self._lock:
+                hits = self._client.query_points(
+                    collection_name=self._cfg.knowledge_collection,
+                    query=self._embed(query),
+                    limit=max(1, min(k, _RECALL_LIMIT_MAX)),
+                ).points
+            return [{**(h.payload or {}), "score": round(h.score, 3)} for h in hits]
+        except Exception:
+            logger.exception("knowledge search failed")
+            return []
+
+    def knowledge_sources(self) -> list[str]:
+        """Distinct ingested document names (small collection — one scroll)."""
+        if not self.available():
+            return []
+        try:
+            with self._lock:
+                points, _ = self._client.scroll(
+                    collection_name=self._cfg.knowledge_collection,
+                    limit=1000, with_payload=["source"], with_vectors=False)
+            return sorted({p.payload.get("source", "?") for p in points if p.payload})
+        except Exception:
+            logger.exception("knowledge sources failed")
+            return []
 
     @staticmethod
     def _person_filter(person: str | None):

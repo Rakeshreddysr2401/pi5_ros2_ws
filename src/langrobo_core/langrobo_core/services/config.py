@@ -91,6 +91,8 @@ class MemoryConfig:
     visual_collection: str = "visual"
     # Durable facts distilled from episodes by services/consolidation.py.
     facts_collection: str = "facts"
+    # Household knowledge base — ingested documents (services/knowledge.py).
+    knowledge_collection: str = "knowledge"
     embed_model: str = "BAAI/bge-small-en-v1.5"   # fastembed ONNX, 384-dim
 
 
@@ -189,6 +191,16 @@ class ConsolidationConfig:
 
 
 @dataclass(frozen=True)
+class BriefingConfig:
+    """Scheduled morning briefing (briefing agent via the [SYSTEM] producer).
+    Off unless LANGROBO_BRIEFING_HOUR is set — a robot that starts talking at
+    8am unasked must be opted into."""
+    enabled: bool = False
+    hour: int = 8
+    state_path: str = "~/.langrobo/briefing.json"
+
+
+@dataclass(frozen=True)
 class HealthConfig:
     """In-process health/status/metrics API (FastAPI)."""
     enabled: bool
@@ -205,6 +217,7 @@ class Settings:
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     watch: WatchConfig = field(default_factory=WatchConfig)
     consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
+    briefing: BriefingConfig = field(default_factory=BriefingConfig)
     log_json: bool = True
 
 
@@ -282,6 +295,12 @@ def load_settings() -> Settings:
         hour=_int_env("LANGROBO_CONSOLIDATION_HOUR", 3, 0, 23),
     )
 
+    # ── Morning briefing (opt-in: enabled only when the hour is set) ──────
+    briefing = BriefingConfig(
+        enabled=bool(os.getenv("LANGROBO_BRIEFING_HOUR", "").strip()),
+        hour=_int_env("LANGROBO_BRIEFING_HOUR", 8, 0, 23),
+    )
+
     settings = Settings(
         fallback=fallback,
         memory=memory,
@@ -289,6 +308,7 @@ def load_settings() -> Settings:
         telegram=telegram,
         watch=watch,
         consolidation=consolidation,
+        briefing=briefing,
         log_json=_bool_env("LANGROBO_LOG_JSON", True),
     )
     logger.info(

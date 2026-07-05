@@ -22,7 +22,7 @@ _bridge._instance = None
 _bridge.init(StubBridge())
 
 EXPECTED_AGENTS = {"supervisor", "chat", "local_agent", "navigate",
-                   "status", "swiggy", "tracker"}
+                   "status", "swiggy", "tracker", "knowledge", "briefing"}
 
 
 def test_graph_builds_with_all_agents():

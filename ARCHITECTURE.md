@@ -46,13 +46,17 @@ src/langrobo_core/langrobo_core/       pip package (editable install via require
 │   ├── navigate.py        Movement: fine Twist + YOLO visual servoing + Nav2 slot
 │   ├── status.py          Robot operational state
 │   ├── swiggy.py          Food ordering (MCP; degrades cleanly without a token)
-│   └── tracker.py         Delivery tracking + door navigation
+│   ├── tracker.py         Delivery tracking + door navigation
+│   ├── knowledge.py       Q&A over ingested household documents (manuals, notes)
+│   └── briefing.py        Morning briefing (scheduled [SYSTEM] + on-demand)
 ├── tools/                 @tool functions; __init__.py holds per-agent tool sets
 ├── services/
 │   ├── config.py          Validated .env settings — fail fast on malformed values
 │   ├── llm.py             LLM factory + slot pinning + cloud-fallback policy
 │   ├── memory.py          Episodic memory (embedded Qdrant + on-device fastembed)
 │   ├── consolidation.py   Nightly episodic→facts distillation (local model only)
+│   ├── knowledge.py       Document ingest: extract → chunk → embed → Qdrant
+│   ├── briefing.py        Once-daily briefing scheduler ([SYSTEM] producer state)
 │   ├── watch.py           Home watch mode — armed person-detection alerts
 │   ├── health.py          In-process FastAPI: /health /status /metrics (bearer token)
 │   ├── logging.py         JSON logs + per-turn trace IDs (ContextVar)
@@ -182,6 +186,7 @@ image-preserving projection; every other agent gets image-stripped text.
 | Household facts + lists | JSON (`~/.langrobo/household.json`) | **in-prompt** — always visible | dozens of facts; guaranteed recall beats retrieval |
 | Episodic (conversations) | **Qdrant** embedded (`~/.langrobo/qdrant`) | `recall_memory(query)` tool | unbounded history can't fit a prompt |
 | Consolidated facts | `facts` collection (same store) | merged into `recall_memory` results | nightly distillation of episodes — the "self-learning" tier |
+| Document knowledge | `knowledge` collection (same store) | `search_documents` (knowledge agent) | manuals/notes sent to the robot — chunked + embedded; re-sending a file replaces it |
 | Visual household memory | reserved `visual` collection | phase P4 | "where did I leave my keys" |
 
 Episodic details (`services/memory.py`): every user turn is embedded
@@ -240,6 +245,7 @@ dropped, processed between user turns, always entering at the supervisor):
 | Nav completion | event | "[SYSTEM] Navigation succeeded/failed: …" |
 | Watch poll | 2s timer (armed + person seen) | "[SYSTEM] Watch alert — … announce aloud …" |
 | announce_at_home tool | Telegram sender asks for a spoken message | "[SYSTEM] {sender} asks (via Telegram) to announce this aloud …" |
+| Briefing scheduler | 60s timer (≤ once/day at LANGROBO_BRIEFING_HOUR) | "[SYSTEM] Morning briefing time — deliver the household briefing now." |
 
 New proactive features (P2 face-seen greeting, presence events) follow the same
 producer pattern.

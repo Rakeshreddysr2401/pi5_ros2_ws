@@ -73,12 +73,31 @@ not here.
 | `LANGROBO_WATCH_MIN_CONF` | Person-detection confidence floor (default 0.5) |
 | `LANGROBO_CONSOLIDATION` | `false` disables nightly memory consolidation |
 | `LANGROBO_CONSOLIDATION_HOUR` | Local hour the nightly run becomes eligible (default 3) |
+| `LANGROBO_BRIEFING_HOUR` | Set (e.g. `8`) to enable the daily spoken morning briefing — unset = off |
 | `STUDIO_PROVIDER/MODEL/BASE_URL/MAX_TOKENS` | `langgraph dev` only |
 
 Robot state files: `~/.langrobo/` — `household.json`, `reminders.json`,
 `errands.json`, `qdrant/`, `telegram_offset`, `telegram_deferred.json`,
-`watch.json` (armed state), `consolidation.json` (nightly-run cursor).
+`watch.json` (armed state), `consolidation.json` (nightly-run cursor),
+`briefing.json` (last briefing day).
 Back this directory up; delete a file to reset that memory.
+
+## Household knowledge base (documents)
+
+Send the robot a `.pdf`/`.txt`/`.md` on Telegram (owner/family) — it chunks,
+embeds and stores it locally ("Learned 'manual.pdf' — 12 sections"), then the
+**knowledge agent** answers questions from it ("what does error E4 mean?").
+Re-sending a file replaces its old version. Bulk ingest:
+`python3 scripts/ingest_docs.py <files|dir>` — but the embedded Qdrant is
+single-process, so stop the brain first (the script detects this and says so).
+"what documents do you have?" lists them.
+
+## Morning briefing
+
+Opt-in: set `LANGROBO_BRIEFING_HOUR=8` in `.env`. Once a day at/after that
+hour the robot speaks a short summary (today's reminders, weather if Tavily
+is configured, list highlights). On demand any time: "give me my briefing".
+State: `jq .runtime.briefing` on `/status`.
 
 ## Home watch mode
 

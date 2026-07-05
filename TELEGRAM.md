@@ -43,6 +43,7 @@ strangers, even though its username is publicly searchable.
 | Relay messages ("tell Rakesh…") | ✅ | ✅ | ❌ |
 | Announce aloud in the house | ✅ | ✅ | ❌ |
 | Arm/disarm home watch | ✅ | ✅ | ❌ |
+| Add documents to the knowledge base | ✅ | ✅ | ❌ |
 | Request camera photos | ✅ | ❌ | ❌ |
 | Move the robot | ✅ | ❌ | ❌ |
 | Place food orders | ✅ | ❌ | ❌ |
@@ -68,6 +69,10 @@ is logged: `journalctl -u langrobo-brain -o cat | grep "AUDIT telegram"`.
   refuses and offers alternatives — announces anyway only if you insist.
 - **Watch the house** — text "watch the house" / "stop watching" (see
   OPERATIONS.md, Home watch mode). Person seen while armed → photo alert.
+- **Teach it documents** — send a `.pdf`/`.txt`/`.md` file (appliance manual,
+  notes) → "Learned 'manual.pdf' — 12 sections". Then ask about it from
+  anywhere ("what does error E4 mean on the washer?"). Attach a caption
+  question and it answers right after learning. Re-send a file to update it.
 - **Middleman** — "ask Mom when she's back **and let me know**": her eventual
   reply is routed back — spoken aloud if you asked aloud, texted if you
   texted. Open errands live in `~/.langrobo/errands.json` and expire after 24h.

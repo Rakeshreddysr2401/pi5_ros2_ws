@@ -29,6 +29,14 @@ AGENTS: dict[str, dict] = {
         "description": "checking delivery status, order ETA, tracking a Swiggy order",
         "examples": ["where's my order?", "how long until delivery?", "track my food"],
     },
+    "knowledge": {
+        "description": "questions answerable from the household's saved documents — appliance manuals, saved notes/instructions, warranties, papers sent to the robot; also listing what documents exist",
+        "examples": ["how do I descale the coffee machine?", "what does error E4 mean on the washer?", "what documents do you have?"],
+    },
+    "briefing": {
+        "description": "the household briefing — a spoken summary of today's reminders, weather and lists (scheduled morning briefing or asked for directly)",
+        "examples": ["give me my briefing", "what's my day look like?", "[SYSTEM] Morning briefing"],
+    },
 }
 
 

@@ -23,6 +23,7 @@ from std_msgs.msg import Bool, String
 
 from dotenv import load_dotenv
 
+from langrobo_core.services import briefing as briefing_service
 from langrobo_core.services import config as config_service
 from langrobo_core.services import consolidation as consolidation_service
 from langrobo_core.services import health as health_service
@@ -134,6 +135,8 @@ class AgentNode(Node):
             "status":     dict(_spec),
             "swiggy":     dict(_spec),
             "tracker":    dict(_spec),
+            "knowledge":  dict(_spec),
+            "briefing":   dict(_spec),
             # Nightly memory consolidation is a background batch job — it must
             # never stream and never touch chat's slot (a 3am run would evict
             # the hot prefix and make the first morning turn pay ~20s prefill).
@@ -164,6 +167,7 @@ class AgentNode(Node):
         self._telegram = telegram_service.init(settings.telegram)
         self._watch = watch_service.init(settings.watch)
         self._consolidator = consolidation_service.init(settings.consolidation, self._memory)
+        self._briefing = briefing_service.init(settings.briefing)
 
         # Register navigation completion callback
         self._bridge.register_nav_done_callback(self._on_nav_done)
@@ -257,6 +261,9 @@ class AgentNode(Node):
         # ── Memory consolidation check (every 60 s; runs ≤ once/day) ──────
         self.create_timer(60.0, self._poll_consolidation)
 
+        # ── Morning briefing check (every 60 s; fires ≤ once/day) ─────────
+        self.create_timer(60.0, self._poll_briefing)
+
         self.get_logger().info(
             f"Agent starting — provider: {provider}, base_url: {base_url}, "
             f"vision: {self._use_vision}"
@@ -280,6 +287,7 @@ class AgentNode(Node):
             "telegram": self._telegram.status(),
             "watch": self._watch.status(),
             "consolidation": self._consolidator.status(),
+            "briefing": self._briefing.status(),
         }
 
     # ── Startup readiness check ───────────────────────────────────────────
@@ -431,6 +439,16 @@ class AgentNode(Node):
         The run itself is a background thread; it aborts between batches the
         moment real input arrives (the robot's work always wins)."""
         self._consolidator.maybe_run(should_abort=self._has_pending_work)
+
+    def _poll_briefing(self) -> None:
+        """Timer callback — inject the scheduled morning briefing turn.
+        mark_done() BEFORE enqueueing: a crash between the two loses one
+        briefing, which beats delivering it twice."""
+        if not self._briefing.due():
+            return
+        self._briefing.mark_done()
+        self._enqueue_system(
+            "[SYSTEM] Morning briefing time — deliver the household briefing now.")
 
     def _has_pending_work(self) -> bool:
         with self._queue_lock:

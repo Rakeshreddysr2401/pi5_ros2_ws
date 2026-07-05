@@ -3,7 +3,7 @@
 Architecture:
   START → turn_entry → supervisor → supervisor_tools
                                          ↓ (handover)
-                                   handle_handover → [chat|local_agent|navigate|status|swiggy|tracker]
+                                   handle_handover → [chat|local_agent|navigate|status|swiggy|tracker|knowledge|briefing]
                                                             ↓
                                                       per-agent tools
                                                             ↓ (if handover)
@@ -26,6 +26,8 @@ from ..agents.navigate import navigate_node
 from ..agents.status import status_node
 from ..agents.swiggy import swiggy_node
 from ..agents.tracker import tracker_node
+from ..agents.knowledge import knowledge_node
+from ..agents.briefing import briefing_node
 from ..tools import (
     SUPERVISOR_TOOLS,
     CHAT_TOOLS,
@@ -34,6 +36,8 @@ from ..tools import (
     STATUS_TOOLS,
     SWIGGY_TOOLS,
     TRACKER_TOOLS,
+    KNOWLEDGE_AGENT_TOOLS,
+    BRIEFING_TOOLS,
 )
 
 # Agent registry — the single source of truth for the graph's agents. Each entry
@@ -49,6 +53,8 @@ _AGENT_SPECS = {
     "status":      (status_node,      STATUS_TOOLS),
     "swiggy":      (swiggy_node,      SWIGGY_TOOLS),
     "tracker":     (tracker_node,     TRACKER_TOOLS),
+    "knowledge":   (knowledge_node,   KNOWLEDGE_AGENT_TOOLS),
+    "briefing":    (briefing_node,    BRIEFING_TOOLS),
 }
 
 # Max times a single agent node may execute within one user turn. Legitimate

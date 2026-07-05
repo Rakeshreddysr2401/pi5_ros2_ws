@@ -8,6 +8,7 @@ from .music import (pause_music, play_music, resume_music, set_music_volume,
                     stop_music)
 from .reminders import cancel_reminder, list_reminders, set_reminder
 from .announce import announce_at_home
+from .knowledge import KNOWLEDGE_TOOLS
 from .system import get_current_time, get_robot_status, ros2_publish, set_active_order
 from .watch import watch_home
 from .handover import handover
@@ -34,6 +35,9 @@ NAVIGATE_TOOLS     = [move_robot, navigate_to_pose, navigate_to_visible_object,
                       handover] + TELEGRAM_TOOLS
 STATUS_TOOLS       = [get_robot_status, ros2_publish, handover]
 SUPERVISOR_TOOLS   = [handover]
+KNOWLEDGE_AGENT_TOOLS = KNOWLEDGE_TOOLS + [handover]
+BRIEFING_TOOLS     = [list_reminders, get_current_time, recall_memory,
+                      handover] + WEB_TOOLS
 SWIGGY_TOOLS       = [set_active_order, handover] + SWIGGY_FOOD_TOOLS
 TRACKER_TOOLS      = [set_active_order, navigate_to_pose, handover
                       ] + SWIGGY_FOOD_TOOLS + TELEGRAM_TOOLS
