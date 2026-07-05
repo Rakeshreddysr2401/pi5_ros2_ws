@@ -74,17 +74,44 @@ WiFi IPs come from DHCP — **irrelevant now**, because we never hardcode them.
 ## Debug / verify
 
 ```bash
-# On the Pi5 (any shell), see the whole graph through the meeting point:
-export ROS_DISCOVERY_SERVER=rakhi24-desktop.local:11811 ROS_SUPER_CLIENT=1
-ros2 node list          # should list both Pi5 and Jetson nodes
-ros2 topic list         # /voice/*, /audio/*, camera topics
+# On the Pi5, prove the link with DATA, not node lists (see gotcha below):
+export ROS_DISCOVERY_SERVER=127.0.0.1:11811
+ros2 topic echo --once /camera/color/image_raw/compressed \
+    sensor_msgs/msg/CompressedImage --field format   # "jpeg" = Jetson→Pi5 works
 
 systemctl status langrobo-discovery      # meeting point up?
 getent ahostsv4 rakhi-jetson.local       # Jetson resolvable by name?
+curl -s localhost:8090/status | jq .runtime.camera_frame_age_s  # brain's view
 ```
+
+**`ros2 node list` with ROS_SUPER_CLIENT is a red herring on this Jazzy
+build** — it returns empty even while pub/sub through the server works
+perfectly (verified 2026-07-06). Never diagnose the link with node lists;
+echo a continuously-published topic (camera) instead.
 
 Which path is data using? `getent ahostsv4 rakhi24-desktop.local` returns the
 cable IP (`192.168.2.10`) when the cable is up → traffic prefers the wire.
+
+## State of the world — 2026-07-06 (WiFi-only workarounds)
+
+The Ethernet link is still physically dead AND the WiFi AP blocks
+client↔client multicast, so cross-machine mDNS does not work at all right
+now. Three workarounds are live; each is marked in-place with a comment and
+should be removed when the cable is fixed:
+
+1. **Pi5-local clients use loopback** (`scripts/run_brain.sh`,
+   `run_microros.sh`, `dev.sh` → `ROS_DISCOVERY_SERVER=127.0.0.1:11811`).
+   The name resolved IPv6-first on a WiFi-only boot and the server is UDPv4 —
+   local registration silently failed. Loopback is always correct locally;
+   the name is only needed cross-machine.
+2. **Jetson pins the name to IPv4**: `/etc/hosts` on the Jetson host AND
+   `extra_hosts:` in `~/robot/docker-compose.yml` (containers have their own
+   /etc/hosts) map `rakhi24-desktop.local → 192.168.1.16` (Pi5 wlan0, DHCP —
+   re-pin if the lease changes, or reserve the IP in the router).
+3. The `ai_stack` image still bakes `FASTRTPS_DEFAULT_PROFILES_FILE=
+   /config/fastdds_unicast.xml` (interface whitelist, currently the Jetson's
+   WiFi IP 192.168.1.15). It happens to be harmless while that IP holds, but
+   it binds DDS to ONE interface — update or blank it if IPs change.
 
 ## Rollback (if ever needed)
 

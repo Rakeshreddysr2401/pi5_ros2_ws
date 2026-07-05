@@ -6,13 +6,18 @@ Built and unit-tested on the Pi5 (77 tests green); needs a brain rebuild and
 the Jetson back online for full verification. **The Jetson was off/off-network
 on 2026-07-06** — the whole voice/vision side is down until it's powered.
 
-1. **Pi5** — on branch `dev-1.0.9_fable`:
-   `colcon build --symlink-install && sudo systemctl restart langrobo-brain`
-2. **Jetson** — power it on; check it registers with the discovery server
-   (`ROS_SUPER_CLIENT=1 ros2 node list` from the Pi5, see NETWORKING.md);
-   then pull + rebuild per the 2026-07-04 batch below (still undeployed there).
-3. **Jetson wake alias** — add "hey chotu" to the wake gate's `wake_aliases`
-   (speech_vision repo, wake_gate.py / its params) while in there.
+1. **Pi5** — on branch `dev-1.0.9_fable`: built 2026-07-06; still needs
+   `sudo systemctl restart langrobo-brain langrobo-microros` (password).
+2. **Jetson** — ✅ DONE 2026-07-06: ai_stack up (compose exit-127 was the
+   sudo-compose gotcha), voice_pkg/vision_pkg/bringup_pkg rebuilt, stack
+   launched, camera frames verified flowing to the Pi5. WiFi-only networking
+   workarounds applied — see NETWORKING.md "State of the world 2026-07-06".
+3. **Jetson wake alias** — ✅ "chotu/chottu/choto/shotu" added to
+   `wake_aliases` (voice_params.yaml) and deployed. CAVEAT: the NEURAL wake
+   gate still runs the stock `hey_jarvis_v0.1` openWakeWord model — "hey
+   chotu" only works via the transcript fallback path. A custom openWakeWord
+   model ("hey chotu" / "hey rakhi") must be trained offline for it to be a
+   true wake word (stt_node.py wake_models param is the slot).
 4. **Verify watch mode**:
    - "Rakhi, watch the house" → confirms armed;
      `curl -s localhost:8090/status | jq .runtime.watch` → `"armed": true`

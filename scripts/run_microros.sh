@@ -14,7 +14,11 @@ export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 # Join the DDS graph via the "meeting point" (Fast DDS Discovery Server on this
 # Pi5) BY NAME — no hardcoded IPs, works on any network. See NETWORKING.md.
-export ROS_DISCOVERY_SERVER="rakhi24-desktop.local:11811"
+# The meeting point runs ON this Pi5, so local clients use loopback — the
+# mDNS name resolves IPv6-first on WiFi-only boots and the server is UDPv4,
+# which silently broke registration (2026-07-06). The NAME is only for the
+# Jetson side (pinned to IPv4 there — see NETWORKING.md).
+export ROS_DISCOVERY_SERVER="127.0.0.1:11811"
 unset ROS_LOCALHOST_ONLY
 
 exec ros2 run micro_ros_agent micro_ros_agent udp4 --port "$UDP_PORT"
