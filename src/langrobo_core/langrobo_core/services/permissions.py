@@ -22,10 +22,12 @@ CAP_ORDER = "order"    # place food orders (spends money)
 CAP_REMIND = "remind"  # set/cancel reminders
 CAP_WATCH = "watch"    # arm/disarm home watch (disarm is the sensitive half —
                        # a guest must not be able to switch the alarm off)
+CAP_ANNOUNCE = "announce"  # speak a message aloud INTO the home from Telegram —
+                           # a guest must not use the robot as a megaphone
 
 ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
-    "owner":  frozenset({CAP_CHAT, CAP_RELAY, CAP_PHOTO, CAP_MOVE, CAP_ORDER, CAP_REMIND, CAP_WATCH}),
-    "family": frozenset({CAP_CHAT, CAP_RELAY, CAP_REMIND, CAP_WATCH}),
+    "owner":  frozenset({CAP_CHAT, CAP_RELAY, CAP_PHOTO, CAP_MOVE, CAP_ORDER, CAP_REMIND, CAP_WATCH, CAP_ANNOUNCE}),
+    "family": frozenset({CAP_CHAT, CAP_RELAY, CAP_REMIND, CAP_WATCH, CAP_ANNOUNCE}),
     "guest":  frozenset({CAP_CHAT}),
 }
 

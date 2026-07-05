@@ -23,7 +23,20 @@ class StubBridge:
         self._active_order_id: str | None = None
         self._order_lock = threading.Lock()
         self._nav_done_callback = None
+        self._system_turn_callback = None
+        self.system_turns: list[str] = []   # tests inspect what was enqueued
         logger.info("StubBridge initialised (no ROS2 — all publishes are logged)")
+
+    # ── Self-initiated turns ──────────────────────────────────────────────
+
+    def register_system_turn_callback(self, cb) -> None:
+        self._system_turn_callback = cb
+
+    def enqueue_system_turn(self, text: str) -> None:
+        self.system_turns.append(text)
+        logger.info("[STUB] enqueue_system_turn: %s", text)
+        if self._system_turn_callback:
+            self._system_turn_callback(text)
 
     # ── Topics ────────────────────────────────────────────────────────────
 

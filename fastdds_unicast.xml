@@ -3,10 +3,18 @@
   <profiles>
     <transport_descriptors>
       <transport_descriptor>
+        <!-- 2026-07-05: TEMPORARY WiFi-only config. The Pi5<->Jetson Ethernet
+             link is physically dead (link lights up both ends, zero ARP either
+             way, survived a cable swap). The dead eth0 (192.168.2.10) is still
+             UP at the link layer, so leaving it in the whitelist poisoned DDS
+             discovery (brain dropped off the graph, camera stream stalled).
+             Bound to wlan0 (192.168.1.16) ONLY. Restore from git — which pins
+             the Ethernet 192.168.2.x addresses — once the wired link is fixed;
+             WiFi adds latency/jitter for the voice pipeline. -->
         <transport_id>eth_only</transport_id>
         <type>UDPv4</type>
         <interfaceWhiteList>
-          <address>192.168.2.10</address>
+          <address>192.168.1.16</address>
         </interfaceWhiteList>
       </transport_descriptor>
     </transport_descriptors>
@@ -18,8 +26,8 @@
         <useBuiltinTransports>false</useBuiltinTransports>
         <builtin>
           <initialPeersList>
-            <locator><udpv4><address>192.168.2.10</address></udpv4></locator>
-            <locator><udpv4><address>192.168.2.20</address></udpv4></locator>
+            <locator><udpv4><address>192.168.1.16</address></udpv4></locator>
+            <locator><udpv4><address>192.168.1.15</address></udpv4></locator>
           </initialPeersList>
         </builtin>
       </rtps>

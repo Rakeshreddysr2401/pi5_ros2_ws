@@ -167,6 +167,8 @@ class AgentNode(Node):
 
         # Register navigation completion callback
         self._bridge.register_nav_done_callback(self._on_nav_done)
+        # Let pure-zone tools inject [SYSTEM] turns (announce_at_home et al.)
+        self._bridge.register_system_turn_callback(self._enqueue_system)
 
         # ── Build graph ───────────────────────────────────────────────────
         self._graph   = build_graph()

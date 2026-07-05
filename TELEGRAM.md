@@ -41,6 +41,8 @@ strangers, even though its username is publicly searchable.
 |---|---|---|---|
 | Chat, questions, reminders | ✅ | ✅ | ✅ (chat only) |
 | Relay messages ("tell Rakesh…") | ✅ | ✅ | ❌ |
+| Announce aloud in the house | ✅ | ✅ | ❌ |
+| Arm/disarm home watch | ✅ | ✅ | ❌ |
 | Request camera photos | ✅ | ❌ | ❌ |
 | Move the robot | ✅ | ❌ | ❌ |
 | Place food orders | ✅ | ❌ | ❌ |
@@ -60,6 +62,12 @@ is logged: `journalctl -u langrobo-brain -o cat | grep "AUDIT telegram"`.
   multimodal model actually sees it.
 - **Relay by voice** — say "Rakhi, tell Mom I'll be late" → lands on Mom's
   phone as a Telegram message.
+- **Speak into the house** — text "announce that dinner is ready" and the
+  robot says it out loud at home, then confirms to you. A bare "tell Mom X"
+  gets one question back first (her phone, or aloud?). During quiet hours it
+  refuses and offers alternatives — announces anyway only if you insist.
+- **Watch the house** — text "watch the house" / "stop watching" (see
+  OPERATIONS.md, Home watch mode). Person seen while armed → photo alert.
 - **Middleman** — "ask Mom when she's back **and let me know**": her eventual
   reply is routed back — spoken aloud if you asked aloud, texted if you
   texted. Open errands live in `~/.langrobo/errands.json` and expire after 24h.

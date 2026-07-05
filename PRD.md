@@ -57,6 +57,19 @@ report-back, quiet hours. Voice and Telegram coexist by queue priority:
 system events → voice (person in the room) → Telegram. Watch mode adds
 arm/disarm from Telegram and photo alerts (which bypass quiet hours).
 
+Coexistence decisions (grill session 2026-07-06, part 2):
+- **D9 One shared history stays** — the robot is one household member across
+  both channels; someone at home texting it and someone talking to it feed
+  the same brain. A Telegram message during a voice conversation waits its
+  turn and replies silently to the sender's chat; the person in the room
+  never notices.
+- **D10 Telegram→voice announcements** (`announce_at_home`): a Telegram
+  sender can have the robot SAY things at home ("announce that dinner is
+  ready"). Bare "tell Mom X" → the robot asks the sender back: her phone or
+  aloud? Quiet hours refuse with alternatives; explicit insistence overrides.
+  Owner+family only. Walking to the person first remains phase 2 — it
+  announces from where it stands.
+
 ## 5. Architecture
 
 - Evolve, don't rewrite (D1). LangGraph StateGraph + supervisor routing +

@@ -238,6 +238,7 @@ dropped, processed between user turns, always entering at the supervisor):
 | Delivery poll | 120s timer (order active) | "[SYSTEM] Check if order {id} has been delivered" |
 | Nav completion | event | "[SYSTEM] Navigation succeeded/failed: …" |
 | Watch poll | 2s timer (armed + person seen) | "[SYSTEM] Watch alert — … announce aloud …" |
+| announce_at_home tool | Telegram sender asks for a spoken message | "[SYSTEM] {sender} asks (via Telegram) to announce this aloud …" |
 
 New proactive features (P2 face-seen greeting, presence events) follow the same
 producer pattern.
@@ -287,6 +288,16 @@ in the room wins), become turns framed `[Telegram from <name>]` in the SAME
 shared history and KV-cache prefix as voice, and route their reply back to the
 sender's chat — never the speaker. Telegram turns don't stream and can't be
 barge-in aborted; voice turns byte-for-byte unaffected.
+
+The one sanctioned Telegram→speaker path is `announce_at_home`
+(tools/announce.py, CAP_ANNOUNCE): it enqueues a `[SYSTEM]` turn — the
+standard producer pattern — so the robot says the message aloud via the
+normal proactive-speech path and it lands in shared history. Policy: a bare
+"tell Mom X" from Telegram asks the sender back (phone or aloud?); quiet
+hours refuse with alternatives unless the sender explicitly insists
+(`override_quiet_hours`). Tools reach the system queue via
+`bridge.enqueue_system_turn()` (agent_node registers `_enqueue_system` at
+startup, mirroring the nav-done callback).
 
 Trust model (`services/permissions.py`): Telegram gives verified identity
 (chat_id → name + role); role→capability checks are enforced **inside the

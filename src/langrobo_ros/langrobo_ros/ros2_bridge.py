@@ -78,6 +78,11 @@ class ROS2Bridge:
         # ── Registered callback for navigation completion ──────────────────────
         self._nav_done_callback: Callable[[bool, str], None] | None = None
 
+        # ── Registered callback for tool-injected [SYSTEM] turns ───────────────
+        # Lets pure-zone tools (e.g. announce_at_home) hand a proactive turn to
+        # agent_node's system queue without importing anything ROS-side.
+        self._system_turn_callback: Callable[[str], None] | None = None
+
         # ── Music playback state (Jetson music_node) ──────────────────────────
         self._music_lock = threading.Lock()
         self._music_state: dict | None = None
@@ -302,6 +307,21 @@ class ROS2Bridge:
     def register_nav_done_callback(self, cb: Callable[[bool, str], None]) -> None:
         """Register a callback(success: bool, message: str) called when navigation ends."""
         self._nav_done_callback = cb
+
+    # ── Tool-injected [SYSTEM] turns ────────────────────────────────────────
+
+    def register_system_turn_callback(self, cb: Callable[[str], None]) -> None:
+        """Register agent_node's _enqueue_system so pure-zone tools can inject
+        proactive turns (the standard [SYSTEM] producer pattern)."""
+        self._system_turn_callback = cb
+
+    def enqueue_system_turn(self, text: str) -> None:
+        """Queue a [SYSTEM] turn (FIFO, never dropped, spoken via the normal
+        proactive path). Called from tools on the worker thread — the callback
+        only appends to agent_node's locked queue, so this is thread-safe."""
+        cb = self._system_turn_callback
+        if cb:
+            cb(text)
 
     def cancel_navigation(self) -> None:
         """Cancel any active navigation goal."""
