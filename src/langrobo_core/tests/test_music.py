@@ -108,3 +108,23 @@ def test_music_context_ages_out_dead_player():
     assert "Zombie Track" in music_context()
     bridge.age = 60.0   # heartbeat stopped a minute ago — player is dead
     assert music_context() == ""
+
+
+def test_volume_relative_change_reads_current_level():
+    from langrobo_core.tools.music import set_music_volume
+    bridge = _with_bridge(FakeMusicBridge())
+    bridge.feed({"playing": True, "title": "Song", "volume": 40})
+    out = set_music_volume.func(change=15)
+    assert "55%" in out
+    assert bridge.commands[-1] == {"action": "volume", "level": 55,
+                                   "t": bridge.commands[-1]["t"]}
+    # Clamped at the edges; absolute still works.
+    bridge.feed({"playing": True, "title": "Song", "volume": 95})
+    assert "100%" in set_music_volume.func(change=+20)
+    assert "30%" in set_music_volume.func(percent=30)
+
+
+def test_volume_change_without_state_uses_default_base():
+    from langrobo_core.tools.music import set_music_volume
+    _with_bridge(FakeMusicBridge())   # no state fed — player idle since boot
+    assert "55%" in set_music_volume.func(change=-15)   # 70 default base

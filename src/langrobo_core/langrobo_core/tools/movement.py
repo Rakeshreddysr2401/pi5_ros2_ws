@@ -220,7 +220,26 @@ def navigate_to_visible_object(target: str) -> str:
         bridge.set_vision_target("")            # idle the Jetson target_node
 
 
-# NOTE: depth-based approach (Jetson /vision/find_object_pose service → Nav2) is
-# deferred until the D555 depth camera + Isaac ROS SLAM/Nav2 stack lands. When it
-# does, prefer it for obstacle-aware approach and fall back to the visual servoing
-# above. See ARCHITECTURE.md "Build Order" (Phase 4).
+# ── Phase-2 reserved flows (commented on purpose — ThingsToDo #7/#8) ──────────
+#
+# Depth-based approach ("go near the table", obstacle-aware), once the depth
+# camera + Isaac ROS (nvblox/SLAM/Nav2) land on the Jetson:
+#   1. look() grabs a frame; the multimodal LLM (local_agent) confirms WHICH
+#      table and roughly where it is in view.
+#   2. New tool `approach_object_3d(target)` calls the Jetson service
+#      /vision/find_object_pose (srv already reserved in robot_interfaces:
+#      FindObjectPose.srv) → returns a map-frame pose for the detection.
+#   3. The pose goes out as a Nav2 goal via bridge.start_nav_to_pose() — the
+#      SAME plumbing navigate_to_pose() uses today, so completion arrives as
+#      the existing "[SYSTEM] Navigation succeeded/failed" turn.
+#   Person-following becomes the same loop with target="person" + replanning.
+#   Until then navigate_to_visible_object (above) stays the mono-camera path.
+#
+# Camera pan-tilt (2 servos on the ESP32, PRODUCT.md hardware rec #3):
+#   - ESP32 firmware adds a micro-ROS subscriber, e.g. /camera/pan_tilt_cmd
+#     (std_msgs/String JSON {"pan_deg": -90..90, "tilt_deg": -30..30}) —
+#     firmware lives in ESP_32_frimware/, update when the servos arrive.
+#   - Brain side: a `point_camera(direction)` tool publishing via
+#     bridge.publish_to_topic() (already generic), owned by the navigate
+#     agent ("look left", "look at the door") and usable by watch mode to
+#     sweep while armed. No graph changes needed — it's one tool + one topic.

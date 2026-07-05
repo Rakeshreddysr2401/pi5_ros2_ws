@@ -90,10 +90,21 @@ def resume_music() -> str:
 
 
 @tool
-def set_music_volume(percent: int) -> str:
-    """Set the music volume, 0-100 percent."""
-    level = max(0, min(100, int(percent)))
-    _bridge.get().music_command({"action": "volume", "level": level, "t": time.time()})
+def set_music_volume(percent: int = -1, change: int = 0) -> str:
+    """Set or adjust the music volume.
+
+    percent: absolute level 0-100 — "set the volume to 40" → percent=40.
+    change:  relative step — "louder"/"increase the volume" → change=15,
+             "quieter"/"a bit softer" → change=-15 (use ±25 for "much").
+    Give exactly one of the two."""
+    bridge = _bridge.get()
+    if percent < 0 and change:
+        state = bridge.get_music_state() or {}
+        level = int(state.get("volume", 70)) + int(change)
+    else:
+        level = int(percent)
+    level = max(0, min(100, level))
+    bridge.music_command({"action": "volume", "level": level, "t": time.time()})
     return f"Volume set to {level}%."
 
 
@@ -109,4 +120,6 @@ def music_context() -> str:
         return ""
     title = state.get("title", "music")
     paused = " (paused)" if state.get("paused") else ""
-    return f"\n== NOW PLAYING ==\n{title}{paused}\n"
+    volume = state.get("volume")
+    vol = f" — volume {int(volume)}%" if volume is not None else ""
+    return f"\n== NOW PLAYING ==\n{title}{paused}{vol}\n"

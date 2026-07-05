@@ -223,6 +223,7 @@ Three modes, two live today:
 | `/audio/music_state` | String (JSON) | Jetson → Pi5 | `{playing, paused, title, volume, error, stamp}` — cached by bridge |
 | `/goal_pose` | PoseStamped | Pi5 → Jetson | Nav2 goal (phase 2) |
 | `/visual_slam/tracking/odometry` | Odometry | Jetson → Pi5 | robot pose (phase 2) |
+| `/camera/pan_tilt_cmd` | String (JSON) | Pi5 → ESP32 | reserved — pan-tilt servos (phase 2, see tools/movement.py notes) |
 | `/cmd_vel` | Twist | Pi5 → ESP32 | wheels via micro-ROS |
 | `/diag/timing` | String (JSON) | both | per-stage latency events (scripts/latency_replay.py) |
 | `/brain/thinking` | Bool | Pi5 | True while LLM running |
@@ -321,6 +322,44 @@ queue flushed by the poller.
   Bearer-token secured; tokenless mode is forced to localhost.
 - **Timing events**: `/diag/timing` per-stage waterfall via
   `scripts/latency_replay.py`.
+
+## Patterns considered and rejected (and when to revisit)
+
+Asked for explicitly (ThingsToDo #3/#5, 2026-07-06); the answer is recorded
+so it isn't re-litigated every few months. Every rejection is about the same
+constraint: **one 12B model on the Mac Mini and a ≤2s first-audio budget** —
+every extra LLM hop or cache-thrashing prompt costs real seconds.
+
+- **langgraph-swarm / langgraph-supervisor libraries**: the hand-rolled
+  supervisor + handover registry IS this pattern, minus abstraction layers we
+  can't tune (slot pinning, grammar-forced handover, loop guards). Revisit if
+  the agent count triples or we hire contributors who know the libraries.
+- **Subgraphs**: useful when an agent needs private multi-node state. Every
+  agent here is one node + one tool node sharing one message log (that
+  sharing IS the KV-cache strategy). Adopt per-agent the day one genuinely
+  needs an internal pipeline — build.py can mount a compiled subgraph as a
+  node without touching the others.
+- **DeepAgents / background task lane**: rejected for the realtime loop
+  (PRODUCT.md); long-horizon work rides the errand ledger + [SYSTEM]
+  producers instead. Revisit for genuinely long tasks (multi-step web
+  research) — as a separate low-priority queue, never inside a voice turn.
+- **`interrupt()` (LangGraph human-in-the-loop)**: needs a checkpointer;
+  production deliberately keeps history in-process (agent_node owns it for
+  trimming + cache warming). Our confirms ("phone or aloud?") are plain
+  conversational turns — the reply ends the turn, the user's answer is the
+  next turn. Same UX, zero infra.
+- **Custom stream modes (`custom`, `updates`)**: the pipeline already streams
+  at the right grain — sentence chunks to TTS via callbacks
+  (`speech_stream.py`) while `stream_mode="values"` drives turn logic.
+  Finer-grained streaming has nothing to feed: TTS is the only consumer.
+- **Folder-per-concern renames** (`nodes/`, `swiggy_food_agent`, …): the
+  separation exists — `graph/` is topology+plumbing nodes, `agents/` is one
+  module per agent, `tools/`, `services/`, prompts in `prompts.py`, and the
+  ROS boundary is a package split. Renaming working agents ("chat" →
+  "general_query_agent") would churn the registry, handover Literal, slot
+  map, sticky logic and tests for zero behaviour. New agents get the
+  descriptive names (`swiggy` predates the convention; rename it the next
+  time its contract changes anyway).
 
 ## How to add an agent
 
