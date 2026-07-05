@@ -1,7 +1,7 @@
 [Unit]
 Description=LangRobo micro-ROS agent (Pi5 <-> ESP32 WiFi UDP bridge)
-After=network-online.target
-Wants=network-online.target
+After=network-online.target langrobo-discovery.service
+Wants=network-online.target langrobo-discovery.service
 
 [Service]
 Type=exec

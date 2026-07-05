@@ -1,7 +1,7 @@
 [Unit]
 Description=LangRobo brain (LangGraph agent_node)
-After=network-online.target langrobo-microros.service
-Wants=network-online.target langrobo-microros.service
+After=network-online.target langrobo-discovery.service langrobo-microros.service
+Wants=network-online.target langrobo-discovery.service langrobo-microros.service
 
 [Service]
 Type=exec

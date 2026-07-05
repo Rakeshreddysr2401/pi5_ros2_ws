@@ -12,7 +12,9 @@ set -u
 
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-export FASTRTPS_DEFAULT_PROFILES_FILE=$HOME/ros2_ws/fastdds_unicast.xml
+# Join the DDS graph via the "meeting point" (Fast DDS Discovery Server on this
+# Pi5) BY NAME — no hardcoded IPs, works on any network. See NETWORKING.md.
+export ROS_DISCOVERY_SERVER="rakhi24-desktop.local:11811"
 unset ROS_LOCALHOST_ONLY
 
 exec ros2 run micro_ros_agent micro_ros_agent udp4 --port "$UDP_PORT"

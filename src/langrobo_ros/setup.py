@@ -14,6 +14,7 @@ setup(
         ('share/' + package_name + '/systemd', [
             'systemd/langrobo-brain.service',
             'systemd/langrobo-microros.service',
+            'systemd/langrobo-discovery.service',
         ]),
     ],
     install_requires=[

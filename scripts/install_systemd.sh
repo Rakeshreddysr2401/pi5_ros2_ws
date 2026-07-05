@@ -8,8 +8,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-sudo cp src/langrobo_ros/systemd/langrobo-microros.service /etc/systemd/system/
-sudo cp src/langrobo_ros/systemd/langrobo-brain.service    /etc/systemd/system/
+sudo cp src/langrobo_ros/systemd/langrobo-discovery.service /etc/systemd/system/
+sudo cp src/langrobo_ros/systemd/langrobo-microros.service  /etc/systemd/system/
+sudo cp src/langrobo_ros/systemd/langrobo-brain.service     /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now langrobo-microros langrobo-brain
-systemctl --no-pager status langrobo-microros langrobo-brain || true
+sudo systemctl enable --now langrobo-discovery langrobo-microros langrobo-brain
+systemctl --no-pager status langrobo-discovery langrobo-microros langrobo-brain || true
