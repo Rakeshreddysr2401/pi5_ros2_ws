@@ -8,7 +8,8 @@
 #                               #   (+ this Pi5's micro-ROS agent for the ESP32
 #                               #   wheels). No isaac_ros — the rover has no
 #                               #   depth camera / lidar yet.
-#   ./scripts/fleet.sh stop     # stop the remote pieces of BOTH modes
+#   ./scripts/fleet.sh stop     # park the robot: stop the body, keep brain up
+#   ./scripts/fleet.sh down     # full shutdown incl. this Pi5's services (sudo)
 #   ./scripts/fleet.sh status   # who's up, everywhere
 #
 # The brain (langrobo-brain) and the DDS meeting point (langrobo-discovery)
@@ -69,6 +70,8 @@ rover)
     echo "fleet: ROVER mode up (isaac_ros not needed — rover has no depth cam/lidar yet)."
     ;;
 stop)
+    # Park the robot: stop the body (sim + Jetson roles). No password needed.
+    # Brain + discovery stay up so chat/Telegram keeps listening.
     if reachable rakhi24.local; then
         $SSH $LAPTOP "$SIM_SCRIPT stop" || true
     fi
@@ -76,8 +79,25 @@ stop)
         $SSH $JETSON "$ROLE_SCRIPT voice stop" || true
         $SSH $JETSON "$ROLE_SCRIPT perception stop" || true
     fi
-    echo "fleet: remote pieces stopped (brain/discovery/microros on this Pi5 left as-is;"
-    echo "       use systemctl to stop those)"
+    echo "fleet: robot body stopped. Brain + discovery still up (Telegram/chat alive)."
+    echo "       Full shutdown incl. Pi5 services: $0 down"
+    ;;
+down)
+    # Full shutdown: everything 'stop' does, PLUS this Pi5's own services
+    # (brain, micro-ROS wheels, discovery meeting point). Those are systemd
+    # system units, so this asks for your password once.
+    if reachable rakhi24.local; then
+        $SSH $LAPTOP "$SIM_SCRIPT stop" || true
+    fi
+    if reachable rakhi-jetson.local; then
+        $SSH $JETSON "$ROLE_SCRIPT voice stop" || true
+        $SSH $JETSON "$ROLE_SCRIPT perception stop" || true
+    fi
+    echo "pi5:    stopping brain, micro-ROS, discovery (needs sudo)..."
+    sudo systemctl stop langrobo-brain langrobo-microros langrobo-discovery
+    echo "pi5:    discovery=$(systemctl is-active langrobo-discovery)  brain=$(systemctl is-active langrobo-brain)  microros=$(systemctl is-active langrobo-microros)"
+    echo "fleet: fully DOWN. Bring back with: $0 sim   (or rover)"
+    echo "       (these units are enabled, so they'll also restart on next Pi5 boot)"
     ;;
 status)
     echo "pi5:    discovery=$(systemctl is-active langrobo-discovery)  brain=$(systemctl is-active langrobo-brain)  microros=$(systemctl is-active langrobo-microros)"
@@ -94,7 +114,12 @@ status)
     fi
     ;;
 *)
-    echo "usage: $0 {sim|rover|stop|status}"
+    echo "usage: $0 {sim|rover|stop|down|status}"
+    echo "  sim    start simulation body (laptop Gazebo+Nav2 + Jetson isaac_ros)"
+    echo "  rover  start real body (Pi5 micro-ROS wheels + Jetson voice)"
+    echo "  stop   stop the robot body; keep brain + discovery (Telegram) alive"
+    echo "  down   full shutdown incl. Pi5 brain/discovery/microros (asks sudo)"
+    echo "  status show what's up everywhere"
     exit 2
     ;;
 esac
