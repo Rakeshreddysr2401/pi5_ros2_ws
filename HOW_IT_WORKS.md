@@ -6,6 +6,7 @@ All of this was verified live on 2026-07-03 (18 turns, zero errors).
 
 ---
 
+
 ## The machines and what runs on each
 
 | Machine | Runs | Talks over |
