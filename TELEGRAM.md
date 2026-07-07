@@ -20,7 +20,6 @@ The robot connects as a **bot** with its own token.
    message ("hi"). Telegram forbids bots from initiating conversations —
    one message unlocks replies forever. Skip this and the robot's sends fail.
 4. **Configure** `.env` on the Pi5 (`~/ros2_ws/.env`):
-
    ```bash
    LANGROBO_TELEGRAM_TOKEN=7123456789:AAHfQx...
    LANGROBO_TELEGRAM_ALLOWLIST=1234567890:Rakesh:owner,9876543210:Mom:family
