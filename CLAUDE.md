@@ -7,9 +7,32 @@ Read HOW_IT_WORKS.md for the end-to-end walkthrough (boot, turn lifecycle,
 failure paths); ARCHITECTURE.md before touching graph/agent code;
 OPERATIONS.md for run/deploy/troubleshooting; PRODUCT.md for the roadmap.
 
+## Fleet start — one command brings up the whole robot
+
+`scripts/fleet.sh {sim|rover|stop|status}` (run here on the Pi5). Picks the robot **body**:
+
+- **`sim`** — the SIMULATION body: sshes the laptop and starts its Gazebo sim + Nav2
+  (`rover_sim`), and starts the Jetson's `isaac_ros` perception container. Use this to
+  develop/test the brain against a full nav stack + depth/lidar without the real robot.
+- **`rover`** — the REAL body: starts this Pi5's micro-ROS agent (ESP32 wheels) and the
+  Jetson's `ai_stack` voice pipeline. Does NOT start `isaac_ros` — the real rover has no
+  depth camera / lidar / imu yet, so there's nothing for the perception pipelines to consume.
+- **`stop`** stops the remote pieces of both modes; **`status`** shows who's up everywhere.
+
+`langrobo-discovery` (the DDS meeting point) and `langrobo-brain` run here in **both** modes;
+fleet.sh ensures them. Each machine can still be driven on its own — the laptop via
+`rover_sim/.../fleet_sim.sh`, the Jetson via `~/robot/scripts/fleet_role.sh {voice|perception}`.
+Reaches the other machines by mDNS name over passwordless ssh (see NETWORKING.md); the
+laptop's key + sshd were set up 2026-07-07 so the Pi5→laptop hop works.
+
 ## Commands
 
 ```bash
+# Whole robot (see "Fleet start" above)
+./scripts/fleet.sh sim        # simulation body (laptop sim + jetson isaac_ros)
+./scripts/fleet.sh rover      # real body (pi5 microros + jetson voice)
+./scripts/fleet.sh status
+
 # Test (pure core — no robot, no LLM, no keys; ~4s)
 cd src/langrobo_core && python3 -m pytest tests/ -q
 
