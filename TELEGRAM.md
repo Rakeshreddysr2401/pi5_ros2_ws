@@ -10,6 +10,7 @@ The robot connects as a **bot** with its own token.
 
 ## Setup (once, ~5 minutes)
 
+
 1. **Create the bot**: in Telegram, chat with **@BotFather** → `/newbot` →
    pick a display name (`Rakhi`) and a unique username ending in `bot`
    (`RakhiHomeBot`). BotFather returns a **token** (`7123456789:AAHfQx…`).
