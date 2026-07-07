@@ -1,7 +1,9 @@
 import math
 import time
+from typing import Annotated
 
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
 
 from . import _bridge
 
@@ -93,8 +95,21 @@ def move_robot(command: str) -> str:
     return f"Movement done: {command}"
 
 
+# Origin of the most recent navigate_to_pose request. The Nav2 result lands
+# minutes later as a [SYSTEM] turn whose default reply sink is the speaker;
+# when the request came from Telegram the completion report must be routed
+# back to that chat instead — agent_node._on_nav_done reads this to build
+# the routing hint (same pattern as errand-reply forwarding).
+_last_nav_requester: dict | None = None
+
+
+def get_last_nav_requester() -> dict | None:
+    return _last_nav_requester
+
+
 @tool
-def navigate_to_pose(location: str) -> str:
+def navigate_to_pose(location: str,
+                     state: Annotated[dict, InjectedState]) -> str:
     """Send the robot to a named location using Jetson Nav2 map-based navigation.
 
     Nav2 handles obstacle avoidance, path planning, and localisation automatically.
@@ -111,9 +126,35 @@ def navigate_to_pose(location: str) -> str:
         available = ", ".join(known.keys()) if known else "none configured yet"
         return f"Unknown location '{location}'. Available: {available}"
 
+    global _last_nav_requester
+    _last_nav_requester = {
+        "channel": state.get("channel") or "voice",
+        "sender": state.get("sender_name") or "voice",
+    }
+
     x, y, yaw_deg = known[loc]
     bridge.start_nav_to_pose(x, y, yaw_deg, label=loc)
     return f"Navigation started: heading to '{location}' ({x:.1f}, {y:.1f}). I will report when I arrive."
+
+
+@tool
+def save_location(name: str) -> str:
+    """Save the robot's CURRENT position under a name, so the user can send the
+    robot back later with navigate_to_pose(name). Use when the user says
+    "remember this spot as X", "save this location as the charging dock", etc.
+    Survives restarts.
+
+    name: short lowercase identifier, e.g. 'table_5' or 'charging_dock'."""
+    bridge = _bridge.get()
+    pose = bridge.get_current_pose()
+    if pose is None:
+        return ("I can't determine my position right now — localisation isn't "
+                "giving me a fix, so I can't save this spot.")
+    x, y, yaw = pose
+    key = name.lower().strip().replace(" ", "_")
+    bridge.add_known_location(key, round(x, 2), round(y, 2), round(yaw, 1))
+    return (f"Saved my current position ({x:.2f}, {y:.2f}, facing {yaw:.0f}°) as "
+            f"'{key}'. Say the word and I can navigate back to it anytime.")
 
 
 # ── Visual-servoing approach ("go near the cup") ──────────────────────────────

@@ -64,6 +64,13 @@ class StubBridge:
         # The STUDIO_TEST_IMAGE frame (if any) is always "fresh".
         return 0.0 if self.get_frame() is not None else None
 
+    def get_current_pose(self):
+        return (0.0, 0.0, 0.0)
+
+    def add_known_location(self, name, x, y, yaw_deg):
+        self._known_locations = getattr(self, "_known_locations", {})
+        self._known_locations[name] = (x, y, yaw_deg)
+
     def get_known_locations(self) -> dict:
         return self._known_locations
 

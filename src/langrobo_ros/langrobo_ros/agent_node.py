@@ -314,9 +314,21 @@ class AgentNode(Node):
     # ── Navigation done callback (background nav thread → worker) ─────────
 
     def _on_nav_done(self, success: bool, message: str) -> None:
-        """Called by bridge when Nav2 goal finishes. Injects system message."""
+        """Called by bridge when Nav2 goal finishes. Injects system message.
+
+        A system turn replies to the speaker by default; when the navigation
+        was requested over Telegram the report belongs in that chat, so the
+        turn carries an explicit routing instruction (same pattern as the
+        errand-reply forwarding in _frame_telegram_turn)."""
         status = "Navigation succeeded" if success else "Navigation failed"
-        self._enqueue_system(f"[SYSTEM] {status}: {message}")
+        from langrobo_core.tools.movement import get_last_nav_requester
+        req = get_last_nav_requester() or {}
+        routing = ""
+        if req.get("channel") == "telegram":
+            routing = (f" (This navigation was requested by {req.get('sender')} "
+                       f"over Telegram — send this report to them with "
+                       f"send_telegram_message instead of saying it aloud.)")
+        self._enqueue_system(f"[SYSTEM] {status}: {message}{routing}")
 
     # ── Image callback (spin thread) ──────────────────────────────────────
 

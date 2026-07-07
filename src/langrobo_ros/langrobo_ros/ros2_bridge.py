@@ -10,6 +10,7 @@ langrobo_core.tools._bridge.get() which returns this object.
 """
 
 import json
+import os
 import threading
 import time
 from typing import Callable, Optional
@@ -29,6 +30,24 @@ class ROS2Bridge:
 
         # Named map locations: {name: (x, y, yaw_deg)} — populated from nav_params
         self._known_locations: dict = known_locations or {}
+
+        # Locations saved at runtime (save_location tool) persist across
+        # restarts and shadow yaml defaults on name collision.
+        self._locations_file = os.path.expanduser("~/.langrobo/locations.json")
+        self._saved_locations: dict = {}
+        try:
+            with open(self._locations_file) as f:
+                self._saved_locations = {k: tuple(v) for k, v in json.load(f).items()}
+            self._known_locations.update(self._saved_locations)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            node.get_logger().warning(f"Could not load saved locations: {e}")
+
+        # TF buffer for get_current_pose() (map -> base_link)
+        from tf2_ros import Buffer, TransformListener
+        self._tf_buffer = Buffer()
+        self._tf_listener = TransformListener(self._tf_buffer, node)
 
         # ── Locks ─────────────────────────────────────────────────────────────
         self._frame_lock   = threading.Lock()
@@ -148,6 +167,26 @@ class ROS2Bridge:
 
     def get_known_locations(self) -> dict:
         return self._known_locations
+
+    def get_current_pose(self) -> tuple | None:
+        """Robot pose in the map frame as (x, y, yaw_deg); None if TF has no fix."""
+        import rclpy.time
+        try:
+            t = self._tf_buffer.lookup_transform("map", "base_link", rclpy.time.Time())
+        except Exception:
+            return None
+        q = t.transform.rotation
+        yaw = math.degrees(math.atan2(2 * (q.w * q.z + q.x * q.y),
+                                      1 - 2 * (q.y * q.y + q.z * q.z)))
+        return (t.transform.translation.x, t.transform.translation.y, yaw)
+
+    def add_known_location(self, name: str, x: float, y: float, yaw_deg: float) -> None:
+        """Add/overwrite a named location and persist it across restarts."""
+        self._known_locations[name] = (x, y, yaw_deg)
+        self._saved_locations[name] = (x, y, yaw_deg)
+        os.makedirs(os.path.dirname(self._locations_file), exist_ok=True)
+        with open(self._locations_file, "w") as f:
+            json.dump({k: list(v) for k, v in self._saved_locations.items()}, f, indent=2)
 
     # ── YOLO target finder (Jetson target_node) ───────────────────────────
 
@@ -403,7 +442,7 @@ class ROS2Bridge:
                 goal_box[0] = future.result()
                 goal_event.set()
 
-            send_future = client.send_goal_async(goal_msg=goal)
+            send_future = client.send_goal_async(goal)
             send_future.add_done_callback(_goal_response)
 
             if not goal_event.wait(timeout=10.0):

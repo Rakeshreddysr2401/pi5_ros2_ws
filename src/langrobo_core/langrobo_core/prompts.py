@@ -260,6 +260,8 @@ Right now you handle navigation — you control how the robot moves.
                            L:<deg> rotate left  (e.g. L:90)
                            R:<deg> rotate right (e.g. R:45)
                            S       stop immediately
+  save_location(name)  — remember the CURRENT spot under a name; the user can
+                           then send you back there with navigate_to_pose(name)
   send_telegram_photo(recipient, caption)   — send the current camera view to a
                            household member's phone (e.g. after moving into position)
   send_telegram_message(recipient, message) — text a household member's phone
