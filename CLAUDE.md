@@ -9,7 +9,7 @@ OPERATIONS.md for run/deploy/troubleshooting; PRODUCT.md for the roadmap.
 
 ## Fleet start — one command brings up the whole robot
 
-`scripts/fleet.sh {sim|rover|stop|status}` (run here on the Pi5). Picks the robot **body**:
+`scripts/fleet.sh {sim|rover|stop|down|status}` (run here on the Pi5). Picks the robot **body**:
 
 - **`sim`** — the SIMULATION body: sshes the laptop and starts its Gazebo sim + Nav2
   (`rover_sim`), and starts the Jetson's `isaac_ros` perception container. Use this to
@@ -17,7 +17,11 @@ OPERATIONS.md for run/deploy/troubleshooting; PRODUCT.md for the roadmap.
 - **`rover`** — the REAL body: starts this Pi5's micro-ROS agent (ESP32 wheels) and the
   Jetson's `ai_stack` voice pipeline. Does NOT start `isaac_ros` — the real rover has no
   depth camera / lidar / imu yet, so there's nothing for the perception pipelines to consume.
-- **`stop`** stops the remote pieces of both modes; **`status`** shows who's up everywhere.
+- **`stop`** parks the robot: stops the body (sim + Jetson roles) but keeps `langrobo-brain`
+  + `langrobo-discovery` up, so chat/Telegram keeps listening. No password.
+- **`down`** full shutdown: everything `stop` does PLUS this Pi5's system units (brain,
+  micro-ROS, discovery) via sudo. Those units are `enabled`, so a Pi5 reboot restarts them.
+- **`status`** shows who's up everywhere.
 
 `langrobo-discovery` (the DDS meeting point) and `langrobo-brain` run here in **both** modes;
 fleet.sh ensures them. Each machine can still be driven on its own — the laptop via
@@ -31,6 +35,8 @@ laptop's key + sshd were set up 2026-07-07 so the Pi5→laptop hop works.
 # Whole robot (see "Fleet start" above)
 ./scripts/fleet.sh sim        # simulation body (laptop sim + jetson isaac_ros)
 ./scripts/fleet.sh rover      # real body (pi5 microros + jetson voice)
+./scripts/fleet.sh stop       # park robot body (brain stays up)
+./scripts/fleet.sh down       # full shutdown incl. Pi5 services (sudo)
 ./scripts/fleet.sh status
 
 # Test (pure core — no robot, no LLM, no keys; ~4s)
