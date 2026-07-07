@@ -87,7 +87,9 @@ build.py + handover Literal must stay in sync — the smoke tests catch drift).
 
 ## Working on the Jetson from here
 
-Passwordless SSH: `ssh rakhi24@192.168.2.20`. The speech_vision repo is at
+Passwordless SSH: `ssh rakhi24@rakhi-jetson.local` (the 192.168.2.x cable link
+was reported physically dead 2026-07-05 — mDNS names work over whatever network
+is up, see NETWORKING.md). The speech_vision repo is at
 `~/robot` on the Jetson (branch dev-1.0.4_voice_upgrade+) and has its own
 CLAUDE.md + VOICE_PIPELINE.md — read those before editing; they document the
 container build/restart procedure and five hard-won gotchas (venv-python
@@ -100,11 +102,36 @@ change both repos together or neither.
 
 ## Gotchas
 
-- Nav2/SLAM don't exist yet (phase 2): `navigate_to_pose` reports honestly
-  after a 10s server wait. The interfaces are the reserved slot — keep them.
+- Nav2/SLAM don't exist on the real robot yet (phase 2), BUT they now run in
+  simulation — see "Simulation laptop" below. Without the sim connected,
+  `navigate_to_pose` still reports honestly after a 10s server wait. The
+  interfaces are the reserved slot — keep them.
 - `strict_tool_calls` + streaming need the llama.cpp server started with
   `--jinja --parallel 4`.
 - Smoke tests import `tools/swiggy_mcp.py` which probes the network only when
   SWIGGY_ACCESS_TOKEN is set.
 - Pi5↔Jetson clocks drift ~1.5s (chrony peering pending) — latency_replay
   flags negative deltas.
+
+## Simulation laptop (rover_sim) — the stand-in robot body
+
+Until the real rover exists, a Gazebo sim on the laptop (`rakhi24`, wifi DHCP)
+plays the robot body: mecanum X3 rover with lidar + RealSense-D555-style RGBD
+camera in a furnished house world, with Nav2 + slam_toolbox on top.
+Repo: https://github.com/Rakeshreddysr2401/rover_sim (laptop path
+`/workspace/ros2_ws/src/rover_sim`). Its `docs/INTERFACE.md` is the
+topic/action/frame contract this brain should code against — same contract the
+real rover must satisfy later.
+
+- The sim joins our discovery server: on the laptop,
+  `export ROS_DISCOVERY_SERVER=rakhi24-desktop.local:11811` before launching.
+  Then this brain's `navigate_to_pose` tool talks to a real Nav2 server.
+- Highlights of the contract: `/navigate_to_pose` (NavigateToPose),
+  `/scan` 10 Hz, `/cam_1/color/image_raw` + `/cam_1/depth/image_rect_raw`
+  15 Hz (D555 names — nvblox-ready), odom `/mecanum_drive_controller/odom`,
+  cmd_vel is **TwistStamped** on `/mecanum_drive_controller/cmd_vel`
+  (plain `/cmd_vel` exists only while its Nav2 is up).
+- Sim runs ≈0.1× real time in the furnished house world (laptop iGPU) — don't
+  tune wall-clock timeouts against it.
+- Keep the machine/interface details in sync across the three CLAUDE.md files
+  (this repo, `~/robot` on the Jetson, rover_sim) — change all or none.
