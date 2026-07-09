@@ -186,7 +186,7 @@ def get_fallback_llm():
         "model": _fallback.model,
         "base_url": _fallback.base_url,
         "api_key": _fallback.api_key or "none",
-        "max_tokens": _config.get("max_tokens", 3000),
+        "max_tokens": _config.get("max_tokens", 6000),
         "streaming": _config.get("streaming", False),
         "slot": None,
     })
@@ -197,7 +197,7 @@ def _build(cfg: dict):
     model      = cfg.get("model", "default")
     base_url   = cfg.get("base_url", "")
     api_key    = cfg.get("api_key", "none")
-    max_tokens = cfg.get("max_tokens", 300)
+    max_tokens = cfg.get("max_tokens", 6000)
     slot       = cfg.get("slot")
 
     if provider in ("openai", "llamacpp"):
