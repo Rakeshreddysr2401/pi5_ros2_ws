@@ -223,8 +223,12 @@ The Mac Mini caches the LLM's processed prompt (KV cache) per slot. A warm
 turn only pays for the *new* tokens; a cold one re-processes ~2k+ tokens
 (~20s on the 12B). Everything below protects warmth:
 
-- **Slot map**: chat=0, local_agent(images)=1, supervisor+specialists=2 —
-  different prompts never evict each other.
+- **Slot map**: chat=0, local_agent(images)=1, specialists(navigate/status/
+  swiggy/tracker/knowledge/briefing/consolidation)=2, supervisor=3 —
+  different prompts never evict each other. Supervisor got its own slot on
+  2026-07-06: it fires on every `[SYSTEM]` turn, and sharing slot 2 meant it
+  and whichever specialist was cached kept evicting each other (~18-50s
+  full-history re-prefills).
 - **Append-only history**: the per-agent projection never mutates or drops
   mid-history messages; trims happen only at turn boundaries, and the
   **cache warmer** re-prefills in the background right after each trim.
