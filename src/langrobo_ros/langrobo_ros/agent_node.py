@@ -645,19 +645,6 @@ class AgentNode(Node):
                 metrics.inc("turns_interrupted_total")
                 return
 
-            # Remember where the turn ended so the next user follow-up can skip
-            # the supervisor (turn_entry gates which agents are sticky-eligible).
-            sticky = result.get("active_agent") if result else None
-            # A specialist ending its turn with handover("supervisor") leaves
-            # active_agent="supervisor" — persisting THAT as sticky made the
-            # next user turn enter at the supervisor: a routing hop whose
-            # prompt evicts the specialist slot and re-prefills the whole
-            # history (~20-50s measured on the 12B, 2026-07-06). Fresh turns
-            # belong at chat (the one-LLM-call common path; it carries the
-            # full routing table); only [SYSTEM] events force the supervisor,
-            # and agent_node does that explicitly via is_system.
-            self._sticky_agent = None if sticky == "supervisor" else sticky
-
             response = self._extract_response(result)
 
             if not response:
@@ -671,7 +658,24 @@ class AgentNode(Node):
                         telegram.chat_id, "Sorry, I couldn't come up with a reply.")
                 self.get_logger().warning("Graph returned empty response")
                 metrics.inc("empty_responses_total")
+                # Return WITHOUT touching history or sticky: a turn that isn't
+                # persisted must not change routing state either (same invariant
+                # as barge-in above) — otherwise the next turn enters an agent
+                # whose context was discarded with this turn.
                 return
+
+            # Remember where the turn ended so the next user follow-up can skip
+            # the supervisor (turn_entry gates which agents are sticky-eligible).
+            sticky = result.get("active_agent") if result else None
+            # A specialist ending its turn with handover("supervisor") leaves
+            # active_agent="supervisor" — persisting THAT as sticky made the
+            # next user turn enter at the supervisor: a routing hop whose
+            # prompt evicts the specialist slot and re-prefills the whole
+            # history (~20-50s measured on the 12B, 2026-07-06). Fresh turns
+            # belong at chat (the one-LLM-call common path; it carries the
+            # full routing table); only [SYSTEM] events force the supervisor,
+            # and agent_node does that explicitly via is_system.
+            self._sticky_agent = None if sticky == "supervisor" else sticky
 
             # Persist the FULL message list from the graph (including any frames
             # captured via look()), so follow-up turns reason over the same image.

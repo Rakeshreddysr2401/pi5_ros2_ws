@@ -101,6 +101,45 @@ def test_loop_guard_ends_turn_without_llm():
     assert out["messages"][0].content               # spoken fallback text
 
 
+def _bad_handover_state(active_agent):
+    """State after a model hands over to a nonexistent agent: the ToolNode
+    rejects the enum violation, so the handover ToolMessage carries the
+    validation-error text instead of a routing payload."""
+    from langchain_core.messages import ToolMessage
+    return {
+        "messages": [
+            HumanMessage(content="order me a pizza"),
+            AIMessage(content="", tool_calls=[{
+                "name": "handover",
+                "args": {"next_agent": "pizza_agent"}, "id": "c1",
+                "type": "tool_call"}]),
+            ToolMessage(
+                content="Error invoking tool 'handover' with kwargs "
+                        "{'next_agent': 'pizza_agent'} with error:\n next_agent: "
+                        "Input should be 'supervisor', 'chat', ...",
+                name="handover", tool_call_id="c1"),
+        ],
+        "active_agent": active_agent,
+        "agent_turn_visits": {},
+    }
+
+
+def test_unknown_handover_reroutes_to_chat():
+    """A hallucinated agent name (cloud fallback — enums advisory) must not end
+    the turn silently: langgraph ignores an unknown goto channel. The resolver
+    reroutes to chat so the user always gets an answer."""
+    from langgraph.types import Command
+    from langrobo_core.graph.handover_resolver import handle_handover
+
+    # From a specialist: chain straight to chat
+    out = handle_handover(_bad_handover_state("navigate"))
+    assert isinstance(out, Command) and out.goto == "chat"
+
+    # From chat itself: self-handover nudge takes over — still re-enters chat
+    out = handle_handover(_bad_handover_state("chat"))
+    assert isinstance(out, Command) and out.goto == "chat"
+
+
 def test_speech_stream_sentence_split():
     from langrobo_core.utils.speech_stream import split_sentences
     ready, rest = split_sentences("Hello there. How are you doing today? I am fi")

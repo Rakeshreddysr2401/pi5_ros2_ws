@@ -1,5 +1,26 @@
 # TODO — pending on-device work
 
+## Deploy the 2026-07-10 reliability fixes (built + tested on the laptop)
+
+Two turn-pipeline fixes, unit-tested off-robot (100 tests green); need the
+usual Pi5 rebuild when the robot is next up:
+
+1. **Unknown-agent handover no longer kills the turn silently**
+   (`graph/handover_resolver.py`): a hallucinated `next_agent` (possible on
+   the cloud fallback — schema enums are advisory there) or a ToolNode
+   validation-error payload used to become `Command(goto=<garbage>)`, which
+   langgraph silently ignores → turn ended with NO reply. Now rerouted to
+   chat with a routing note so the user always gets an answer.
+   Covered by `test_unknown_handover_reroutes_to_chat`.
+2. **Empty-response turns no longer mutate sticky routing**
+   (`agent_node.py _process`): the sticky-agent update now happens only for
+   persisted turns — same invariant as barge-in (a discarded turn leaves
+   history AND routing state untouched).
+
+On the Pi5: pull, `colcon build --symlink-install && sudo systemctl restart
+langrobo-brain`, then one normal voice turn + one reminder cycle as a sanity
+check (`latency_replay.py` waterfall unchanged). Delete this section when done.
+
 ## Investigate: supervisor never reuses its KV slot on [SYSTEM] turns
 
 Found 2026-07-06 ~04:45 while verifying the 4-slot map. Clean consecutive
@@ -7,13 +28,42 @@ reminder cycles, `/slots` `n_prompt_tokens_processed` per slot:
 chat=24, local_agent=37, specialists=150 (all reusing) — **supervisor=1791,
 a FULL prefill every [SYSTEM] turn** (~15s of the ~50s system-turn cost).
 Grammar/tool_choice is NOT the cause (A/B'd directly: identical repeat 5s,
-appended tail 5.5s, both reused). Something in the supervisor's projected
-request must differ between calls. Next step (daytime session): point
-`base_url` at a logging proxy (workflow in the llamacpp-kv-cache-rules
-memory / ARCHITECTURE debug notes), capture two consecutive supervisor
-request bodies, and DIFF them — the first differing byte is the answer.
+appended tail 5.5s, both reused).
 User-facing impact: proactive announcements (reminders/watch alerts) take
 ~20s+; user turns are unaffected (1.6s warm).
+
+**Update 2026-07-10 (offline investigation from the laptop — robot was down):
+could NOT reproduce with current code.** `scripts/kv_replay_supervisor.py`
+(new) drives the real graph through two consecutive [SYSTEM] reminder turns
+with a production-shaped history and proves BOTH halves behave:
+
+- Client side: consecutive supervisor request bodies are strictly append-only
+  (identical body fields; call 2 = call 1's messages + routing note + chat
+  reply + new [SYSTEM] msg). Verified with tool-call turns, a camera frame,
+  and mid-history routing notes in the history.
+- Server side: replaying those payloads against the LIVE Mac Mini on
+  id_slot=3 reuses fine — A repeat: prompt_n=32, B: prompt_n=180 (tail only),
+  WITH grammar-forced tool_choice and mid-history system-role notes.
+- Bonus datum: the cold replay showed `cache_n=589` — production slot 3 held
+  a cache sharing exactly the static supervisor prefix (prompt + tool
+  schemas), suggesting the production divergence started where HISTORY
+  begins, i.e. 1791 ≈ the history portion, not literally byte 0.
+
+Ruled out: registry ordering, projection append-only violations, trim_history,
+the Gemma template's mid-history system-role handling, grammar × cache, slot
+ctx overflow (n_ctx_slot=86k). The 07-06 observation therefore needs a
+production ingredient the sim lacks — or was fixed by a commit since 07-06.
+
+**Next step when the brain is back on the Pi5:**
+1. `python3 scripts/kv_replay_supervisor.py --server http://singireddys-mac-mini.local:8080`
+   from the Pi5 (sanity: same PASS expected).
+2. Trigger two 1-minute reminders ("set a timer for one minute", twice), then
+   check the server: two consecutive real [SYSTEM] turns — if `/slots` shows
+   supervisor full-prefills again, capture the REAL request bodies via a
+   logging proxy on `base_url` and diff against the script's payloads; the
+   first differing message is the answer.
+3. If it reuses now: bug was fixed in the 07-06..07-10 commits — delete this
+   section.
 
 ## Deploy the 2026-07-06 feature batch (watch mode + consolidation + prompts.py)
 

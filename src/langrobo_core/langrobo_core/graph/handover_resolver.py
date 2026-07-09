@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 
 _MAX_VISITS_PER_AGENT = 3
 
+# Every name Command(goto=...) may legally target. A handover to anything else
+# would be silently ignored by langgraph (unknown channel) and end the turn
+# with no reply at all.
+_ROUTABLE = set(AGENTS) | {"supervisor"}
+
 
 def _parse_handover(content: str) -> tuple[str, str, bool]:
     try:
@@ -102,7 +107,24 @@ def handle_handover(state: AgentState):
         logger.warning("handle_handover: no handover tool message found — falling back to supervisor")
         return Command(goto="supervisor", update={})
 
-    res = _resolve(state, next_agent, reason)
+    # A hallucinated target (possible on the cloud fallback — schema enums are
+    # advisory there) or a ToolNode validation-error payload must never become
+    # a graph goto: langgraph ignores an unknown channel and the turn ends
+    # SILENTLY. Reroute to chat so the user always gets an answer.
+    if next_agent not in _ROUTABLE:
+        logger.warning("Handover to unknown agent %r — rerouting to chat",
+                       next_agent[:80])
+        res = _Resolution(
+            next_agent="chat",
+            bridge_messages=[SystemMessage(content=(
+                f"[Routing note] A handover requested a non-existent agent "
+                f"({next_agent[:60]!r}). Control passed to 'chat' to answer the "
+                f"user directly: \"{_last_user_query(state)}\""
+            ))],
+        )
+        chain, ai_content = True, ""
+    else:
+        res = _resolve(state, next_agent, reason)
     current = state.get("active_agent", "supervisor")
 
     # Self-handover: an agent routed to itself instead of answering. Re-enter it

@@ -156,7 +156,8 @@ boot. Inbound is rate-limited to 10 msg/min per sender. `/status` shows the
                --parallel 4 --jinja
 ```
 
-- `--parallel 4` — slots 0/1/2 are pinned by the brain (chat / vision / specialists).
+- `--parallel 4` — all four slots are pinned by the brain (0 chat / 1 vision /
+  2 specialists+consolidation / 3 supervisor — see agent_params.yaml slot map).
 - `--jinja` — required for grammar-forced handover + streamed tool calls.
 - Prompt cache + context checkpoints give cross-restart KV reuse; slot pinning
   is insurance on top.
