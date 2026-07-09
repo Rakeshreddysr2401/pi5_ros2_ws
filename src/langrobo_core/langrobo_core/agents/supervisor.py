@@ -22,7 +22,14 @@ def _get_prompt() -> str:
     return SUPERVISOR_PROMPT_TEMPLATE.format(agent_list=build_supervisor_agent_list())
 
 
-def supervisor_node(state: AgentState) -> dict:
+def build_llm_call(messages: list):
+    """Return (llm, prompt_messages) for a supervisor turn.
+
+    Shared by supervisor_node and agent_node's cache warmer — same contract as
+    chat.py's build_llm_call. The warmer must send the IDENTICAL bound tools,
+    tool_choice, and system prompt or it prefills a differently-shaped prompt
+    and warms nothing on the supervisor's pinned slot.
+    """
     # The supervisor MUST emit exactly one handover and never free text. Forcing
     # tool_choice makes that structural: on llama.cpp the server grammar-constrains
     # the output to a valid handover (incl. the next_agent enum) generated from the
@@ -32,8 +39,13 @@ def supervisor_node(state: AgentState) -> dict:
         llm = get_llm("supervisor").bind_tools([handover], tool_choice="handover")
     else:
         llm = get_llm("supervisor").bind_tools([handover])
-    clean = prepare_messages_for_agent(state["messages"])
-    response = safe_invoke(llm, [SystemMessage(content=_get_prompt())] + clean, logger)
+    clean = prepare_messages_for_agent(messages)
+    return llm, [SystemMessage(content=_get_prompt())] + clean
+
+
+def supervisor_node(state: AgentState) -> dict:
+    llm, msgs = build_llm_call(state["messages"])
+    response = safe_invoke(llm, msgs, logger, agent="supervisor")
     # Strip stray text and deduplicate — supervisor emits exactly one handover call
     if response.tool_calls and any(tc["name"] in HANDOVER_NAMES for tc in response.tool_calls):
         first = next(tc for tc in response.tool_calls if tc["name"] in HANDOVER_NAMES)

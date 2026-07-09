@@ -6,6 +6,10 @@ Wants=network-online.target langrobo-discovery.service langrobo-microros.service
 [Service]
 Type=exec
 User=rakhi24
+# ROBOT_BODY=rover|sim — written by scripts/fleet.sh {rover|sim} before a
+# restart; leading '-' makes a missing file non-fatal (fresh installs start
+# in "rover" default, matching run_brain.sh's own fallback).
+EnvironmentFile=-/home/rakhi24/.langrobo/brain.env
 ExecStart=/home/rakhi24/ros2_ws/scripts/run_brain.sh
 Restart=always
 RestartSec=10

@@ -3,8 +3,8 @@
 from .household import forget, remember, update_list
 from .look import look
 from .memory import recall_memory
-from .movement import (move_robot, navigate_to_pose,
-                       navigate_to_visible_object, save_location)
+from .movement import (move_robot, navigate_to_pose, navigate_to_visible_object,
+                       point_camera, save_location)
 from .music import (pause_music, play_music, resume_music, set_music_volume,
                     stop_music)
 from .reminders import cancel_reminder, list_reminders, set_reminder
@@ -33,7 +33,7 @@ CHAT_TOOLS         = [get_current_time, get_robot_status, set_reminder,
                       handover] + WEB_TOOLS + TELEGRAM_TOOLS
 LOCAL_AGENT_TOOLS  = [look, handover] + TELEGRAM_TOOLS
 NAVIGATE_TOOLS     = [move_robot, navigate_to_pose, navigate_to_visible_object,
-                      save_location, handover] + TELEGRAM_TOOLS
+                      point_camera, save_location, handover] + TELEGRAM_TOOLS
 STATUS_TOOLS       = [get_robot_status, ros2_publish, handover]
 SUPERVISOR_TOOLS   = [handover]
 KNOWLEDGE_AGENT_TOOLS = KNOWLEDGE_TOOLS + [handover]

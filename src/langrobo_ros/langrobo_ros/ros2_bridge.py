@@ -25,8 +25,14 @@ from langrobo_core.utils.speech_stream import SPEECH_EOU
 
 class ROS2Bridge:
 
-    def __init__(self, node, known_locations: dict = None):
+    def __init__(self, node, known_locations: dict = None, robot_body: str = "rover"):
         self._node = node
+        # Which body this brain drives cmd_vel to: the real ESP32 rover (plain
+        # Twist on /cmd_vel) or the Gazebo sim rover_sim (TwistStamped on
+        # /mecanum_drive_controller/cmd_vel) — see CLAUDE.md "Simulation
+        # laptop". Switched by scripts/fleet.sh {sim|rover}, default "rover"
+        # so the real robot's behaviour never changes unless sim is requested.
+        self._robot_body = robot_body
 
         # Named map locations: {name: (x, y, yaw_deg)} — populated from nav_params
         self._known_locations: dict = known_locations or {}
@@ -111,7 +117,12 @@ class ROS2Bridge:
         # ── Fixed publishers (pre-created so tools never block on first call) ──
         self._speech_pub        = node.create_publisher(String, "/voice/robot_speech", 10)
         self._vision_target_pub = node.create_publisher(String, "/vision/target", 10)
-        self._twist_pub         = node.create_publisher(Twist, "/cmd_vel", 10)
+        if self._robot_body == "sim":
+            from geometry_msgs.msg import TwistStamped
+            self._twist_pub = node.create_publisher(
+                TwistStamped, "/mecanum_drive_controller/cmd_vel", 10)
+        else:
+            self._twist_pub = node.create_publisher(Twist, "/cmd_vel", 10)
         self._timing_pub        = node.create_publisher(String, "/diag/timing", 10)
         self._music_pub         = node.create_publisher(String, "/audio/music_cmd", 10)
 
@@ -285,9 +296,28 @@ class ROS2Bridge:
 
     # ── Publishers ─────────────────────────────────────────────────────────
 
+    @property
+    def robot_body(self) -> str:
+        """'rover' or 'sim' — which body cmd_vel is currently wired to."""
+        return self._robot_body
+
     def publish_twist(self, twist: Twist) -> None:
-        """Publish Twist directly to /cmd_vel → micro-ROS agent → ESP32."""
-        self._twist_pub.publish(twist)
+        """Publish a Twist command to the robot body's cmd_vel — rover gets a
+        plain Twist on /cmd_vel (ESP32/micro-ROS); sim gets the same linear/
+        angular values wrapped in TwistStamped on
+        /mecanum_drive_controller/cmd_vel (rover_sim's Nav2/mecanum contract,
+        see docs/INTERFACE.md in the rover_sim repo — frame_id below must be
+        confirmed against that contract before relying on it in sim)."""
+        if self._robot_body == "sim":
+            from geometry_msgs.msg import TwistStamped
+            stamped = TwistStamped()
+            stamped.header.stamp = self._node.get_clock().now().to_msg()
+            stamped.header.frame_id = "base_link"   # TODO verify against
+            # rover_sim's docs/INTERFACE.md before a real sim deploy.
+            stamped.twist = twist
+            self._twist_pub.publish(stamped)
+        else:
+            self._twist_pub.publish(twist)
 
     def publish_to_topic(self, topic: str, data: str) -> None:
         """Publish a String to any topic, creating the publisher lazily."""

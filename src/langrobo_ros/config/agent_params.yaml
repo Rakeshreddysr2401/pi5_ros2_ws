@@ -75,3 +75,13 @@ agent_node:
     locations.living_room: [0.0,  3.0,  90.0]
     locations.bedroom:     [-2.0, 2.0, 180.0]
     locations.entrance:    [0.0,  0.0,   0.0]
+
+    # ── Robot body (sim vs rover) ──────────────────────────────────────────
+    # Which physical/simulated body this brain is driving cmd_vel to. The real
+    # rover (ESP32 via micro-ROS) takes a plain Twist on /cmd_vel; the Gazebo
+    # sim body (rover_sim, see CLAUDE.md "Simulation laptop") takes a
+    # TwistStamped on /mecanum_drive_controller/cmd_vel instead. Switched by
+    # scripts/fleet.sh {sim|rover} (env var → launch arg → this param) — see
+    # OPERATIONS.md. Default "rover" so this NEVER changes the real robot's
+    # behaviour unless sim mode is explicitly requested.
+    robot_body: "rover"   # "rover" | "sim"

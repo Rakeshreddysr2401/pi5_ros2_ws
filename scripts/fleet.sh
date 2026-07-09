@@ -28,6 +28,24 @@ SSH="ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-ne
 
 SIM_SCRIPT=/workspace/ros2_ws/src/rover_sim/rover_bringup/scripts/fleet_sim.sh
 ROLE_SCRIPT="~/robot/scripts/fleet_role.sh"
+BRAIN_ENV=/home/rakhi24/.langrobo/brain.env
+
+# Which body (rover|sim) the brain's cmd_vel should drive — see ros2_bridge.py
+# and CLAUDE.md "Simulation laptop". Only restarts the brain when the body is
+# actually changing, so re-running `fleet.sh rover` while already in rover
+# mode doesn't interrupt a live conversation.
+set_body() {
+    local body="$1" current=""
+    [ -f "$BRAIN_ENV" ] && current=$(sed -n 's/^ROBOT_BODY=//p' "$BRAIN_ENV" | head -1)
+    if [ "$current" = "$body" ]; then
+        return 0
+    fi
+    mkdir -p "$(dirname "$BRAIN_ENV")"
+    echo "ROBOT_BODY=$body" > "$BRAIN_ENV"
+    sudo -n systemctl restart langrobo-brain 2>/dev/null \
+        || systemctl restart langrobo-brain 2>/dev/null || true
+    echo "pi5:    robot_body switched to '$body' (brain restarted)"
+}
 
 ensure_local_units() {
     sudo -n systemctl start langrobo-discovery 2>/dev/null \
@@ -41,6 +59,7 @@ reachable() { timeout 4 ping -c1 -W2 "$1" >/dev/null 2>&1; }
 
 case "$CMD" in
 sim)
+    set_body sim
     ensure_local_units
     if reachable rakhi24.local; then
         echo "laptop: starting sim..."
@@ -57,6 +76,7 @@ sim)
     echo "fleet: SIM mode up. Nav2 needs ~1 min in the house world; check: $0 status"
     ;;
 rover)
+    set_body rover
     ensure_local_units
     sudo -n systemctl start langrobo-microros 2>/dev/null \
         || systemctl start langrobo-microros 2>/dev/null || true

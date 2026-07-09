@@ -10,6 +10,7 @@
 
 set -eo pipefail
 PROVIDER="${1:-llamacpp}"
+ROBOT_BODY="${ROBOT_BODY:-rover}"
 
 set +u
 source /opt/ros/jazzy/setup.bash
@@ -32,4 +33,4 @@ unset ROS_LOCALHOST_ONLY
 # so stale tracing keys can't leak into the environment.
 
 exec ros2 launch langrobo_ros brain_launch.py \
-    provider:="$PROVIDER" start_micro_ros:=false
+    provider:="$PROVIDER" start_micro_ros:=false robot_body:="$ROBOT_BODY"

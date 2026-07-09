@@ -170,6 +170,18 @@ def get_llm(agent: str | None = None):
     return _build(cfg)
 
 
+def slot_for(agent: str | None) -> int | None:
+    """The pinned llama.cpp slot `get_llm(agent)` would use, for log/diagnostic
+    lines only (safe_invoke). Mirrors get_llm's own config merge without
+    building a client — cheaper and avoids depending on langchain internals
+    to read the slot back off a constructed LLM instance."""
+    if agent and agent in _agent_overrides:
+        override_slot = _agent_overrides[agent].get("slot")
+        if override_slot is not None:
+            return override_slot
+    return _config.get("slot")
+
+
 def get_fallback_llm():
     """The configured cloud fallback LLM, or None. Fresh instance per call.
 

@@ -32,7 +32,8 @@ _ALL_DOWN_MESSAGE = (
 )
 
 
-def safe_invoke(llm, messages: list, logger: logging.Logger, retries: int = 1) -> AIMessage:
+def safe_invoke(llm, messages: list, logger: logging.Logger, retries: int = 1,
+                agent: str | None = None) -> AIMessage:
     """invoke() with retry + local-first cloud fallback (services.llm policy).
 
     1. Primary first (one retry — a transient hiccup shouldn't surface as a
@@ -42,6 +43,11 @@ def safe_invoke(llm, messages: list, logger: logging.Logger, retries: int = 1) -
     2. On failure: mark the primary down (connection-class errors only) and
        try the configured cloud fallback, if any.
     3. Everything failed: return a spoken degraded message — never raise.
+
+    `agent`: optional name (e.g. "supervisor") logged alongside which LLM
+    (primary/fallback) actually answered — a cloud fallback has no KV-cache
+    slot, so a run of fallback answers for one agent is a lead if that
+    agent's warm slot later shows an unexplained full re-prefill.
     """
     from ..services import llm as llm_service
 
@@ -53,6 +59,10 @@ def safe_invoke(llm, messages: list, logger: logging.Logger, retries: int = 1) -
             try:
                 response = llm.invoke(messages)
                 llm_service.report_primary_success()
+                logger.info("LLM call answered", extra={
+                    "llm_source": "primary", "agent": agent,
+                    "slot": llm_service.slot_for(agent),
+                })
                 return response
             except Exception as e:
                 primary_error = e
@@ -70,7 +80,9 @@ def safe_invoke(llm, messages: list, logger: logging.Logger, retries: int = 1) -
             response = fallback.invoke(messages)
             from ..services import metrics
             metrics.inc("llm_fallback_used_total")
-            logger.warning("Answered via cloud fallback LLM")
+            logger.warning("Answered via cloud fallback LLM", extra={
+                "llm_source": "fallback", "agent": agent,
+            })
             return response
         except Exception as e:
             logger.error("Fallback LLM failed too: %s", e)

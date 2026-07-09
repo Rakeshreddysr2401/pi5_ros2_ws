@@ -163,8 +163,19 @@ class AgentNode(Node):
             for name in ("kitchen", "living_room", "bedroom", "entrance")
         }
 
+        # ── Robot body: real rover (ESP32) vs Gazebo sim (rover_sim) ────────
+        # Only affects the cmd_vel wire shape/topic in ROS2Bridge — see
+        # CLAUDE.md "Simulation laptop" and scripts/fleet.sh {sim|rover}.
+        self.declare_parameter("robot_body", "rover")
+        robot_body = self.get_parameter("robot_body").value
+        if robot_body not in ("rover", "sim"):
+            self.get_logger().warning(
+                f"Unknown robot_body {robot_body!r} — defaulting to 'rover'")
+            robot_body = "rover"
+
         # ── Inject config into the core ───────────────────────────────────
-        self._bridge = ROS2Bridge(self, known_locations=known_locations)
+        self._bridge = ROS2Bridge(self, known_locations=known_locations,
+                                  robot_body=robot_body)
         bridge_module.init(self._bridge)
         timing.set_sink(self._bridge.publish_timing)
         self._timing_handler = timing.TimingCallbackHandler()
@@ -190,6 +201,11 @@ class AgentNode(Node):
         self._history_lock = threading.Lock()
         # Background KV-cache warmer (boot + after history trims) — at most one.
         self._warm_thread: threading.Thread | None = None
+        # Supervisor runs on its own pinned slot for every [SYSTEM] turn
+        # (reminders/watch alerts/briefing) — warmed independently of
+        # whichever specialist/chat the warm above targets, since it's a
+        # separate slot with a separate prompt.
+        self._sup_warm_thread: threading.Thread | None = None
 
         # Sticky routing: the agent left active at the end of the previous turn.
         # turn_entry re-enters it directly (skipping the supervisor hop) only if
@@ -288,6 +304,7 @@ class AgentNode(Node):
             user_pending = self._user_pending is not None
         return {
             "sticky_agent": self._sticky_agent,
+            "robot_body": self._bridge.robot_body,
             "last_turn_ts": self._last_turn_ts,
             "camera_frame_age_s": self._bridge.frame_age(),
             "active_order": self._bridge.get_active_order(),
@@ -402,10 +419,30 @@ class AgentNode(Node):
         due = get_reminder_store().pop_due()
         if not due:
             return
+        for r in due:
+            if r.telegram_recipient:
+                self._relay_reminder(r)
         lines = "; ".join(f'"{r.text}" (set for {self._fmt_clock(r.due)})' for r in due)
         self.get_logger().info(f"Reminder(s) due: {lines}")
         self._enqueue_system(
             f"[SYSTEM] Reminder due — announce to the user now: {lines}")
+
+    def _relay_reminder(self, r) -> None:
+        """Deterministic Telegram relay for a reminder created with
+        telegram_recipient — goes through send_telegram_message's own
+        permission/quiet-hours/D10 gates (channel='system' already bypasses
+        the ask-back gate, matching announce_at_home/errand semantics), so
+        this doesn't bypass anything a normal call wouldn't."""
+        from langrobo_core.tools.telegram import send_telegram_message
+        try:
+            result = send_telegram_message.invoke({
+                "recipient": r.telegram_recipient, "message": r.text,
+                "report_back": r.telegram_report_back,
+                "state": {"channel": "system", "messages": []},
+            })
+            self.get_logger().info(f"Reminder #{r.id} Telegram relay: {result}")
+        except Exception as e:
+            self.get_logger().warning(f"Reminder #{r.id} Telegram relay failed: {e}")
 
     @staticmethod
     def _fmt_clock(t: float) -> str:
@@ -755,6 +792,13 @@ class AgentNode(Node):
         self._warm_thread = threading.Thread(
             target=self._warm_cache, args=(agent,), daemon=True)
         self._warm_thread.start()
+        # Supervisor's slot is independent of the chat/local_agent warm above
+        # (own slot, own prompt) — runs on every [SYSTEM] turn, so it gets its
+        # own small thread instead of waiting behind (or competing with) it.
+        if not (self._sup_warm_thread and self._sup_warm_thread.is_alive()):
+            self._sup_warm_thread = threading.Thread(
+                target=self._warm_cache, args=("supervisor",), daemon=True)
+            self._sup_warm_thread.start()
 
     def _warm_cache(self, agent: str) -> None:
         """Prefill `agent`'s llama.cpp slot with its current projected prompt.
@@ -774,6 +818,8 @@ class AgentNode(Node):
                 history = list(self._history)
             if agent == "local_agent":
                 from langrobo_core.agents.local_agent import build_llm_call
+            elif agent == "supervisor":
+                from langrobo_core.agents.supervisor import build_llm_call
             else:
                 from langrobo_core.agents.chat import build_llm_call
             # The trailing "(warmup)" user message only diverges at the tail —

@@ -276,11 +276,32 @@ def navigate_to_visible_object(target: str) -> str:
 #   Person-following becomes the same loop with target="person" + replanning.
 #   Until then navigate_to_visible_object (above) stays the mono-camera path.
 #
-# Camera pan-tilt (2 servos on the ESP32, PRODUCT.md hardware rec #3):
-#   - ESP32 firmware adds a micro-ROS subscriber, e.g. /camera/pan_tilt_cmd
-#     (std_msgs/String JSON {"pan_deg": -90..90, "tilt_deg": -30..30}) —
-#     firmware lives in ESP_32_frimware/, update when the servos arrive.
-#   - Brain side: a `point_camera(direction)` tool publishing via
-#     bridge.publish_to_topic() (already generic), owned by the navigate
-#     agent ("look left", "look at the door") and usable by watch mode to
-#     sweep while armed. No graph changes needed — it's one tool + one topic.
+# Camera pan-tilt: point_camera() below publishes to /camera/pan_tilt_cmd.
+# ESP32 firmware (micro-ROS subscriber) not wired yet — see ESP_32_frimware/
+# and PRODUCT.md hardware rec #3. Brain-side is done; this is a hardware task.
+
+_PAN_MIN_DEG, _PAN_MAX_DEG = -90.0, 90.0
+_TILT_MIN_DEG, _TILT_MAX_DEG = -30.0, 30.0
+
+
+@tool
+def point_camera(pan_deg: float = 0.0, tilt_deg: float = 0.0) -> str:
+    """Point the robot's camera using its pan-tilt mount (2 servos).
+
+    pan_deg: horizontal angle, -90 (full left) .. 90 (full right), 0 = forward.
+    tilt_deg: vertical angle, -30 (down) .. 30 (up), 0 = level.
+
+    Use for "look left/right/up/down", "look at the door", or to sweep the
+    camera without moving the wheels. Publishes to the reserved
+    /camera/pan_tilt_cmd topic — the pan-tilt hardware may not be wired yet;
+    if nothing moves, tell the user the camera mount isn't installed rather
+    than claiming it worked."""
+    import json
+
+    pan = max(_PAN_MIN_DEG, min(_PAN_MAX_DEG, pan_deg))
+    tilt = max(_TILT_MIN_DEG, min(_TILT_MAX_DEG, tilt_deg))
+    clamped = (pan != pan_deg) or (tilt != tilt_deg)
+    _bridge.get().publish_to_topic(
+        "/camera/pan_tilt_cmd", json.dumps({"pan_deg": pan, "tilt_deg": tilt}))
+    note = " (clamped to valid range)" if clamped else ""
+    return f"Camera pointed: pan={pan:.0f}°, tilt={tilt:.0f}°{note}"

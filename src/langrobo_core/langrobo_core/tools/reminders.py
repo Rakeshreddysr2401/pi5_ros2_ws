@@ -29,6 +29,13 @@ class Reminder:
     due: float       # epoch seconds
     created: float
     repeat_minutes: float = 0.0   # 0 = one-shot; 1440 = daily, 10080 = weekly
+    # Optional structured Telegram relay — set at creation time so the fire
+    # path (agent_node._poll_reminders) can send it deterministically instead
+    # of depending on the LLM remembering to call send_telegram_message when
+    # this fires, possibly hours later. See tools/telegram.py for the actual
+    # send (same gates apply — this only carries the recipient/flag along).
+    telegram_recipient: Optional[str] = None
+    telegram_report_back: bool = False
 
 
 def _fmt_repeat(minutes: float) -> str:
@@ -83,10 +90,14 @@ class ReminderStore:
                        "reminders": [asdict(r) for r in self._reminders]}, f, indent=1)
         os.replace(tmp, self._path)
 
-    def add(self, text: str, due: float, repeat_minutes: float = 0.0) -> Reminder:
+    def add(self, text: str, due: float, repeat_minutes: float = 0.0,
+           telegram_recipient: Optional[str] = None,
+           telegram_report_back: bool = False) -> Reminder:
         with self._lock:
             r = Reminder(id=self._next_id, text=text, due=due, created=time.time(),
-                         repeat_minutes=repeat_minutes)
+                         repeat_minutes=repeat_minutes,
+                         telegram_recipient=telegram_recipient,
+                         telegram_report_back=telegram_report_back)
             self._next_id += 1
             self._reminders.append(r)
             self._save()
@@ -142,7 +153,9 @@ def get_store() -> ReminderStore:
 @tool
 def set_reminder(text: str, in_minutes: Optional[float] = None,
                  at_time: Optional[str] = None, day: str = "today",
-                 repeat_minutes: float = 0.0) -> str:
+                 repeat_minutes: float = 0.0,
+                 telegram_recipient: Optional[str] = None,
+                 telegram_report_back: bool = False) -> str:
     """Schedule a reminder or timer. The robot announces `text` out loud when it fires.
 
     Give exactly ONE of:
@@ -155,11 +168,29 @@ def set_reminder(text: str, in_minutes: Optional[float] = None,
       "every day at 21:00" → at_time="21:00", repeat_minutes=1440
       "every week"=10080, "every 2 hours"=120. Minimum 5.
 
-    text should be the thing to announce, e.g. "Check the oven" or "Take your medicine"."""
+    text should be the thing to announce, e.g. "Check the oven" or "Take your medicine".
+
+    telegram_recipient — set ONLY when this reminder should ALSO relay a
+    Telegram message to a household member when it fires (e.g. "this evening
+    tell Mom to bring fruits" → text="Bring fruits home", at_time="18:00",
+    telegram_recipient="Mom"). The relay is sent deterministically by code
+    when the reminder fires — you don't need to remember to call
+    send_telegram_message yourself later. If the recipient isn't a known
+    Telegram member, leave this unset and rely on the spoken announcement only.
+    telegram_report_back — mirrors send_telegram_message's report_back: True
+    if the user wants the recipient's reply relayed back later."""
     if (in_minutes is None) == (at_time is None):
         return "Error: give exactly one of in_minutes or at_time."
     if repeat_minutes and repeat_minutes < 5:
         return "Error: repeat_minutes must be at least 5 (or 0 for one-shot)."
+    if telegram_recipient:
+        from ..services import telegram as telegram_service
+        svc = telegram_service.get()
+        if svc is None or not svc.configured():
+            return "Error: Telegram is not set up on this robot."
+        if svc.member_by_name(telegram_recipient) is None:
+            return (f"Error: I don't know {telegram_recipient!r} on Telegram. "
+                    f"Known members: {', '.join(svc.member_names())}.")
     if in_minutes is not None:
         if in_minutes <= 0:
             return "Error: in_minutes must be positive."
@@ -176,9 +207,12 @@ def set_reminder(text: str, in_minutes: Optional[float] = None,
         elif target <= datetime.now():
             target += timedelta(days=1)  # past today → tomorrow
         due = target.timestamp()
-    r = get_store().add(text.strip(), due, repeat_minutes)
+    r = get_store().add(text.strip(), due, repeat_minutes,
+                        telegram_recipient=telegram_recipient,
+                        telegram_report_back=telegram_report_back)
     rep = f", repeating {_fmt_repeat(repeat_minutes)}" if repeat_minutes else ""
-    return f"Reminder #{r.id} set for {_fmt_due(r.due)}{rep}: {r.text}"
+    relay = f", relaying to {telegram_recipient} on Telegram" if telegram_recipient else ""
+    return f"Reminder #{r.id} set for {_fmt_due(r.due)}{rep}{relay}: {r.text}"
 
 
 @tool
