@@ -126,6 +126,20 @@ real transcripts, chrony-peer Pi5↔Jetson clocks.
    inbound voice notes (needs STT routing via Jetson). Mem0/cloud memory
    extraction rejected outright: household conversations never leave the
    house for bookkeeping.
+3e. **Errands — Swiggy food/instamart/dineout (v1.3)**: ✅ built + verified
+   live (2026-07-10). Three specialist agents on Swiggy's MCP servers
+   (18/14/12 tools), one PKCE login (`scripts/swiggy_login.py`, ~5-day token,
+   Telegram nudge + graceful degrade on expiry, hot re-arm without restart),
+   generic MCP-provider framework (`services/mcp.py`) so movie/bus tickets
+   etc. are one ProviderSpec + an agent. Runs on the DEV-tier integration
+   agreement (signed 09-Jul-2026, 1-year term): the household orders on the
+   owner's Swiggy account — that's the authorized scope.
+   Deferred until Swiggy production access (demo video → builders@swiggy.in,
+   clause 2(v) written consent): **per-user Swiggy logins** — token file
+   becomes per-user (`swiggy:rakesh`, `swiggy:mom`), login script grows
+   `--user`, tool calls select the token by the speaker's `sender_name`
+   (already in graph state). Don't build the multi-tenant plumbing before
+   Swiggy consents to multi-tenant use.
 4. **Knows the family**: face recognition on Jetson + per-person memory →
    greetings, briefings, "tell Rakesh when you see him." Memory schema is
    ready (`person` field); fills the wake-word gap with gaze attention.
