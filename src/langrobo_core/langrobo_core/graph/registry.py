@@ -22,11 +22,19 @@ AGENTS: dict[str, dict] = {
         "examples": ["what's your battery?", "how are you doing?", "are you okay?"],
     },
     "swiggy": {
-        "description": "food ordering, restaurant search, browsing menus, managing cart, placing orders",
+        "description": "restaurant food delivery via Swiggy — restaurant search, browsing menus, managing cart, placing food orders",
         "examples": ["order pizza", "what restaurants are nearby?", "add to cart"],
     },
+    "instamart": {
+        "description": "groceries and household essentials delivered via Swiggy Instamart — product search, cart, quick-commerce orders",
+        "examples": ["order milk and eggs", "get me atta and dish soap", "I need groceries delivered"],
+    },
+    "dineout": {
+        "description": "eating OUT — restaurant table reservations, dining deals, booking via Swiggy Dineout (not delivery)",
+        "examples": ["book a table for two tonight", "any dinner deals nearby?", "reserve at that pizza place for Saturday"],
+    },
     "tracker": {
-        "description": "checking delivery status, order ETA, tracking a Swiggy order",
+        "description": "checking delivery status, order ETA, tracking a Swiggy food or Instamart grocery order",
         "examples": ["where's my order?", "how long until delivery?", "track my food"],
     },
     "knowledge": {

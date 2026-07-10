@@ -155,9 +155,9 @@ class AgentNode(Node):
         #                        hot across every specialist excursion.
         #   local_agent_slot(1): local_agent's image prefix, never evicted by
         #                        text agents (and vice versa).
-        #   specialist_slot (2): status/swiggy/tracker/knowledge/briefing —
-        #                        different system prompts that would otherwise
-        #                        thrash chat's slot.
+        #   specialist_slot (2): status/swiggy/instamart/dineout/tracker/
+        #                        knowledge/briefing — different system prompts
+        #                        that would otherwise thrash chat's slot.
         #   supervisor_slot (3): supervisor alone (every [SYSTEM] turn).
         #   navigate_slot (4):   navigate alone (real movement — most
         #                        latency-sensitive specialist).
@@ -181,6 +181,8 @@ class AgentNode(Node):
             "navigate":   dict(_nav),
             "status":     dict(_spec),
             "swiggy":     dict(_spec),
+            "instamart":  dict(_spec),
+            "dineout":    dict(_spec),
             "tracker":    dict(_spec),
             "knowledge":  dict(_spec),
             "briefing":   dict(_spec),

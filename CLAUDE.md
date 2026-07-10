@@ -96,6 +96,8 @@ pip3 install --break-system-packages -r requirements.txt
 - `langrobo_core/tools/` — @tool functions; per-agent sets in `__init__.py`;
   robot I/O via `_bridge.get()`
 - `langrobo_core/services/` — config (validated .env), llm (slots + fallback),
+  mcp (remote MCP provider registry: Swiggy food/instamart/dineout + token
+  lifecycle — future MCPs are one ProviderSpec + the add-an-agent recipe),
   memory (embedded Qdrant + fastembed), consolidation (nightly episodic→facts,
   local model only), knowledge (document ingest for the knowledge agent),
   briefing (once-daily scheduler), watch (armed person-detection alerts →
@@ -144,8 +146,9 @@ change both repos together or neither.
   interfaces are the reserved slot — keep them.
 - `strict_tool_calls` + streaming need the llama.cpp server started with
   `--jinja --parallel 5` (chat/local_agent/specialist/supervisor/navigate slots).
-- Smoke tests import `tools/swiggy_mcp.py` which probes the network only when
-  SWIGGY_ACCESS_TOKEN is set.
+- Smoke tests import `services/mcp.py` (via `tools/__init__`) which probes the
+  network only when a Swiggy token exists (SWIGGY_ACCESS_TOKEN env or
+  `~/.langrobo/mcp_tokens.json` — login via `scripts/swiggy_login.py`).
 - Pi5↔Jetson clocks drift ~1.5s (chrony peering pending) — latency_replay
   flags negative deltas.
 

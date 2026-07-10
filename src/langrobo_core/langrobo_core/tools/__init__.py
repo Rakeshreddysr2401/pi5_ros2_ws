@@ -13,9 +13,15 @@ from .knowledge import KNOWLEDGE_TOOLS
 from .system import get_current_time, get_robot_status, ros2_publish, set_active_order
 from .watch import watch_home
 from .handover import handover
-from .swiggy_mcp import SWIGGY_FOOD_TOOLS
+from ..services.mcp import load_provider_tools
 from .telegram import TELEGRAM_TOOLS
 from .web import WEB_TOOLS
+
+# Remote MCP tool sets — [] when the provider has no token / is unreachable
+# (services/mcp.py degrades; the owning agent swaps to its unavailable note).
+SWIGGY_FOOD_MCP_TOOLS = load_provider_tools("swiggy_food")
+SWIGGY_INSTAMART_MCP_TOOLS = load_provider_tools("swiggy_instamart")
+SWIGGY_DINEOUT_MCP_TOOLS = load_provider_tools("swiggy_dineout")
 
 # Per-agent tool sets
 # Speech has a single channel: each agent's final reply text is published to TTS
@@ -39,6 +45,21 @@ SUPERVISOR_TOOLS   = [handover]
 KNOWLEDGE_AGENT_TOOLS = KNOWLEDGE_TOOLS + [handover]
 BRIEFING_TOOLS     = [list_reminders, get_current_time, recall_memory,
                       handover] + WEB_TOOLS
-SWIGGY_TOOLS       = [set_active_order, handover] + SWIGGY_FOOD_TOOLS
-TRACKER_TOOLS      = [set_active_order, navigate_to_pose, handover
-                      ] + SWIGGY_FOOD_TOOLS + TELEGRAM_TOOLS
+SWIGGY_TOOLS       = [set_active_order, handover] + SWIGGY_FOOD_MCP_TOOLS
+INSTAMART_TOOLS    = [set_active_order, handover] + SWIGGY_INSTAMART_MCP_TOOLS
+# Reservations aren't deliveries — dineout gets no set_active_order.
+DINEOUT_TOOLS      = [handover] + SWIGGY_DINEOUT_MCP_TOOLS
+# Tracker follows food AND grocery deliveries — the [SYSTEM] order poll in
+# agent_node is provider-agnostic, both arrive at the door. It gets only the
+# read-only tracking tools: food and instamart share ordering tool NAMES
+# (get_addresses, confirm_order, get_payment_options, …), so splicing both
+# full sets would put ambiguous duplicates in one ToolNode. The tracking
+# subsets below don't collide, and ordering stays with the owning agent.
+_TRACKING_TOOL_NAMES = {
+    "get_food_orders", "get_food_order_details",           # food
+    "track_food_order", "get_food_delivery_status",
+    "get_orders", "track_order", "get_delivery_status",    # instamart
+}
+TRACKER_TOOLS      = [set_active_order, navigate_to_pose, handover] + [
+                      t for t in SWIGGY_FOOD_MCP_TOOLS + SWIGGY_INSTAMART_MCP_TOOLS
+                      if t.name in _TRACKING_TOOL_NAMES] + TELEGRAM_TOOLS

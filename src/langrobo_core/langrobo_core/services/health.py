@@ -24,6 +24,7 @@ import threading
 from typing import Callable
 
 from . import llm as llm_service
+from . import mcp as mcp_service
 from . import memory as memory_service
 from . import metrics
 from .config import HealthConfig
@@ -70,6 +71,7 @@ def start_health_api(cfg: HealthConfig,
         out = {
             "llm": llm_service.status(),
             "memory": mem.status() if mem else {"available": False, "error": "not initialised"},
+            "mcp": mcp_service.status(),
             "metrics": metrics.snapshot(),
         }
         if extra_status:

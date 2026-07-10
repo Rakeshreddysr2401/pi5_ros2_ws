@@ -94,7 +94,9 @@ not here.
 | `LANGROBO_TRACING` | LangSmith opt-in; without it tracing vars are scrubbed (kills stale-key 403 spam) |
 | `LANGROBO_LOG_JSON` | `false` → human-readable log lines |
 | `OPENAI/ANTHROPIC/GOOGLE_API_KEY` | Cloud provider keys (referenced by name) |
-| `SWIGGY_ACCESS_TOKEN` | Food ordering (absent → feature off, no spam) |
+| `SWIGGY_ACCESS_TOKEN` | Legacy Swiggy token override — prefer `scripts/swiggy_login.py` → `~/.langrobo/mcp_tokens.json` (no token anywhere → food/instamart/dineout off, no spam) |
+| `LANGROBO_MCP_TOKENS` | MCP token file path override (default `~/.langrobo/mcp_tokens.json`) |
+| `SWIGGY_FOOD_MCP_URL` / `SWIGGY_INSTAMART_MCP_URL` / `SWIGGY_DINEOUT_MCP_URL` | MCP endpoint overrides (default `https://mcp.swiggy.com/{food,im,dineout}`) |
 | `TAVILY_API_KEY` | Web search in chat (absent → feature off) |
 | `LANGROBO_TELEGRAM_TOKEN` | Bot token from @BotFather (absent → channel off) |
 | `LANGROBO_TELEGRAM_ALLOWLIST` | `chat_id:Name:role,…` — roles `owner`/`family`/`guest`; channel stays off while empty (bot never talks to strangers) |
@@ -110,8 +112,29 @@ not here.
 Robot state files: `~/.langrobo/` — `household.json`, `reminders.json`,
 `errands.json`, `qdrant/`, `telegram_offset`, `telegram_deferred.json`,
 `watch.json` (armed state), `consolidation.json` (nightly-run cursor),
-`briefing.json` (last briefing day).
+`briefing.json` (last briefing day), `mcp_tokens.json` (Swiggy MCP login, 0600).
 Back this directory up; delete a file to reset that memory.
+
+## Swiggy login / re-login
+
+Swiggy's MCP servers (food, instamart, dineout) use OAuth 2.1 PKCE: phone +
+OTP in a browser, access token good for ~5 days, no refresh flow. Login:
+
+```bash
+python3 scripts/swiggy_login.py --verify        # desktop with a browser
+# headless Pi5: from your laptop first `ssh -L 8976:localhost:8976 <robot>`,
+# then on the Pi:
+python3 scripts/swiggy_login.py --no-browser    # open the printed URL on the laptop
+```
+
+`--verify` lists the tool counts on all three MCP servers with the fresh
+token. The token lands in `~/.langrobo/mcp_tokens.json`; a running brain picks
+it up automatically on the next Swiggy/Instamart/Dineout/tracker turn (header
+hot-reload) — only a brain that NEVER had a token needs one restart. When the
+token expires mid-flight the three agents degrade to a spoken "temporarily
+unavailable" and the owners get exactly one Telegram nudge to re-run the
+script. Check `curl -s localhost:8090/status | jq .mcp` for per-provider tool
+counts and token days-left.
 
 ## Household knowledge base (documents)
 
@@ -201,7 +224,7 @@ boot. Inbound is rate-limited to 10 msg/min per sender. `/status` shows the
 | Every turn slow (~20s before speech) | KV cache cold: slot scatter (server without `--parallel`/pins), clock in a prompt, or mid-history mutation — see ARCHITECTURE.md KV-cache discipline |
 | "I cannot see right now" | Jetson camera node down or frame >10s stale — check `/camera/color/image_raw/compressed` |
 | Tool calls flaky / early stops | GGUF chat template mislabels control tokens → suspect the quant; try `strict_tool_calls:=false` |
-| Food ordering "not configured" | `SWIGGY_ACCESS_TOKEN` absent/401 — feature is off by design until a valid token lands |
+| Food/grocery/dineout "temporarily unavailable" | No Swiggy token or it expired (~5 days) — run `scripts/swiggy_login.py` (see "Swiggy login" above); `/status .mcp` shows which provider is down |
 | Memory unavailable in /status | first boot downloads the embed model (~130MB) — check network, see journal |
 | ESP32 not moving | `langrobo-microros` unit down, or ESP32 not on WiFi → `systemctl status langrobo-microros`, then power-cycle ESP32 |
 | DDS discovery fails Pi5↔Jetson | `ROS_DOMAIN_ID` mismatch, `langrobo-discovery` (meeting point) down, or a client started before the meeting point came up — see NETWORKING.md; restart the client (brain/microros/Jetson launch) after the meeting point is confirmed up |

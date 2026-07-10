@@ -3,7 +3,7 @@
 Architecture:
   START → turn_entry → supervisor → supervisor_tools
                                          ↓ (handover)
-                                   handle_handover → [chat|local_agent|navigate|status|swiggy|tracker|knowledge|briefing]
+                                   handle_handover → [chat|local_agent|navigate|status|swiggy|instamart|dineout|tracker|knowledge|briefing]
                                                             ↓
                                                       per-agent tools
                                                             ↓ (if handover)
@@ -25,6 +25,8 @@ from ..agents.local_agent import local_agent_node
 from ..agents.navigate import navigate_node
 from ..agents.status import status_node
 from ..agents.swiggy import swiggy_node
+from ..agents.instamart import instamart_node
+from ..agents.dineout import dineout_node
 from ..agents.tracker import tracker_node
 from ..agents.knowledge import knowledge_node
 from ..agents.briefing import briefing_node
@@ -35,6 +37,8 @@ from ..tools import (
     NAVIGATE_TOOLS,
     STATUS_TOOLS,
     SWIGGY_TOOLS,
+    INSTAMART_TOOLS,
+    DINEOUT_TOOLS,
     TRACKER_TOOLS,
     KNOWLEDGE_AGENT_TOOLS,
     BRIEFING_TOOLS,
@@ -52,6 +56,8 @@ _AGENT_SPECS = {
     "navigate":    (navigate_node,    NAVIGATE_TOOLS),
     "status":      (status_node,      STATUS_TOOLS),
     "swiggy":      (swiggy_node,      SWIGGY_TOOLS),
+    "instamart":   (instamart_node,   INSTAMART_TOOLS),
+    "dineout":     (dineout_node,     DINEOUT_TOOLS),
     "tracker":     (tracker_node,     TRACKER_TOOLS),
     "knowledge":   (knowledge_node,   KNOWLEDGE_AGENT_TOOLS),
     "briefing":    (briefing_node,    BRIEFING_TOOLS),

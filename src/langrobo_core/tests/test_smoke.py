@@ -15,6 +15,8 @@ from langrobo_core.tools import (
     STATUS_TOOLS,
     SUPERVISOR_TOOLS,
     SWIGGY_TOOLS,
+    INSTAMART_TOOLS,
+    DINEOUT_TOOLS,
     TRACKER_TOOLS,
 )
 
@@ -22,7 +24,8 @@ _bridge._instance = None
 _bridge.init(StubBridge())
 
 EXPECTED_AGENTS = {"supervisor", "chat", "local_agent", "navigate",
-                   "status", "swiggy", "tracker", "knowledge", "briefing"}
+                   "status", "swiggy", "instamart", "dineout", "tracker",
+                   "knowledge", "briefing"}
 
 
 def test_graph_builds_with_all_agents():
@@ -53,7 +56,8 @@ def test_handover_enum_matches_registry():
 
 def test_tool_sets_bind_and_have_handover():
     for tools in (CHAT_TOOLS, LOCAL_AGENT_TOOLS, NAVIGATE_TOOLS, STATUS_TOOLS,
-                  SUPERVISOR_TOOLS, SWIGGY_TOOLS, TRACKER_TOOLS):
+                  SUPERVISOR_TOOLS, SWIGGY_TOOLS, INSTAMART_TOOLS,
+                  DINEOUT_TOOLS, TRACKER_TOOLS):
         names = [t.name for t in tools]
         assert "handover" in names
         assert len(names) == len(set(names)), f"duplicate tool in {names}"

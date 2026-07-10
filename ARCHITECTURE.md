@@ -45,14 +45,17 @@ src/langrobo_core/langrobo_core/       pip package (editable install via require
 │   ├── local_agent.py     Multimodal vision — reasons over real frames via look()
 │   ├── navigate.py        Movement: fine Twist + YOLO visual servoing + Nav2 slot
 │   ├── status.py          Robot operational state
-│   ├── swiggy.py          Food ordering (MCP; degrades cleanly without a token)
-│   ├── tracker.py         Delivery tracking + door navigation
+│   ├── swiggy.py          Food ordering (Swiggy MCP; degrades cleanly without a token)
+│   ├── instamart.py       Grocery ordering (Swiggy Instamart MCP; same degrade)
+│   ├── dineout.py         Table reservations (Swiggy Dineout MCP; same degrade)
+│   ├── tracker.py         Food + grocery delivery tracking + door navigation
 │   ├── knowledge.py       Q&A over ingested household documents (manuals, notes)
 │   └── briefing.py        Morning briefing (scheduled [SYSTEM] + on-demand)
 ├── tools/                 @tool functions; __init__.py holds per-agent tool sets
 ├── services/
 │   ├── config.py          Validated .env settings — fail fast on malformed values
 │   ├── llm.py             LLM factory + slot pinning + cloud-fallback policy
+│   ├── mcp.py             MCP provider registry — remote tool servers + token lifecycle
 │   ├── memory.py          Episodic memory (embedded Qdrant + on-device fastembed)
 │   ├── consolidation.py   Nightly episodic→facts distillation (local model only)
 │   ├── knowledge.py       Document ingest: extract → chunk → embed → Qdrant
@@ -109,7 +112,7 @@ directly; memory embedding never runs on the turn path.
 ```
 START → turn_entry ──► sticky agent (chat/local_agent) │ supervisor ([SYSTEM]) │ chat (default)
                                   │
-supervisor ──► supervisor_tools ──► handle_handover ──► [chat|local_agent|navigate|status|swiggy|tracker]
+supervisor ──► supervisor_tools ──► handle_handover ──► [chat|local_agent|navigate|status|swiggy|instamart|dineout|tracker|knowledge|briefing]
                                                               │
                                                     per-agent tool nodes
                                                               │
@@ -155,7 +158,7 @@ fallbacks; others publish the whole reply (protocol unchanged).
 Everything below exists to keep warm turns pure-decode (~20s prefill avoided):
 
 - **Slot map** (`id_slot` per request): chat=0, local_agent(images)=1,
-  specialists (status/swiggy/tracker/knowledge/briefing)=2, supervisor=3,
+  specialists (status/swiggy/instamart/dineout/tracker/knowledge/briefing)=2, supervisor=3,
   navigate=4. Keeps each prompt prefix hot across excursions. The supervisor
   got its own slot on 2026-07-06: it fires on every [SYSTEM] turn, and sharing
   slot 2 meant supervisor and the cached specialist evicted each other
@@ -387,6 +390,33 @@ every extra LLM hop or cache-thrashing prompt costs real seconds.
   descriptive names (`swiggy` predates the convention; rename it the next
   time its contract changes anyway).
 
+## MCP providers (remote tool servers)
+
+`services/mcp.py` is the registry for remote MCP servers — Swiggy food /
+instamart / dineout today; movie tickets, bus tickets, whatever tomorrow.
+One frozen `ProviderSpec` per server: name, endpoint URL (+ env override),
+`auth_domain` (providers that share a login share a domain — all three Swiggy
+servers use domain `"swiggy"`), and an optional legacy token env var.
+
+- **Tokens** live in `~/.langrobo/mcp_tokens.json` (keyed by domain, written
+  by `scripts/swiggy_login.py`, 0600); `spec.token_env` overrides when set.
+  No token → the provider loads ZERO tools and never touches the network —
+  smoke tests and offline boots depend on this.
+- **Every loaded tool is wrapped** (`_guard_tool`) with an identical
+  name/description/args_schema (KV-cache rule: the LLM-visible schema is part
+  of the llama.cpp prompt prefix). At runtime a 401 marks the whole auth
+  domain stale, sends exactly one Telegram nudge to the owners, and returns a
+  graceful string to the LLM instead of raising; other errors return an honest
+  failure string.
+- **Reload safety**: tool objects are frozen at process start (build_graph's
+  ToolNodes capture the lists at boot), so never-configured → configured needs
+  one brain restart. A token *refresh* is only a header mutation — the
+  adapters open a fresh MCP session per tool call from the connection dict
+  captured at load, so `refresh_tokens_if_changed()` (one `os.stat`, called
+  only at MCP-agent node entry) re-arms existing tools with zero KV impact.
+- `provider_ok(name)` drives each agent's prompt swap to its
+  `*_UNAVAILABLE_NOTE`; `mcp.status()` feeds `/status` on :8090.
+
 ## How to add an agent
 
 1. Write its system prompt in `prompts.py` (start from CHAT_PROMPT's shape;
@@ -396,6 +426,14 @@ every extra LLM hop or cache-thrashing prompt costs real seconds.
 4. Register in `graph/registry.py` (name + description + examples)
 5. Add one line to `_AGENT_SPECS` in `graph/build.py`
 6. Add the name to the `handover` tool's `next_agent` Literal (`tools/handover.py`)
+7. Give it a slot override in `agent_node.py` (`dict(_spec)` for specialists)
+   and add it to `EXPECTED_AGENTS` in `tests/test_smoke.py`
+
+For an agent backed by a remote MCP server, add step 0: a `ProviderSpec` in
+`services/mcp.py` (see "MCP providers" above), load its tool set in
+`tools/__init__.py` via `load_provider_tools`, give the prompt an
+`*_UNAVAILABLE_NOTE`, and copy `agents/swiggy.py` (not chat.py) as the
+node template — it has the `provider_ok` prompt swap + token refresh.
 
 ## How to add a tool
 
