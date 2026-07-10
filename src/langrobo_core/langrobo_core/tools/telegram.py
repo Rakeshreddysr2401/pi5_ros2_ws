@@ -84,11 +84,28 @@ def send_telegram_message(recipient: str, message: str,
         if refusal:
             _audit(sender, permissions.CAP_RELAY, member.name, "needs_channel_confirm")
             return refusal
+    def _record_errand():
+        via = state.get("channel") or "voice"
+        # A [SYSTEM]-scheduled relay (reminder fire, errand forward) was asked
+        # by the person at home: when the reply arrives it must take the
+        # asked_via="voice" path (spoken announcement) — "system" would fall
+        # into the telegram-forward branch and try to send_telegram_message
+        # to "the user", who is not a resolvable member.
+        if via == "system":
+            via = "voice"
+        asked_by = state.get("sender_name") or "the user"
+        get_errand_store().add(asked_via=via, asked_by=asked_by,
+                               sent_to=member.name, gist=message)
+
     if state.get("channel") == "system" and svc.quiet_now():
         # Proactive pings ([SYSTEM] turns: reminders, deliveries) respect quiet
-        # hours; a person's direct request always goes through.
+        # hours; a person's direct request always goes through. A report_back
+        # relay still records its errand here — the message WILL be delivered
+        # by the post-quiet-hours flush, and the reply must not be orphaned.
         svc.defer(member.chat_id, message)
         _audit(sender, permissions.CAP_RELAY, member.name, "deferred")
+        if report_back:
+            _record_errand()
         return (f"It's quiet hours — the message to {member.name} was queued "
                 f"and will be delivered once quiet hours end.")
     err = svc.send_message(member.chat_id, message)
@@ -96,10 +113,7 @@ def send_telegram_message(recipient: str, message: str,
     if err:
         return f"{err} Tell the user the message to {member.name} did not go through."
     if report_back:
-        via = state.get("channel") or "voice"
-        asked_by = state.get("sender_name") or "the user"
-        get_errand_store().add(asked_via=via, asked_by=asked_by,
-                               sent_to=member.name, gist=message)
+        _record_errand()
         return (f"Message delivered to {member.name} on Telegram. Their reply "
                 f"will be routed back to you as the answer to this errand.")
     return f"Message delivered to {member.name} on Telegram."

@@ -155,10 +155,16 @@ fallbacks; others publish the whole reply (protocol unchanged).
 Everything below exists to keep warm turns pure-decode (~20s prefill avoided):
 
 - **Slot map** (`id_slot` per request): chat=0, local_agent(images)=1,
-  specialists=2, supervisor=3. Keeps each prompt prefix hot across
-  excursions. The supervisor got its own slot on 2026-07-06: it fires on
-  every [SYSTEM] turn, and sharing slot 2 meant supervisor and the cached
-  specialist evicted each other (~18-50s full-history re-prefills).
+  specialists (status/swiggy/tracker/knowledge/briefing)=2, supervisor=3,
+  navigate=4. Keeps each prompt prefix hot across excursions. The supervisor
+  got its own slot on 2026-07-06: it fires on every [SYSTEM] turn, and sharing
+  slot 2 meant supervisor and the cached specialist evicted each other
+  (~18-50s full-history re-prefills). Navigate got its own slot for the same
+  reason — it's the most latency-sensitive specialist (real movement) and
+  previously shared slot 2 with four rarely-active agents. Both are also
+  cache-warmed independently by `agent_node`'s background warmer (supervisor
+  since 2026-07-06; navigate is not yet warmed proactively — only chat/
+  local_agent/supervisor are).
 - **Append-only projection** (`utils/message_utils.py`): for any log L and
   suffix S, project(L) must be a prefix of project(L+S). Historical routing
   notes are never dropped; images are stripped per-message for text agents.

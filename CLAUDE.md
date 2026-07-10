@@ -12,11 +12,15 @@ OPERATIONS.md for run/deploy/troubleshooting; PRODUCT.md for the roadmap.
 `scripts/fleet.sh {sim|rover|stop|down|status}` (run here on the Pi5). Picks the robot **body**:
 
 - **`sim`** — the SIMULATION body: sshes the laptop and starts its Gazebo sim + Nav2
-  (`rover_sim`), and starts the Jetson's `isaac_ros` perception container. Use this to
-  develop/test the brain against a full nav stack + depth/lidar without the real robot.
+  (`rover_sim`), and starts BOTH Jetson roles — `ai_stack` voice (you still talk to the
+  robot by real mic/speaker while the body is simulated) and the `isaac_ros` perception
+  container (nvblox/SLAM consuming the sim's /cam_1 depth/RGB). Also switches the brain's
+  `robot_body` to `sim` (cmd_vel becomes TwistStamped on /mecanum_drive_controller/cmd_vel).
 - **`rover`** — the REAL body: starts this Pi5's micro-ROS agent (ESP32 wheels) and the
-  Jetson's `ai_stack` voice pipeline. Does NOT start `isaac_ros` — the real rover has no
-  depth camera / lidar / imu yet, so there's nothing for the perception pipelines to consume.
+  Jetson's `ai_stack` voice pipeline (real camera + STT/TTS). Does NOT start `isaac_ros` —
+  the real rover has no depth camera / lidar / imu yet, so there's nothing for the
+  perception pipelines to consume. Switches `robot_body` back to `rover` (plain Twist
+  on /cmd_vel).
 - **`stop`** parks the robot: stops the body (sim + Jetson roles) but keeps `langrobo-brain`
   + `langrobo-discovery` up, so chat/Telegram keeps listening. No password.
 - **`down`** full shutdown: everything `stop` does PLUS this Pi5's system units (brain,
@@ -33,7 +37,7 @@ laptop's key + sshd were set up 2026-07-07 so the Pi5→laptop hop works.
 
 ```bash
 # Whole robot (see "Fleet start" above)
-./scripts/fleet.sh sim        # simulation body (laptop sim + jetson isaac_ros)
+./scripts/fleet.sh sim        # simulation body (laptop sim + jetson voice+isaac_ros)
 ./scripts/fleet.sh rover      # real body (pi5 microros + jetson voice)
 ./scripts/fleet.sh stop       # park robot body (brain stays up)
 ./scripts/fleet.sh down       # full shutdown incl. Pi5 services (sudo)
@@ -116,10 +120,13 @@ build.py + handover Literal must stay in sync — the smoke tests catch drift).
 
 ## Working on the Jetson from here
 
-Passwordless SSH: `ssh rakhi24@rakhi-jetson.local` (the 192.168.2.x cable link
-was reported physically dead 2026-07-05 — mDNS names work over whatever network
-is up, see NETWORKING.md). The speech_vision repo is at
-`~/robot` on the Jetson (branch dev-1.0.4_voice_upgrade+) and has its own
+Passwordless SSH: `ssh rakhi24@rakhi-jetson.local`. The direct ethernet link is
+BACK as of 2026-07-10 (Pi5 192.168.2.10 ↔ Jetson 192.168.2.20) alongside wifi;
+everything stays NAME-based so either link works — mDNS resolves over whatever
+is up, the discovery server binds 0.0.0.0, and the Jetson containers point at
+`rakhi24-desktop.local:11811`. Unplugging a link mid-session needs only a role
+restart (names re-resolve at launch); see NETWORKING.md. The speech_vision repo
+is at `~/robot` on the Jetson (branch dev-1.0.7) and has its own
 CLAUDE.md + VOICE_PIPELINE.md — read those before editing; they document the
 container build/restart procedure and five hard-won gotchas (venv-python
 colcon builds, zombie launch children, pinned pip index, broken torchaudio,
@@ -136,7 +143,7 @@ change both repos together or neither.
   `navigate_to_pose` still reports honestly after a 10s server wait. The
   interfaces are the reserved slot — keep them.
 - `strict_tool_calls` + streaming need the llama.cpp server started with
-  `--jinja --parallel 4`.
+  `--jinja --parallel 5` (chat/local_agent/specialist/supervisor/navigate slots).
 - Smoke tests import `tools/swiggy_mcp.py` which probes the network only when
   SWIGGY_ACCESS_TOKEN is set.
 - Pi5↔Jetson clocks drift ~1.5s (chrony peering pending) — latency_replay

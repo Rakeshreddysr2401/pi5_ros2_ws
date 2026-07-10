@@ -92,6 +92,35 @@ echo a continuously-published topic (camera) instead.
 Which path is data using? `getent ahostsv4 rakhi24-desktop.local` returns the
 cable IP (`192.168.2.10`) when the cable is up → traffic prefers the wire.
 
+## State of the world — 2026-07-10 (cable "back", but carrier-only)
+
+The Ethernet cable was re-connected 2026-07-10 (Pi5 eth0 192.168.2.10 ↔
+Jetson enP8p1s0 192.168.2.20, routes present on both) — BUT it passes NO
+data: carrier is up on both ends while the Jetson NIC shows **rx_packets=0
+since boot** and ARP stays INCOMPLETE in both directions. Replace/reseat the
+cable (or check what it is actually plugged into) before trusting it. Until
+then WiFi remains the only working Pi5↔Jetson path.
+
+What changed for the dual-link future (all committed in `~/robot`, 66819e9):
+
+1. **`fleet_role.sh` resolves the Pi5 discovery server per voice launch**
+   (`pi5_discovery()`): eth 192.168.2.10 preferred, wifi 192.168.1.16 next,
+   mDNS-IPv4 last — so the moment the cable actually works, a voice restart
+   uses it with no config change. Verified: a static two-server
+   `ROS_DISCOVERY_SERVER="ip1;ip2"` list SILENTLY FAILS on this Fast DDS
+   build (only entry 0 is honoured) — never use the list form for fallback.
+2. **`fastdds_unicast.xml` whitelists BOTH Jetson interfaces** (wifi
+   192.168.1.15 + eth 192.168.2.20) with peers on both networks — unreachable
+   peers are retried harmlessly.
+3. The Jetson **containers' default** env stays the wifi IP
+   (`192.168.1.16:11811` — reserve that DHCP lease in the router); manual
+   isaac_ros pipeline launches use it as-is.
+4. **Laptop availability**: `rakhi24.local`/192.168.1.12 drops off the
+   network intermittently (suspend / wifi power-save suspected) — disable
+   suspend on the sim laptop for it to be a dependable fleet member.
+   `fleet.sh` accepts `LANGROBO_LAPTOP_HOST`/`LANGROBO_JETSON_HOST` overrides
+   when mDNS flakes.
+
 ## State of the world — 2026-07-06 (WiFi-only workarounds)
 
 The Ethernet link is still physically dead AND the WiFi AP blocks

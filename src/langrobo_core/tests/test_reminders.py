@@ -126,3 +126,45 @@ def test_system_channel_relay_bypasses_ask_back_gate(fake_telegram):
     })
     assert "delivered to Mom" in result
     assert fake_telegram.sent == [(222, "Bring fruits home")]
+
+
+# ── Errand routing for scheduled relays ──────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _isolated_errand_store(tmp_path, monkeypatch):
+    from langrobo_core.tools import errands as errands_module
+    monkeypatch.setattr(errands_module, "_store",
+                        errands_module.ErrandStore(path=str(tmp_path / "errands.json")))
+    yield
+
+
+def test_system_relay_errand_routes_reply_to_voice(fake_telegram):
+    """A [SYSTEM]-scheduled relay's errand must be asked_via='voice' so the
+    recipient's reply is announced aloud — 'system' would hit the
+    telegram-forward branch and try to message the unresolvable 'the user'."""
+    from langrobo_core.tools.errands import get_store as get_errand_store
+    send_telegram_message.invoke({
+        "recipient": "Mom", "message": "Bring fruits home",
+        "report_back": True,
+        "state": {"channel": "system", "messages": []},
+    })
+    [errand] = get_errand_store().pop_for_sender("Mom")
+    assert errand.asked_via == "voice"
+
+
+def test_quiet_hours_deferred_relay_still_records_errand(fake_telegram, monkeypatch):
+    from langrobo_core.tools.errands import get_store as get_errand_store
+    monkeypatch.setattr(fake_telegram, "quiet_now", lambda: True)
+    deferred = []
+    monkeypatch.setattr(fake_telegram, "defer",
+                        lambda chat_id, text: deferred.append((chat_id, text)),
+                        raising=False)
+    result = send_telegram_message.invoke({
+        "recipient": "Mom", "message": "Bring fruits home",
+        "report_back": True,
+        "state": {"channel": "system", "messages": []},
+    })
+    assert "quiet hours" in result
+    assert deferred == [(222, "Bring fruits home")]
+    [errand] = get_errand_store().pop_for_sender("Mom")
+    assert errand.asked_via == "voice"

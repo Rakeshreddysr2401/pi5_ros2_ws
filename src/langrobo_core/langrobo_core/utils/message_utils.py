@@ -59,10 +59,14 @@ def safe_invoke(llm, messages: list, logger: logging.Logger, retries: int = 1,
             try:
                 response = llm.invoke(messages)
                 llm_service.report_primary_success()
-                logger.info("LLM call answered", extra={
-                    "llm_source": "primary", "agent": agent,
-                    "slot": llm_service.slot_for(agent),
-                })
+                # agent/slot only when the caller identified itself —
+                # slot_for(None) is the GLOBAL slot and would mis-attribute
+                # e.g. local_agent's calls (slot 1) to chat's slot 0.
+                extra = {"llm_source": "primary"}
+                if agent:
+                    extra["agent"] = agent
+                    extra["slot"] = llm_service.slot_for(agent)
+                logger.info("LLM call answered", extra=extra)
                 return response
             except Exception as e:
                 primary_error = e
@@ -80,9 +84,10 @@ def safe_invoke(llm, messages: list, logger: logging.Logger, retries: int = 1,
             response = fallback.invoke(messages)
             from ..services import metrics
             metrics.inc("llm_fallback_used_total")
-            logger.warning("Answered via cloud fallback LLM", extra={
-                "llm_source": "fallback", "agent": agent,
-            })
+            extra = {"llm_source": "fallback"}
+            if agent:
+                extra["agent"] = agent
+            logger.warning("Answered via cloud fallback LLM", extra=extra)
             return response
         except Exception as e:
             logger.error("Fallback LLM failed too: %s", e)

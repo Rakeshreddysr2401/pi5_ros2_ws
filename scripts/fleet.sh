@@ -3,7 +3,7 @@
 # in either body:
 #
 #   ./scripts/fleet.sh sim      # SIMULATION body: laptop Gazebo sim (+ nav2)
-#                               #   + Jetson isaac_ros (perception) container
+#                               #   + Jetson voice AND isaac_ros (perception)
 #   ./scripts/fleet.sh rover    # REAL body: Jetson ai_stack voice pipeline
 #                               #   (+ this Pi5's micro-ROS agent for the ESP32
 #                               #   wheels). No isaac_ros — the rover has no
@@ -22,8 +22,12 @@
 set -eo pipefail
 CMD="${1:-status}"
 
-LAPTOP=rakhi24@rakhi24.local
-JETSON=rakhi24@rakhi-jetson.local
+# mDNS names by default; override when mDNS flakes (it does, transiently):
+#   LANGROBO_LAPTOP_HOST=192.168.1.12 ./scripts/fleet.sh sim
+LAPTOP_HOST="${LANGROBO_LAPTOP_HOST:-rakhi24.local}"
+JETSON_HOST="${LANGROBO_JETSON_HOST:-rakhi-jetson.local}"
+LAPTOP=rakhi24@$LAPTOP_HOST
+JETSON=rakhi24@$JETSON_HOST
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new"
 
 SIM_SCRIPT=/workspace/ros2_ws/src/rover_sim/rover_bringup/scripts/fleet_sim.sh
@@ -42,9 +46,13 @@ set_body() {
     fi
     mkdir -p "$(dirname "$BRAIN_ENV")"
     echo "ROBOT_BODY=$body" > "$BRAIN_ENV"
-    sudo -n systemctl restart langrobo-brain 2>/dev/null \
-        || systemctl restart langrobo-brain 2>/dev/null || true
-    echo "pi5:    robot_body switched to '$body' (brain restarted)"
+    if sudo -n systemctl restart langrobo-brain 2>/dev/null \
+        || systemctl restart langrobo-brain 2>/dev/null; then
+        echo "pi5:    robot_body switched to '$body' (brain restarted)"
+    else
+        echo "pi5:    robot_body set to '$body' in $BRAIN_ENV, but the brain"
+        echo "        restart needs sudo — run: sudo systemctl restart langrobo-brain"
+    fi
 }
 
 ensure_local_units() {
@@ -61,17 +69,21 @@ case "$CMD" in
 sim)
     set_body sim
     ensure_local_units
-    if reachable rakhi24.local; then
+    if reachable "$LAPTOP_HOST"; then
         echo "laptop: starting sim..."
         $SSH $LAPTOP "$SIM_SCRIPT start" || echo "laptop: sim start FAILED"
     else
         echo "laptop: UNREACHABLE — is it powered on and on the wifi? (sim not started)"
     fi
-    if reachable rakhi-jetson.local; then
-        echo "jetson: starting perception container..."
+    if reachable "$JETSON_HOST"; then
+        # Sim mode needs BOTH Jetson roles: voice (real mic/speaker — you
+        # still talk to the robot while the body is simulated) AND perception
+        # (isaac_ros consuming the sim's /cam_1 depth/RGB topics).
+        echo "jetson: starting voice + perception..."
+        $SSH $JETSON "$ROLE_SCRIPT voice start" || echo "jetson: voice start FAILED"
         $SSH $JETSON "$ROLE_SCRIPT perception start" || echo "jetson: perception start FAILED"
     else
-        echo "jetson: UNREACHABLE (perception not started)"
+        echo "jetson: UNREACHABLE (voice/perception not started)"
     fi
     echo "fleet: SIM mode up. Nav2 needs ~1 min in the house world; check: $0 status"
     ;;
@@ -81,7 +93,7 @@ rover)
     sudo -n systemctl start langrobo-microros 2>/dev/null \
         || systemctl start langrobo-microros 2>/dev/null || true
     echo "pi5:    microros=$(systemctl is-active langrobo-microros)"
-    if reachable rakhi-jetson.local; then
+    if reachable "$JETSON_HOST"; then
         echo "jetson: starting voice pipeline..."
         $SSH $JETSON "$ROLE_SCRIPT voice start" || echo "jetson: voice start FAILED"
     else
@@ -92,10 +104,10 @@ rover)
 stop)
     # Park the robot: stop the body (sim + Jetson roles). No password needed.
     # Brain + discovery stay up so chat/Telegram keeps listening.
-    if reachable rakhi24.local; then
+    if reachable "$LAPTOP_HOST"; then
         $SSH $LAPTOP "$SIM_SCRIPT stop" || true
     fi
-    if reachable rakhi-jetson.local; then
+    if reachable "$JETSON_HOST"; then
         $SSH $JETSON "$ROLE_SCRIPT voice stop" || true
         $SSH $JETSON "$ROLE_SCRIPT perception stop" || true
     fi
@@ -106,10 +118,10 @@ down)
     # Full shutdown: everything 'stop' does, PLUS this Pi5's own services
     # (brain, micro-ROS wheels, discovery meeting point). Those are systemd
     # system units, so this asks for your password once.
-    if reachable rakhi24.local; then
+    if reachable "$LAPTOP_HOST"; then
         $SSH $LAPTOP "$SIM_SCRIPT stop" || true
     fi
-    if reachable rakhi-jetson.local; then
+    if reachable "$JETSON_HOST"; then
         $SSH $JETSON "$ROLE_SCRIPT voice stop" || true
         $SSH $JETSON "$ROLE_SCRIPT perception stop" || true
     fi
@@ -121,12 +133,12 @@ down)
     ;;
 status)
     echo "pi5:    discovery=$(systemctl is-active langrobo-discovery)  brain=$(systemctl is-active langrobo-brain)  microros=$(systemctl is-active langrobo-microros)"
-    if reachable rakhi24.local; then
+    if reachable "$LAPTOP_HOST"; then
         $SSH $LAPTOP "$SIM_SCRIPT status" 2>/dev/null || true
     else
         echo "laptop: unreachable"
     fi
-    if reachable rakhi-jetson.local; then
+    if reachable "$JETSON_HOST"; then
         $SSH $JETSON "$ROLE_SCRIPT voice status" 2>/dev/null || true
         $SSH $JETSON "$ROLE_SCRIPT perception status" 2>/dev/null || true
     else
@@ -135,7 +147,7 @@ status)
     ;;
 *)
     echo "usage: $0 {sim|rover|stop|down|status}"
-    echo "  sim    start simulation body (laptop Gazebo+Nav2 + Jetson isaac_ros)"
+    echo "  sim    start simulation body (laptop Gazebo+Nav2 + Jetson voice+isaac_ros)"
     echo "  rover  start real body (Pi5 micro-ROS wheels + Jetson voice)"
     echo "  stop   stop the robot body; keep brain + discovery (Telegram) alive"
     echo "  down   full shutdown incl. Pi5 brain/discovery/microros (asks sudo)"

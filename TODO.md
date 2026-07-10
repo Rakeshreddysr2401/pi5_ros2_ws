@@ -1,5 +1,51 @@
 # TODO — pending on-device work
 
+## OUTSTANDING 2026-07-10: Mac Mini llama.cpp returns "Compute error" on EVERY request
+
+Found while verifying the day's deploys: `/health` says ok and `/slots` lists
+5 slots (32k ctx each, Gemma 12B Q4_K_M, build b9830), but every completion —
+every slot, no slot pin, even a 3-token prompt on the native `/completion`
+endpoint — fails `500 Compute error`. So it is NOT the 5th slot / not our
+request shape: the server's decode path is broken outright (likely the binary
+rebuilt/updated alongside the `--parallel 5` restart). Until fixed the robot
+speaks the offline degradation on every turn. Fix on the Mac: check the
+server log's first error after any request (Metal/ggml message), try the
+previous binary with the same flags. Verify with:
+`curl http://singireddys-mac-mini.local:8080/completion -d '{"prompt":"hi","n_predict":2}'`
+Then run: one voice turn, a 1-min reminder with telegram_recipient, and the
+KV replay (below). Delete this section when done.
+
+## OUTSTANDING 2026-07-10: Pi5↔Jetson ethernet cable is carrier-only (no data)
+
+Reconnected today, link LEDs up, routes present — but the Jetson NIC shows
+rx_packets=0 since boot and ARP stays INCOMPLETE both ways. Replace/reseat
+the cable. Software is already prepared for it (NETWORKING.md 2026-07-10
+section): once the cable passes data, `fleet_role.sh voice restart` on the
+Jetson picks it automatically. Delete when the cable works.
+
+## Deployed 2026-07-10 (this session) — verification pending on the LLM fix
+
+Live on the Pi5 (built, unit reinstalled, brain restarted, 115 core tests
+green): supervisor KV prewarm + build_llm_call, llm_source/slot diagnostics,
+reminders with structured telegram_recipient relay (background-thread send,
+errand asked_via fix, quiet-hours errand recording), robot_body rover/sim
+cmd_vel switch (fleet.sh → brain.env → EnvironmentFile), point_camera tool,
+navigate_slot=4 + adaptive slot-count fold, fleet.sh sim now starts Jetson
+voice+perception, honest set_body failure reporting, ChatOpenAI
+max_retries=0 (SDK's hidden 2 retries stacked on safe_invoke's own —
+dead-primary turns sat silent ~34s instead of ~10s before the spoken
+offline message; measured live 2026-07-10).
+
+NEEDS ONE `sudo systemctl restart langrobo-brain` to activate the adaptive
+slot fold + max_retries fix (everything above it is already live).
+
+Verified live 2026-07-10 with the LLM down: full degradation turn end-to-end
+(voice input → graph → 2 attempts → 60s cooldown armed → offline message
+streamed → Jetson Kokoro spoke it, utterance complete) — both DDS directions
+proven (camera frames up at 0.1s, speech down). Remaining manual verification
+(blocked only on the Mac LLM): normal voice turn, reminder-relay end-to-end,
+`/slots` warm check, sim `move_robot` → TwistStamped echo.
+
 ## Deploy the 2026-07-10 reliability fixes (built + tested on the laptop)
 
 Two turn-pipeline fixes, unit-tested off-robot (100 tests green); need the

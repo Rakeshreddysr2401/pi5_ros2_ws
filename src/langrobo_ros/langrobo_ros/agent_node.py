@@ -96,6 +96,12 @@ class AgentNode(Node):
         # meant each routed a full-history re-prefill onto the other
         # (~18-50s, measured 2026-07-06). -1 = share specialist_slot.
         self.declare_parameter("supervisor_slot", 3)
+        # Slot for navigate ALONE. It's the most latency-sensitive specialist
+        # (real robot/sim movement) and previously shared specialist_slot with
+        # status/swiggy/tracker/knowledge/briefing — any of those running
+        # first would evict navigate's cache before a movement command.
+        # -1 = share specialist_slot (old behaviour).
+        self.declare_parameter("navigate_slot", 4)
 
         provider      = self.get_parameter("provider").value
         model         = self.get_parameter("model").value
@@ -111,6 +117,7 @@ class AgentNode(Node):
         local_agent_model    = self.get_parameter("local_agent_model").value
         specialist_slot      = self.get_parameter("specialist_slot").value
         supervisor_slot      = self.get_parameter("supervisor_slot").value
+        navigate_slot        = self.get_parameter("navigate_slot").value
         strict_tool_calls    = self.get_parameter("strict_tool_calls").value
         self._stream_speech  = self.get_parameter("stream_speech").value
 
@@ -120,14 +127,40 @@ class AgentNode(Node):
         if provider == "openai" and "singireddys-mac-mini" in base_url:
             base_url = ""
 
-        # Per-agent LLM overrides — three-way slot map:
+        # ── Adaptive slot map: fold pins the server can't honour ────────────
+        # The configured map assumes --parallel 5, but the Mac Mini sometimes
+        # runs fewer slots (memory pressure). Probe the server's real slot
+        # count and fold the LEAST-frequent agents first onto slots that
+        # already share (navigate → specialist → chat's slot), keeping chat,
+        # local_agent and supervisor on their own slots as long as possible.
+        # Probe unreachable → keep the configured map (server may boot later).
+        if provider == "llamacpp":
+            total_slots = self._probe_total_slots(base_url)
+            if total_slots:
+                def _fold(slot: int, fallback: int, name: str) -> int:
+                    if slot is not None and slot >= total_slots:   # -1 never folds
+                        self.get_logger().warning(
+                            f"{name}_slot {slot} is out of range for this "
+                            f"server ({total_slots} slots) — sharing slot "
+                            f"{fallback} instead")
+                        return fallback
+                    return slot
+                specialist_slot = _fold(specialist_slot, llm_slot, "specialist")
+                supervisor_slot = _fold(supervisor_slot, specialist_slot, "supervisor")
+                navigate_slot   = _fold(navigate_slot,   specialist_slot, "navigate")
+                local_agent_slot = _fold(local_agent_slot, llm_slot, "local_agent")
+
+        # Per-agent LLM overrides — slot map:
         #   llm_slot (0):        chat, the default responder — its prefix stays
         #                        hot across every specialist excursion.
         #   local_agent_slot(1): local_agent's image prefix, never evicted by
         #                        text agents (and vice versa).
-        #   specialist_slot (2): supervisor + navigate/status/swiggy/tracker —
+        #   specialist_slot (2): status/swiggy/tracker/knowledge/briefing —
         #                        different system prompts that would otherwise
         #                        thrash chat's slot.
+        #   supervisor_slot (3): supervisor alone (every [SYSTEM] turn).
+        #   navigate_slot (4):   navigate alone (real movement — most
+        #                        latency-sensitive specialist).
         # The supervisor never emits user-facing text (grammar-forced handover),
         # so it gains nothing from streaming and skips it.
         _spec = {"slot": specialist_slot if specialist_slot >= 0 else None}
@@ -135,13 +168,17 @@ class AgentNode(Node):
         # unset): it fires on every [SYSTEM] turn and must not evict — or be
         # evicted by — whichever specialist is cached on slot 2.
         _sup = {"slot": supervisor_slot if supervisor_slot >= 0 else _spec["slot"]}
+        # Navigate gets its OWN slot too (falls back to the specialist slot
+        # when unset) — real movement commands shouldn't wait behind whichever
+        # other specialist last evicted slot 2.
+        _nav = {"slot": navigate_slot if navigate_slot >= 0 else _spec["slot"]}
         agent_overrides = {
             "local_agent": {
                 "slot":  local_agent_slot,
                 "model": local_agent_model or None,
             },
             "supervisor": {"streaming": False, **_sup},
-            "navigate":   dict(_spec),
+            "navigate":   dict(_nav),
             "status":     dict(_spec),
             "swiggy":     dict(_spec),
             "tracker":    dict(_spec),
@@ -419,30 +456,43 @@ class AgentNode(Node):
         due = get_reminder_store().pop_due()
         if not due:
             return
-        for r in due:
+        # The Telegram relay is a blocking HTTP POST (15s timeout) — like the
+        # watch alert, it runs on a short-lived background thread, never on
+        # the spin thread (which must keep servicing voice/camera/stop).
+        relays = [r for r in due if r.telegram_recipient]
+        if relays:
+            threading.Thread(target=self._relay_reminders, args=(relays,),
+                             daemon=True).start()
+
+        def _line(r):
+            s = f'"{r.text}" (set for {self._fmt_clock(r.due)})'
             if r.telegram_recipient:
-                self._relay_reminder(r)
-        lines = "; ".join(f'"{r.text}" (set for {self._fmt_clock(r.due)})' for r in due)
+                s += f" — also being relayed to {r.telegram_recipient} on Telegram"
+            return s
+
+        lines = "; ".join(_line(r) for r in due)
         self.get_logger().info(f"Reminder(s) due: {lines}")
         self._enqueue_system(
             f"[SYSTEM] Reminder due — announce to the user now: {lines}")
 
-    def _relay_reminder(self, r) -> None:
-        """Deterministic Telegram relay for a reminder created with
-        telegram_recipient — goes through send_telegram_message's own
-        permission/quiet-hours/D10 gates (channel='system' already bypasses
-        the ask-back gate, matching announce_at_home/errand semantics), so
-        this doesn't bypass anything a normal call wouldn't."""
+    def _relay_reminders(self, relays: list) -> None:
+        """Deterministic Telegram relay for reminders created with
+        telegram_recipient (background thread) — goes through
+        send_telegram_message's own permission/quiet-hours/D10 gates
+        (channel='system' already bypasses the ask-back gate, matching
+        announce_at_home/errand semantics), so this doesn't bypass anything
+        a normal call wouldn't."""
         from langrobo_core.tools.telegram import send_telegram_message
-        try:
-            result = send_telegram_message.invoke({
-                "recipient": r.telegram_recipient, "message": r.text,
-                "report_back": r.telegram_report_back,
-                "state": {"channel": "system", "messages": []},
-            })
-            self.get_logger().info(f"Reminder #{r.id} Telegram relay: {result}")
-        except Exception as e:
-            self.get_logger().warning(f"Reminder #{r.id} Telegram relay failed: {e}")
+        for r in relays:
+            try:
+                result = send_telegram_message.invoke({
+                    "recipient": r.telegram_recipient, "message": r.text,
+                    "report_back": r.telegram_report_back,
+                    "state": {"channel": "system", "messages": []},
+                })
+                self.get_logger().info(f"Reminder #{r.id} Telegram relay: {result}")
+            except Exception as e:
+                self.get_logger().warning(f"Reminder #{r.id} Telegram relay failed: {e}")
 
     @staticmethod
     def _fmt_clock(t: float) -> str:
@@ -779,6 +829,27 @@ class AgentNode(Node):
                 self._pub_thinking.publish(Bool(data=False))
 
     # ── KV-cache warming (background) ─────────────────────────────────────
+
+    def _probe_total_slots(self, base_url: str) -> int | None:
+        """How many parallel slots the llama.cpp server actually has
+        (GET /props → total_slots), so the slot map can fold gracefully when
+        the server runs fewer than the configured pins (an out-of-range
+        id_slot fails every request for that agent). Returns None when the
+        server is unreachable — the configured map is kept in that case."""
+        import json as _json
+        import urllib.request
+        root = base_url.rstrip("/")
+        if root.endswith("/v1"):
+            root = root[:-3].rstrip("/")
+        try:
+            with urllib.request.urlopen(f"{root}/props", timeout=3) as r:
+                total = int(_json.load(r).get("total_slots") or 0)
+            self.get_logger().info(f"LLM server reports {total} parallel slots")
+            return total or None
+        except Exception as e:
+            self.get_logger().info(
+                f"Slot probe failed ({e}) — keeping the configured slot map")
+            return None
 
     def _start_cache_warm(self) -> None:
         """Kick off one background prefill of the next-turn prompt (no-op if

@@ -117,8 +117,10 @@ class ROS2Bridge:
         # ── Fixed publishers (pre-created so tools never block on first call) ──
         self._speech_pub        = node.create_publisher(String, "/voice/robot_speech", 10)
         self._vision_target_pub = node.create_publisher(String, "/vision/target", 10)
-        if self._robot_body == "sim":
+        self._sim_body = self._robot_body == "sim"
+        if self._sim_body:
             from geometry_msgs.msg import TwistStamped
+            self._TwistStamped = TwistStamped   # bound once — publish_twist runs at 20 Hz
             self._twist_pub = node.create_publisher(
                 TwistStamped, "/mecanum_drive_controller/cmd_vel", 10)
         else:
@@ -306,14 +308,17 @@ class ROS2Bridge:
         plain Twist on /cmd_vel (ESP32/micro-ROS); sim gets the same linear/
         angular values wrapped in TwistStamped on
         /mecanum_drive_controller/cmd_vel (rover_sim's Nav2/mecanum contract,
-        see docs/INTERFACE.md in the rover_sim repo — frame_id below must be
-        confirmed against that contract before relying on it in sim)."""
-        if self._robot_body == "sim":
-            from geometry_msgs.msg import TwistStamped
-            stamped = TwistStamped()
+        see docs/INTERFACE.md in the rover_sim repo)."""
+        if self._sim_body:
+            stamped = self._TwistStamped()
             stamped.header.stamp = self._node.get_clock().now().to_msg()
-            stamped.header.frame_id = "base_link"   # TODO verify against
-            # rover_sim's docs/INTERFACE.md before a real sim deploy.
+            # mecanum_drive_controller.cpp never reads the command's incoming
+            # frame_id (only sets it on its OWN published odometry) — so this
+            # value doesn't affect driving. Set to "base_footprint" anyway to
+            # match the sim's actual configured base_frame_id (rover_sim's
+            # rover_description/config/rosmaster_x3/ros2_controllers.yaml),
+            # for correctness with any tooling (rviz/rqt) that does read it.
+            stamped.header.frame_id = "base_footprint"
             stamped.twist = twist
             self._twist_pub.publish(stamped)
         else:

@@ -219,6 +219,12 @@ def _build(cfg: dict):
             "api_key": api_key,
             "temperature": 0,
             "max_tokens": max_tokens,
+            # Retry policy lives in safe_invoke (one visible retry, then the
+            # cooldown + fallback ladder). The SDK's hidden default of 2 more
+            # internal retries stacked on top of that — a dead primary cost
+            # ~6 connect attempts (~40s of silence) before the spoken offline
+            # message instead of ~2.
+            "max_retries": 0,
         }
         if base_url:
             kwargs["base_url"] = base_url

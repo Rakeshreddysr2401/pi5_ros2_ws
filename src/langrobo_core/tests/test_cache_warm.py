@@ -16,8 +16,12 @@ def test_build_llm_call_returns_tool_bound_llm_and_matching_prompt():
     assert isinstance(msgs[0], SystemMessage)
     assert msgs[0].content == _get_prompt()
     assert any(isinstance(m, HumanMessage) and m.content == "hello" for m in msgs)
-    bound_tools = getattr(llm, "kwargs", {}).get("tools") or getattr(llm, "bound", None)
-    assert bound_tools is not None or hasattr(llm, "bound")
+    # The warm-up only shares cache if the REAL bound tools + forced
+    # tool_choice ride along — a regression here silently breaks both the
+    # grammar-forced handover and the supervisor slot's warm parity.
+    kwargs = getattr(llm, "kwargs", {})
+    assert any("handover" in str(t) for t in kwargs.get("tools", [])), kwargs
+    assert "handover" in str(kwargs.get("tool_choice")), kwargs
 
 
 def test_build_llm_call_is_append_only_on_warmup_tail():

@@ -31,6 +31,37 @@ journalctl -u langrobo-brain -o cat | jq 'select(.trace_id=="<id>")'   # one tur
 sudo systemctl restart langrobo-brain             # brain only; micro-ROS untouched
 ```
 
+After editing a unit file in `src/langrobo_ros/systemd/`, the INSTALLED copy
+must be refreshed too (bitten 2026-07-10 — the repo file was updated, the
+installed one wasn't, and `fleet.sh sim` silently couldn't switch bodies):
+
+```bash
+sudo cp src/langrobo_ros/systemd/langrobo-brain.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl restart langrobo-brain
+```
+
+### Robot body switch (rover vs sim)
+
+The brain drives cmd_vel to ONE body at a time, chosen by the `robot_body`
+ROS param (default `rover`): the real ESP32 rover gets plain `Twist` on
+`/cmd_vel`; the Gazebo sim (`rover_sim`) gets `TwistStamped` on
+`/mecanum_drive_controller/cmd_vel`. The switch is plumbed
+`fleet.sh {sim|rover}` → `~/.langrobo/brain.env` (`ROBOT_BODY=…`) →
+systemd `EnvironmentFile` → `run_brain.sh` → launch arg → param, and
+`fleet.sh` restarts the brain only when the body actually changes.
+Verify: `curl -s localhost:8090/status | jq .runtime.robot_body`.
+
+### Adaptive KV-slot map
+
+The slot map in `agent_params.yaml` assumes a 5-slot llama.cpp server
+(`--parallel 5`). At startup the brain probes the server's real slot count
+(`GET /props`) and folds out-of-range pins onto shared slots, least-frequent
+agents first (navigate → specialist slot → chat's slot), keeping chat,
+local_agent and supervisor on private slots for as long as the server allows.
+A 4-slot server just means navigate shares slot 2 again. Probe unreachable →
+the configured map is kept. Boot log line: "LLM server reports N parallel
+slots" (or per-agent fold warnings).
+
 ## Health API
 
 In-process FastAPI on port **8090** (`LANGROBO_HEALTH_PORT`).

@@ -51,18 +51,30 @@ agent_node:
     #                         hot across every specialist excursion.
     #   local_agent_slot (1): local_agent's image prefix, never evicted by
     #                         text agents (and vice versa).
-    #   specialist_slot (2):  navigate/status/swiggy/tracker/knowledge/
-    #                         briefing (+ the consolidation batch job).
+    #   specialist_slot (2):  status/swiggy/tracker/knowledge/briefing
+    #                         (+ the consolidation batch job).
     #   supervisor_slot (3):  the supervisor alone. It runs on EVERY [SYSTEM]
     #                         turn (reminders, watch alerts, briefings); on a
     #                         shared slot it evicted whichever specialist was
     #                         cached, and vice versa (~18-50s re-prefills,
     #                         measured 2026-07-06). Own slot = both stay warm.
+    #   navigate_slot (4):    navigate alone — the most latency-sensitive
+    #                         specialist (real movement); previously shared
+    #                         specialist_slot, so any other specialist running
+    #                         first would evict it before a movement command.
     # -1 = no pinning (cloud providers ignore it either way).
+    # Best with the llama.cpp server started with --parallel 5; the brain
+    # probes the server's real slot count at startup (GET /props) and FOLDS
+    # out-of-range pins automatically, least-frequent agents first:
+    # navigate → specialist's slot, supervisor → specialist's slot,
+    # specialist → chat's slot — so chat and local_agent keep their own
+    # slots for as long as the server has ≥2 slots. A 4-slot server just
+    # means navigate shares slot 2 again; nothing breaks.
     llm_slot: 0
     local_agent_slot: 1
     specialist_slot: 2
     supervisor_slot: 3
+    navigate_slot: 4
 
     # Override model for local_agent only ("" = inherit the global model).
     # Set to your multimodal GGUF if the global model is text-only.
