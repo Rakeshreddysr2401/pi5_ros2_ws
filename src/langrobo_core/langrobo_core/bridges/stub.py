@@ -25,6 +25,7 @@ class StubBridge:
         self._nav_done_callback = None
         self._system_turn_callback = None
         self.system_turns: list[str] = []   # tests inspect what was enqueued
+        self.detections: dict = {}          # tests seed {label: {x,y,z,conf,age_s}}
         logger.info("StubBridge initialised (no ROS2 — all publishes are logged)")
 
     # ── Self-initiated turns ──────────────────────────────────────────────
@@ -82,6 +83,31 @@ class StubBridge:
         # approach loop holds still and exits instead of hanging.
         logger.info("[STUB] get_target_result -> None")
         return None
+
+    # ── 3D detections (depth pipeline) ────────────────────────────────────
+    # Tests seed `detections` directly: {label: {x,y,z,conf,age_s}}.
+
+    def get_detected_object(self, label: str, max_age_s: float = 3.0) -> dict | None:
+        det = self.detections.get(label.lower().strip())
+        if det is None or det.get("age_s", 0.0) > max_age_s:
+            return None
+        return det
+
+    def get_detected_objects(self, max_age_s: float = 5.0) -> dict:
+        return {k: v for k, v in self.detections.items()
+                if v.get("age_s", 0.0) <= max_age_s}
+
+    def get_last_seen_object(self, label: str) -> dict | None:
+        return self.detections.get(label.lower().strip())
+
+    # ── Camera pan/tilt ───────────────────────────────────────────────────
+
+    def set_pan_tilt(self, pan_deg: float, tilt_deg: float) -> None:
+        self._pan_tilt = (pan_deg, tilt_deg)
+        logger.info("[STUB] set_pan_tilt(%.0f, %.0f)", pan_deg, tilt_deg)
+
+    def get_pan_tilt(self) -> tuple:
+        return getattr(self, "_pan_tilt", (0.0, 0.0))
 
     # ── Music ─────────────────────────────────────────────────────────────
 

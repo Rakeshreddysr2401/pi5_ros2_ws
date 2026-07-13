@@ -14,8 +14,8 @@ AGENTS: dict[str, dict] = {
         "examples": ["what do you see?", "is there anyone in the room?", "did he wear spectacles?", "is this the real poster?"],
     },
     "navigate": {
-        "description": "moving the robot, going somewhere, finding and approaching objects, stopping; also owns follow-me/come-to-me requests (it explains person following isn't available yet)",
-        "examples": ["go to the kitchen", "find the bottle", "come here", "follow me", "stop"],
+        "description": "moving the robot, going somewhere, finding and approaching people or objects (come here / come to me / go near the chair), saving and listing locations, scanning the surroundings, stopping",
+        "examples": ["go to the kitchen", "find the bottle", "come here", "go near the chair", "save this spot as dining area", "stop"],
     },
     "status": {
         "description": "robot battery level, hardware state, what the robot is currently doing",

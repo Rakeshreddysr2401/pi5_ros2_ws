@@ -70,6 +70,11 @@ class AgentNode(Node):
         # build that streams tool calls). Set False to publish one full reply
         # per turn — the wire protocol (chunks + end marker) stays the same.
         self.declare_parameter("stream_speech", True)
+        # Deterministic movement fast-path: exact spoken movement commands
+        # ("stop", "go to the kitchen", "come here", "forward 30") execute
+        # directly — zero LLM calls, sub-100ms command-to-motion. Anything the
+        # matcher isn't sure about falls through to the normal graph.
+        self.declare_parameter("fast_path", True)
         # llama.cpp KV-cache slot pinning (id_slot). llm_slot pins ALL text agents
         # to one server slot so the shared static prompt prefix stays cached —
         # without it a multi-slot server (--parallel N) scatters sequential
@@ -120,6 +125,7 @@ class AgentNode(Node):
         navigate_slot        = self.get_parameter("navigate_slot").value
         strict_tool_calls    = self.get_parameter("strict_tool_calls").value
         self._stream_speech  = self.get_parameter("stream_speech").value
+        self._fast_path      = self.get_parameter("fast_path").value
 
         api_key = os.environ.get(api_key_env, "") if api_key_env else "none"
         # The launch file's Mac-Mini base_url default must not poison a cloud
@@ -298,6 +304,13 @@ class AgentNode(Node):
             self.create_subscription(String, "/vision/target_result",    self._bridge.on_target_result, 10)
             self.get_logger().info(
                 "Vision enabled — /camera/color/image_raw/compressed + /vision/target_result")
+
+        # 3D object detections from the Jetson depth pipeline (D555 + Isaac ROS
+        # — see JETSON_D555_SETUP.md). Subscribed unconditionally: without the
+        # publisher the cache just stays empty and approach_object reports
+        # honestly that it can't see anything.
+        self.create_subscription(String, "/vision/detections_3d",
+                                 self._bridge.on_detections, 10)
 
         # ── Health/status/metrics API (in-process, daemon thread) ─────────
         health_service.start_health_api(settings.health, extra_status=self._runtime_status)
@@ -650,6 +663,27 @@ class AgentNode(Node):
             # meaningless (and misleading) for a phone conversation.
             self._pub_thinking.publish(Bool(data=True))
         try:
+            # ── Deterministic movement fast-path (voice only) ──────────────
+            # Exact movement commands skip the graph entirely: no supervisor,
+            # no LLM, no KV-cache traffic — the intent regex either matches
+            # with certainty or falls through to the normal LLM route. The
+            # exchange is appended to history as a plain text turn (append-only
+            # → cache-safe) so the LLM keeps full context of what the robot did.
+            if self._fast_path and not is_system and not telegram:
+                from langrobo_core import fastpath
+                from langchain_core.messages import AIMessage
+                spoken = fastpath.try_handle(text)
+                if spoken is not None:
+                    timing.emit("fastpath_done", trace=trace)
+                    self.get_logger().info(f"Fast-path handled: {text!r} → {spoken[:120]}")
+                    metrics.inc("fastpath_turns_total")
+                    with self._history_lock:
+                        self._history.append(HumanMessage(content=text))
+                        self._history.append(AIMessage(content=spoken))
+                    self._memory.record_turn(text, spoken, agent="fastpath")
+                    self._start_cache_warm()
+                    return
+
             with self._history_lock:
                 history = list(self._history)
 

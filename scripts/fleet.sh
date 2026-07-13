@@ -4,10 +4,12 @@
 #
 #   ./scripts/fleet.sh sim      # SIMULATION body: laptop Gazebo sim (+ nav2)
 #                               #   + Jetson voice AND isaac_ros (perception)
-#   ./scripts/fleet.sh rover    # REAL body: Jetson ai_stack voice pipeline
-#                               #   (+ this Pi5's micro-ROS agent for the ESP32
-#                               #   wheels). No isaac_ros — the rover has no
-#                               #   depth camera / lidar yet.
+#   ./scripts/fleet.sh rover    # REAL body: Pi5 micro-ROS agent (ESP32 wheels)
+#                               #   + Jetson isaac_ros perception (D555 + RTAB-Map
+#                               #   + nvblox + Nav2 + YOLO detections, mode real).
+#                               #   NO voice on the Jetson: perception owns the
+#                               #   8GB Orin (DEPTH_CAMERA.md decision) — talk to
+#                               #   the robot via Telegram.
 #   ./scripts/fleet.sh stop     # park the robot: stop the body, keep brain up
 #   ./scripts/fleet.sh down     # full shutdown incl. this Pi5's services (sudo)
 #   ./scripts/fleet.sh status   # who's up, everywhere
@@ -94,12 +96,15 @@ rover)
         || systemctl start langrobo-microros 2>/dev/null || true
     echo "pi5:    microros=$(systemctl is-active langrobo-microros)"
     if reachable "$JETSON_HOST"; then
-        echo "jetson: starting voice pipeline..."
-        $SSH $JETSON "$ROLE_SCRIPT voice start" || echo "jetson: voice start FAILED"
+        # Perception owns the Jetson in rover mode (voice off — Telegram):
+        # D555 + RTAB-Map + nvblox + Nav2 + detections_3d, real profile.
+        echo "jetson: starting perception (real)..."
+        $SSH $JETSON "$ROLE_SCRIPT perception start real" || echo "jetson: perception start FAILED"
     else
-        echo "jetson: UNREACHABLE (voice not started)"
+        echo "jetson: UNREACHABLE (perception not started)"
     fi
-    echo "fleet: ROVER mode up (isaac_ros not needed — rover has no depth cam/lidar yet)."
+    echo "fleet: ROVER mode up. Voice is OFF on the Jetson (perception has the 8GB)"
+    echo "       — talk to the robot via Telegram. Voice manually: $ROLE_SCRIPT voice start"
     ;;
 stop)
     # Park the robot: stop the body (sim + Jetson roles). No password needed.
@@ -148,7 +153,7 @@ status)
 *)
     echo "usage: $0 {sim|rover|stop|down|status}"
     echo "  sim    start simulation body (laptop Gazebo+Nav2 + Jetson voice+isaac_ros)"
-    echo "  rover  start real body (Pi5 micro-ROS wheels + Jetson voice)"
+    echo "  rover  start real body (Pi5 micro-ROS wheels + Jetson perception; voice=Telegram)"
     echo "  stop   stop the robot body; keep brain + discovery (Telegram) alive"
     echo "  down   full shutdown incl. Pi5 brain/discovery/microros (asks sudo)"
     echo "  status show what's up everywhere"

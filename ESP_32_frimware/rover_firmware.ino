@@ -2,14 +2,16 @@
 //  Rover Firmware  —  micro-ROS2 on ESP32
 //  Transport  : WiFi UDP (micro_ros_agent on Pi5, port 8888)
 //  Subscribes : /cmd_vel      geometry_msgs/Twist
-//               /servo_angle  std_msgs/UInt16   (angle 0-180)
+//               /servo_pan    std_msgs/UInt16   (0-180, 90 = camera forward)
+//               /servo_tilt   std_msgs/UInt16   (0-180, 90 = camera level)
 //  Publishes  : /ir_obstacle  std_msgs/Bool     (true = obstacle)
 //
 //  L298N wiring:
 //    Motor A (LEFT)   IN1=26  IN2=25  ENA=14 (PWM)
 //    Motor B (RIGHT)  IN3=33  IN4=32  ENB=27 (PWM)
 //    IR sensor        GPIO 34  (LOW = obstacle detected)
-//    Servo            GPIO 18
+//    Pan servo        GPIO 18  (camera head, horizontal)
+//    Tilt servo       GPIO 19  (camera head, vertical)
 //
 //  micro-ROS2 agent on Pi5:
 //    ros2 run micro_ros_agent micro_ros_agent udp4 --port 8888
@@ -42,7 +44,8 @@ const uint16_t AGENT_PORT = 8888;
 
 // ── Other pins ───────────────────────────────────────────────────────────────
 #define IR_PIN    34
-#define SERVO_PIN 18
+#define SERVO_PAN_PIN  18
+#define SERVO_TILT_PIN 19
 
 // ── PWM config ───────────────────────────────────────────────────────────────
 #define PWM_CH_A    0
@@ -60,16 +63,19 @@ const uint16_t AGENT_PORT = 8888;
 #define CMD_TIMEOUT_MS  500
 
 // ── Globals ──────────────────────────────────────────────────────────────────
-Servo headServo;
+Servo panServo;    // camera head pan  (90 = forward)
+Servo tiltServo;   // camera head tilt (90 = level; mechanical range 60-120)
 unsigned long lastCmdMs = 0;
 
 rcl_subscription_t cmdVelSub;
-rcl_subscription_t servoSub;
+rcl_subscription_t servoPanSub;
+rcl_subscription_t servoTiltSub;
 rcl_publisher_t    irPub;
 rcl_timer_t        irTimer;
 
 geometry_msgs__msg__Twist   twistMsg;
-std_msgs__msg__UInt16       servoMsg;
+std_msgs__msg__UInt16       servoPanMsg;
+std_msgs__msg__UInt16       servoTiltMsg;
 std_msgs__msg__Bool         irMsg;
 
 rclc_executor_t  executor;
@@ -135,11 +141,21 @@ void cmdVelCb(const void* msgIn) {
     driveFromTwist((float)msg->linear.x, (float)msg->angular.z);
 }
 
-void servoCb(const void* msgIn) {
+void servoPanCb(const void* msgIn) {
     const std_msgs__msg__UInt16* msg = (const std_msgs__msg__UInt16*)msgIn;
     uint16_t angle = msg->data;
     if (angle > 180) angle = 180;
-    headServo.write((int)angle);
+    panServo.write((int)angle);
+}
+
+void servoTiltCb(const void* msgIn) {
+    const std_msgs__msg__UInt16* msg = (const std_msgs__msg__UInt16*)msgIn;
+    uint16_t angle = msg->data;
+    // Tilt is mechanically limited (camera cable + mount): clamp 60-120
+    // (= -30..+30 deg from level) no matter what the brain sends.
+    if (angle < 60)  angle = 60;
+    if (angle > 120) angle = 120;
+    tiltServo.write((int)angle);
 }
 
 // IR publish timer — 100 ms
@@ -167,11 +183,13 @@ void setup() {
     ledcAttachPin(ENA, PWM_CH_A);
     ledcAttachPin(ENB, PWM_CH_B);
 
-    // Servo
-    headServo.attach(SERVO_PIN);
-    headServo.write(90);
+    // Camera head servos — centre on boot so the D555 faces forward/level
+    panServo.attach(SERVO_PAN_PIN);
+    tiltServo.attach(SERVO_TILT_PIN);
+    panServo.write(90);
+    tiltServo.write(90);
 
-    Serial.println("[INIT] Motors, PWM, servo ready");
+    Serial.println("[INIT] Motors, PWM, pan/tilt servos ready");
 
     // micro-ROS WiFi transport
     Serial.printf("[WiFi] Connecting to agent at %s:%d\n", AGENT_IP, AGENT_PORT);
@@ -192,11 +210,16 @@ void setup() {
         "/cmd_vel"
     );
 
-    // /servo_angle subscriber
+    // /servo_pan + /servo_tilt subscribers (camera head)
     rclc_subscription_init_default(
-        &servoSub, &node,
+        &servoPanSub, &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt16),
-        "/servo_angle"
+        "/servo_pan"
+    );
+    rclc_subscription_init_default(
+        &servoTiltSub, &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt16),
+        "/servo_tilt"
     );
 
     // /ir_obstacle publisher
@@ -209,10 +232,11 @@ void setup() {
     // IR timer: 100 ms
     rclc_timer_init_default(&irTimer, &support, RCL_MS_TO_NS(100), irTimerCb);
 
-    // Executor: 2 subs + 1 timer
-    rclc_executor_init(&executor, &support.context, 3, &allocator);
-    rclc_executor_add_subscription(&executor, &cmdVelSub, &twistMsg, &cmdVelCb, ON_NEW_DATA);
-    rclc_executor_add_subscription(&executor, &servoSub,  &servoMsg, &servoCb,  ON_NEW_DATA);
+    // Executor: 3 subs + 1 timer
+    rclc_executor_init(&executor, &support.context, 4, &allocator);
+    rclc_executor_add_subscription(&executor, &cmdVelSub,    &twistMsg,     &cmdVelCb,    ON_NEW_DATA);
+    rclc_executor_add_subscription(&executor, &servoPanSub,  &servoPanMsg,  &servoPanCb,  ON_NEW_DATA);
+    rclc_executor_add_subscription(&executor, &servoTiltSub, &servoTiltMsg, &servoTiltCb, ON_NEW_DATA);
     rclc_executor_add_timer(&executor, &irTimer);
 
     lastCmdMs = millis();

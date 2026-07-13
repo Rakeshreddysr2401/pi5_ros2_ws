@@ -16,6 +16,24 @@ _TURN_STARTUP_DELAY       = 0.0   # seconds transient ramp-up offset
 _CMD_BUFFER     = 0.2    # extra sleep after each command (seconds)
 
 
+# Camera-head recovery: vSLAM tracks the CAMERA and absorbs a head pan as
+# apparent base rotation (rigid-extrinsic design — JETSON_D555_SETUP.md §3),
+# so while the head is off-centre the robot's own map pose reads rotated.
+# Anything that reads get_current_pose or sends a map goal must go through
+# ensure_head_centred first: re-centre the servos, then give the servo travel
+# + a few vSLAM frames to re-track before trusting the pose.
+_RECENTER_SETTLE_S = 0.8
+
+
+def ensure_head_centred(bridge) -> None:
+    """Re-centre the camera head (if panned/tilted) and wait for the base
+    pose to become trustworthy again. No-op when already centred."""
+    pan, tilt = bridge.get_pan_tilt()
+    if abs(pan) > 1.0 or abs(tilt) > 1.0:
+        bridge.set_pan_tilt(0.0, 0.0)
+        time.sleep(_RECENTER_SETTLE_S)
+
+
 def _duration(cmd: str, val: float) -> float:
     if cmd in ("F", "B"):
         return (val / 100.0) / _PHYSICAL_VEL_MS   # cm → m
@@ -118,6 +136,7 @@ def navigate_to_pose(location: str,
     Returns immediately — the robot moves in the background. A system message will
     arrive when navigation completes or fails."""
     bridge = _bridge.get()
+    ensure_head_centred(bridge)   # a panned head skews Nav2's start pose
 
     known = bridge.get_known_locations()
     loc = location.lower().strip()
@@ -146,6 +165,7 @@ def save_location(name: str) -> str:
 
     name: short lowercase identifier, e.g. 'table_5' or 'charging_dock'."""
     bridge = _bridge.get()
+    ensure_head_centred(bridge)   # a panned head would save a rotated pose
     pose = bridge.get_current_pose()
     if pose is None:
         return ("I can't determine my position right now — localisation isn't "
@@ -261,24 +281,9 @@ def navigate_to_visible_object(target: str) -> str:
         bridge.set_vision_target("")            # idle the Jetson target_node
 
 
-# ── Phase-2 reserved flows (commented on purpose — ThingsToDo #7/#8) ──────────
-#
-# Depth-based approach ("go near the table", obstacle-aware), once the depth
-# camera + Isaac ROS (nvblox/SLAM/Nav2) land on the Jetson:
-#   1. look() grabs a frame; the multimodal LLM (local_agent) confirms WHICH
-#      table and roughly where it is in view.
-#   2. New tool `approach_object_3d(target)` calls the Jetson service
-#      /vision/find_object_pose (srv already reserved in robot_interfaces:
-#      FindObjectPose.srv) → returns a map-frame pose for the detection.
-#   3. The pose goes out as a Nav2 goal via bridge.start_nav_to_pose() — the
-#      SAME plumbing navigate_to_pose() uses today, so completion arrives as
-#      the existing "[SYSTEM] Navigation succeeded/failed" turn.
-#   Person-following becomes the same loop with target="person" + replanning.
-#   Until then navigate_to_visible_object (above) stays the mono-camera path.
-#
-# Camera pan-tilt: point_camera() below publishes to /camera/pan_tilt_cmd.
-# ESP32 firmware (micro-ROS subscriber) not wired yet — see ESP_32_frimware/
-# and PRODUCT.md hardware rec #3. Brain-side is done; this is a hardware task.
+# Depth-based approach lives in tools/approach.py (approach_object,
+# scan_surroundings) — the D555 + Isaac ROS pipeline turns detections into
+# Nav2 goals; navigate_to_visible_object above stays the no-map mono fallback.
 
 _PAN_MIN_DEG, _PAN_MAX_DEG = -90.0, 90.0
 _TILT_MIN_DEG, _TILT_MAX_DEG = -30.0, 30.0
@@ -292,16 +297,12 @@ def point_camera(pan_deg: float = 0.0, tilt_deg: float = 0.0) -> str:
     tilt_deg: vertical angle, -30 (down) .. 30 (up), 0 = level.
 
     Use for "look left/right/up/down", "look at the door", or to sweep the
-    camera without moving the wheels. Publishes to the reserved
-    /camera/pan_tilt_cmd topic — the pan-tilt hardware may not be wired yet;
-    if nothing moves, tell the user the camera mount isn't installed rather
-    than claiming it worked."""
-    import json
-
+    camera without moving the wheels. Drives the ESP32 pan/tilt servos
+    (/servo_pan, /servo_tilt); if the mount isn't installed yet nothing moves —
+    say so rather than claiming it worked."""
     pan = max(_PAN_MIN_DEG, min(_PAN_MAX_DEG, pan_deg))
     tilt = max(_TILT_MIN_DEG, min(_TILT_MAX_DEG, tilt_deg))
     clamped = (pan != pan_deg) or (tilt != tilt_deg)
-    _bridge.get().publish_to_topic(
-        "/camera/pan_tilt_cmd", json.dumps({"pan_deg": pan, "tilt_deg": tilt}))
+    _bridge.get().set_pan_tilt(pan, tilt)
     note = " (clamped to valid range)" if clamped else ""
     return f"Camera pointed: pan={pan:.0f}°, tilt={tilt:.0f}°{note}"

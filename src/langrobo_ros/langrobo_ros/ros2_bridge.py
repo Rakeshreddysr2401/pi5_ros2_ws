@@ -73,6 +73,17 @@ class ROS2Bridge:
         self._latest_frame: bytes | None = None
         self._frame_stamp: float = 0.0   # time.monotonic() of last frame
 
+        # ── 3D object detections (Jetson detections_3d node, D555 depth) ──────
+        # /vision/detections_3d JSON: {"frame":"map","objects":[{"label","x","y",
+        # "z","conf"}, ...]}. Cached per label with THIS machine's receive time
+        # (Pi5↔Jetson clocks drift ~1.5s — never compare their wall clocks).
+        self._det_lock = threading.Lock()
+        self._detections: dict[str, dict] = {}   # label → {x,y,z,conf,at}
+
+        # Commanded pan/tilt (open-loop; servos settle in ~0.3s). Kept so tools
+        # can re-centre and report the current aim without a state topic.
+        self._pan_tilt = (0.0, 0.0)
+
         # ── Active Swiggy order (for background delivery polling) ─────────────
         self._order_lock       = threading.Lock()
         self._active_order_id: str | None = None
@@ -127,6 +138,14 @@ class ROS2Bridge:
             self._twist_pub = node.create_publisher(Twist, "/cmd_vel", 10)
         self._timing_pub        = node.create_publisher(String, "/diag/timing", 10)
         self._music_pub         = node.create_publisher(String, "/audio/music_cmd", 10)
+        # Camera pan/tilt: raw servo angles for the ESP32 (0-180, 90=centre) +
+        # a JSON state topic the Jetson TF broadcaster mirrors into the TF tree
+        # (map-frame detections stay correct while the head is turned).
+        from std_msgs.msg import UInt16
+        self._UInt16 = UInt16
+        self._servo_pan_pub  = node.create_publisher(UInt16, "/servo_pan", 10)
+        self._servo_tilt_pub = node.create_publisher(UInt16, "/servo_tilt", 10)
+        self._pan_tilt_state_pub = node.create_publisher(String, "/camera/pan_tilt_state", 10)
 
         # Subscribe to Kokoro speaking status (half-duplex state, stop-keyword later)
         node.create_subscription(Bool, "/voice/tts_speaking", self._on_speaking, 10)
@@ -157,6 +176,33 @@ class ROS2Bridge:
     def _on_speaking(self, msg: Bool) -> None:
         with self._speech_lock:
             self._is_speaking = msg.data
+
+    def on_detections(self, msg) -> None:
+        """Cache /vision/detections_3d (JSON String) per label.
+
+        Only map-frame detections are cached: an odom/camera-frame position fed
+        to Nav2 as a map goal would send the robot somewhere wrong — dropping
+        the message (and logging once) is safer than approximating."""
+        try:
+            data = json.loads(msg.data)
+            objects = data.get("objects", [])
+        except (ValueError, TypeError, AttributeError):
+            return
+        if data.get("frame", "map") != "map":
+            return
+        now = time.monotonic()
+        with self._det_lock:
+            for obj in objects:
+                label = str(obj.get("label", "")).lower().strip()
+                if not label:
+                    continue
+                self._detections[label] = {
+                    "x": float(obj.get("x", 0.0)),
+                    "y": float(obj.get("y", 0.0)),
+                    "z": float(obj.get("z", 0.0)),
+                    "conf": float(obj.get("conf", 0.0)),
+                    "at": now,
+                }
 
     # ── Cached reads (worker thread) ──────────────────────────────────────
 
@@ -200,6 +246,59 @@ class ROS2Bridge:
         os.makedirs(os.path.dirname(self._locations_file), exist_ok=True)
         with open(self._locations_file, "w") as f:
             json.dump({k: list(v) for k, v in self._saved_locations.items()}, f, indent=2)
+
+    # ── 3D detections (Jetson detections_3d node — D555 depth pipeline) ───
+
+    def get_detected_object(self, label: str, max_age_s: float = 3.0) -> dict | None:
+        """Freshest map-frame detection for `label` ({x,y,z,conf,age_s}), or
+        None if never seen or older than max_age_s. Age uses receive time on
+        THIS machine, so Pi5↔Jetson clock drift doesn't matter."""
+        now = time.monotonic()
+        with self._det_lock:
+            det = self._detections.get(label.lower().strip())
+            if det is None:
+                return None
+            age = now - det["at"]
+            if age > max_age_s:
+                return None
+            return {**det, "age_s": age}
+
+    def get_detected_objects(self, max_age_s: float = 5.0) -> dict:
+        """All labels seen within max_age_s → {label: {x,y,z,conf,age_s}}."""
+        now = time.monotonic()
+        with self._det_lock:
+            return {
+                label: {**det, "age_s": now - det["at"]}
+                for label, det in self._detections.items()
+                if now - det["at"] <= max_age_s
+            }
+
+    def get_last_seen_object(self, label: str) -> dict | None:
+        """Last known map-frame position for `label` regardless of age
+        ({x,y,z,conf,age_s}) — the world-model fallback for "go near the chair"
+        when the chair isn't in view right now."""
+        now = time.monotonic()
+        with self._det_lock:
+            det = self._detections.get(label.lower().strip())
+            if det is None:
+                return None
+            return {**det, "age_s": now - det["at"]}
+
+    # ── Camera pan/tilt (ESP32 dual servo + Jetson TF mirror) ─────────────
+
+    def set_pan_tilt(self, pan_deg: float, tilt_deg: float) -> None:
+        """Aim the camera head: pan -90..90 (0 = forward), tilt -30..30
+        (0 = level). Publishes raw servo angles (90 + deg) for the ESP32 and a
+        JSON state for the Jetson's pan_tilt TF broadcaster."""
+        self._pan_tilt = (pan_deg, tilt_deg)
+        self._servo_pan_pub.publish(self._UInt16(data=int(round(90 + pan_deg))))
+        self._servo_tilt_pub.publish(self._UInt16(data=int(round(90 + tilt_deg))))
+        self._pan_tilt_state_pub.publish(String(data=json.dumps(
+            {"pan_deg": pan_deg, "tilt_deg": tilt_deg, "t": time.time()})))
+
+    def get_pan_tilt(self) -> tuple:
+        """Last commanded (pan_deg, tilt_deg) — open-loop state."""
+        return self._pan_tilt
 
     # ── YOLO target finder (Jetson target_node) ───────────────────────────
 

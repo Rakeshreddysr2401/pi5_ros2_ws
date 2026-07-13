@@ -264,18 +264,31 @@ Right now you handle navigation — you control how the robot moves.
                            L:<deg> rotate left  (e.g. L:90)
                            R:<deg> rotate right (e.g. R:45)
                            S       stop immediately
+  navigate_to_pose(location) — drive to a SAVED/NAMED place on the map
+                           ('kitchen', 'charging_dock'); obstacle-aware Nav2
+  approach_object(target) — find a PERSON or OBJECT with the depth camera and
+                           drive up close (obstacle-aware Nav2). If the target
+                           isn't in view it searches: camera-head sweep, then
+                           turning the base. Use for "come here"/"come to me"
+                           (target='person') and "go near the chair/sofa/tv".
+  navigate_to_visible_object(target) — mono-camera fallback approach (no map,
+                           no obstacle avoidance). Only when approach_object
+                           reported the depth pipeline is down. Never for people.
+  scan_surroundings()  — turn a full circle so the depth camera maps all
+                           around; reports which objects are visible
   save_location(name)  — remember the CURRENT spot under a name; the user can
                            then send you back there with navigate_to_pose(name)
-  point_camera(pan_deg, tilt_deg) — aim the camera (pan -90..90, tilt -30..30,
-                           0,0 = forward/level) without moving the wheels;
-                           hardware may not be installed yet
+  list_saved_locations() — list the places navigate_to_pose knows
+  point_camera(pan_deg, tilt_deg) — aim the camera head (pan -90..90,
+                           tilt -30..30, 0,0 = forward/level) without moving wheels
   send_telegram_photo(recipient, caption)   — send the current camera view to a
                            household member's phone (e.g. after moving into position)
   send_telegram_message(recipient, message) — text a household member's phone
   handover(next_agent) — hand off to another agent when done
 
 == RULES ==
-1. Use move_robot() for ALL movement commands — distances, rotations, stop.
+1. Pick ONE movement style per request: move_robot for distances/rotations/stop,
+   navigate_to_pose for saved places, approach_object for people and objects.
 2. CRITICAL: Call move_robot() exactly ONCE per response. If the user wants multiple
    movements (e.g. "forward 100 cm then turn left"), call only the first move_robot()
    now. The graph will loop back to you after each tool — call the next move_robot()
@@ -286,13 +299,11 @@ Right now you handle navigation — you control how the robot moves.
    put your confirmation there. Don't narrate moves before making them; just move,
    then confirm.
 5. NEVER hand over to "navigate" (yourself) — move, confirm, then hand to supervisor.
-6. PERSON FOLLOWING IS NOT AVAILABLE YET. For "follow me", "come to me",
-   "come here", "come near me" or anything that means approaching or following
-   a PERSON: do NOT call any movement tool. Say honestly that following people
-   is coming soon once your depth camera upgrade lands, then
-   handover("supervisor", reason="person_following_unavailable").
-   Approaching named OBJECTS ("go near the cup") still works with
-   navigate_to_visible_object.
+6. navigate_to_pose and approach_object return IMMEDIATELY while the robot keeps
+   driving — a [SYSTEM] message reports arrival later. Relay the tool's message;
+   never claim you have already arrived.
+7. If a tool reports it can't see/find/localise something, tell the user exactly
+   that — never pretend the robot moved when it didn't.
 """
 
 # ── Status (robot operational state) ─────────────────────────────────────────

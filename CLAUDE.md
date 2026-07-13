@@ -17,9 +17,11 @@ OPERATIONS.md for run/deploy/troubleshooting; PRODUCT.md for the roadmap.
   container (nvblox/SLAM consuming the sim's /cam_1 depth/RGB). Also switches the brain's
   `robot_body` to `sim` (cmd_vel becomes TwistStamped on /mecanum_drive_controller/cmd_vel).
 - **`rover`** — the REAL body: starts this Pi5's micro-ROS agent (ESP32 wheels) and the
-  Jetson's `ai_stack` voice pipeline (real camera + STT/TTS). Does NOT start `isaac_ros` —
-  the real rover has no depth camera / lidar / imu yet, so there's nothing for the
-  perception pipelines to consume. Switches `robot_body` back to `rover` (plain Twist
+  Jetson's `isaac_ros` perception role in REAL mode (D555 + RTAB-Map localization +
+  nvblox + Nav2 + YOLO detections_3d — see JETSON_D555_SETUP.md). Voice is OFF on the
+  Jetson in this mode (perception owns the 8GB Orin; cuVSLAM does NOT run on Orin —
+  RTAB-Map is the localizer): talk to the robot via Telegram, or start voice manually
+  with `fleet_role.sh voice start`. Switches `robot_body` back to `rover` (plain Twist
   on /cmd_vel).
 - **`stop`** parks the robot: stops the body (sim + Jetson roles) but keeps `langrobo-brain`
   + `langrobo-discovery` up, so chat/Telegram keeps listening. No password.
@@ -38,7 +40,7 @@ laptop's key + sshd were set up 2026-07-07 so the Pi5→laptop hop works.
 ```bash
 # Whole robot (see "Fleet start" above)
 ./scripts/fleet.sh sim        # simulation body (laptop sim + jetson voice+isaac_ros)
-./scripts/fleet.sh rover      # real body (pi5 microros + jetson voice)
+./scripts/fleet.sh rover      # real body (pi5 microros + jetson perception; voice=Telegram)
 ./scripts/fleet.sh stop       # park robot body (brain stays up)
 ./scripts/fleet.sh down       # full shutdown incl. Pi5 services (sudo)
 ./scripts/fleet.sh status
@@ -90,6 +92,10 @@ pip3 install --break-system-packages -r requirements.txt
 
 - `langrobo_core/graph/` — topology (build.py), routing registry, handover
   resolution + loop guards
+- `langrobo_core/fastpath.py` — deterministic movement lane: exact spoken
+  movement commands ("stop", "come here", "go near the chair", "forward 30")
+  execute tools directly with ZERO LLM calls (agent_node hook, `fast_path`
+  param, default on); anything ambiguous falls through to the graph
 - `langrobo_core/prompts.py` — EVERY system prompt (agents + background jobs);
   agents append only dynamic blocks (household, now-playing, date) in-module
 - `langrobo_core/agents/` — one module per agent (node fn + context assembly)
@@ -140,10 +146,14 @@ change both repos together or neither.
 
 ## Gotchas
 
-- Nav2/SLAM don't exist on the real robot yet (phase 2), BUT they now run in
-  simulation — see "Simulation laptop" below. Without the sim connected,
-  `navigate_to_pose` still reports honestly after a 10s server wait. The
-  interfaces are the reserved slot — keep them.
+- Real-robot Nav2/SLAM software is DEPLOYED (Jetson `langrobo_perception`
+  mode:=real — RTAB-Map + nvblox + Nav2, smoke-tested camera-less) and waits
+  only for the D555 hardware; JETSON_D555_SETUP.md is the camera-day
+  checklist + acceptance tests. Without the camera, `navigate_to_pose`/
+  `approach_object` still report honestly after a 10s wait. New depth contract: Jetson publishes map-frame objects on
+  `/vision/detections_3d` (JSON); brain drives the camera head via
+  `/servo_pan`+`/servo_tilt` (ESP32, GPIO 18/19) and mirrors angles on
+  `/camera/pan_tilt_state` for the Jetson TF broadcaster.
 - `strict_tool_calls` + streaming need the llama.cpp server started with
   `--jinja --parallel 5` (chat/local_agent/specialist/supervisor/navigate slots).
 - Smoke tests import `services/mcp.py` (via `tools/__init__`) which probes the
