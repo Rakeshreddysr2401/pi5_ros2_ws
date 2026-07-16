@@ -19,13 +19,14 @@ set -u
 
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-# Find the Jetson via the "meeting point" (Fast DDS Discovery Server on this
-# Pi5) BY NAME — no hardcoded IPs, works on any network. See NETWORKING.md.
-# The meeting point runs ON this Pi5, so local clients use loopback — the
-# mDNS name resolves IPv6-first on WiFi-only boots and the server is UDPv4,
-# which silently broke registration (2026-07-06). The NAME is only for the
-# Jetson side (pinned to IPv4 there — see NETWORKING.md).
-export ROS_DISCOVERY_SERVER="127.0.0.1:11811"
+# MULTICAST, not the discovery server (changed 2026-07-16): the Jetson
+# perception stack MUST run plain multicast — the D555 is a raw DDS
+# participant on the wire that discovery-server clients cannot see, so the
+# whole Jetson side leaves ROS_DISCOVERY_SERVER unset. A client here would
+# put this node on a separate discovery plane, invisible to the Jetson
+# (this exact split silently isolated the brain until 2026-07-16).
+# Multicast across this WiFi AP is verified working (Jetson<->Pi5).
+unset ROS_DISCOVERY_SERVER || true
 unset ROS_LOCALHOST_ONLY
 
 # .env (API keys, LANGROBO_* service settings) is loaded by agent_node itself
