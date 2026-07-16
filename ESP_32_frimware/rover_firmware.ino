@@ -29,9 +29,9 @@
 #include <std_msgs/msg/u_int16.h>
 
 // ── WiFi + agent ─────────────────────────────────────────────────────────────
-const char* WIFI_SSID  = "YOUR_SSID";       // <-- change
-const char* WIFI_PASS  = "YOUR_PASSWORD";   // <-- change
-const char* AGENT_IP   = "192.168.1.100";   // <-- Pi5 IP
+const char* WIFI_SSID  = "Airtel_Singireddy's";      // home AP (Jetson+Pi5 verified on it)
+const char* WIFI_PASS  = "YOUR_PASSWORD";              // <-- fill in locally, NEVER commit (public repo)
+const char* AGENT_IP   = "192.168.1.16";               // Pi5 wlan0 — reserve this IP in the router
 const uint16_t AGENT_PORT = 8888;
 
 // ── Motor pins ───────────────────────────────────────────────────────────────
