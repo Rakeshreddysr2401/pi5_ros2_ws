@@ -562,7 +562,9 @@ class ROS2Bridge:
             goal = NavigateToPose.Goal()
             goal.pose = PoseStamped()
             goal.pose.header.frame_id = "map"
-            goal.pose.header.stamp = self._node.get_clock().now().to_msg()
+            # stamp left zero = "use latest TF": Nav2 re-transforms the
+            # ORIGINAL stamp on every replan, so a now() stamp ages out of
+            # the 10s TF cache mid-drive and aborts the goal (2026-07-16).
             goal.pose.pose.position.x = x
             goal.pose.pose.position.y = y
             yaw_rad = math.radians(yaw_deg)
