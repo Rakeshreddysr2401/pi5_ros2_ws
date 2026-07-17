@@ -69,6 +69,13 @@ class ROS2Bridge:
         self._latest_target_result: dict | None = None
         self._target_result_at: float = 0.0   # time.monotonic() of last result
 
+        # ── Pixel-grounding replies (JSON from Jetson pixel_to_goal) ─────────
+        # Keyed by the request id we sent in the query's frame_id; ground_pixel
+        # polls for its own id so concurrent queries can't steal each other's
+        # answer.
+        self._pixel_lock = threading.Lock()
+        self._pixel_results: dict[str, dict] = {}
+
         # ── Latest camera frame (bytes, JPEG-encoded) ─────────────────────────
         self._latest_frame: bytes | None = None
         self._frame_stamp: float = 0.0   # time.monotonic() of last frame
@@ -146,6 +153,13 @@ class ROS2Bridge:
         self._servo_pan_pub  = node.create_publisher(UInt16, "/servo_pan", 10)
         self._servo_tilt_pub = node.create_publisher(UInt16, "/servo_tilt", 10)
         self._pan_tilt_state_pub = node.create_publisher(String, "/camera/pan_tilt_state", 10)
+
+        # VLM pixel grounding (Jetson pixel_to_goal): PointStamped pixel query
+        # in, JSON result out — see langrobo_perception pixel_to_goal_node.py.
+        from geometry_msgs.msg import PointStamped
+        self._PointStamped = PointStamped
+        self._pixel_query_pub = node.create_publisher(PointStamped, "/vision/pixel_query", 10)
+        node.create_subscription(String, "/vision/pixel_result", self._on_pixel_result, 10)
 
         # Subscribe to Kokoro speaking status (half-duplex state, stop-keyword later)
         node.create_subscription(Bool, "/voice/tts_speaking", self._on_speaking, 10)
@@ -321,6 +335,42 @@ class ROS2Bridge:
             if max_age_s is not None and time.monotonic() - self._target_result_at > max_age_s:
                 return None
             return self._latest_target_result
+
+    def _on_pixel_result(self, msg) -> None:
+        """Cache a /vision/pixel_result JSON reply under its request id."""
+        try:
+            data = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError):
+            return
+        req_id = data.get("id")
+        if not req_id:
+            return
+        with self._pixel_lock:
+            # Keep the map tiny — replies are consumed within seconds.
+            if len(self._pixel_results) > 32:
+                self._pixel_results.clear()
+            self._pixel_results[req_id] = data
+
+    def ground_pixel(self, u: float, v: float, timeout: float = 4.0) -> dict:
+        """Ask the Jetson to turn a COLOR-image pixel into a map-frame Nav2
+        goal (deproject depth → map → pull back by the approach standoff).
+        Returns the pixel_to_goal JSON result, or ok=False on timeout —
+        which means the query never arrived (node down / link), NOT that
+        grounding failed; grounding failures come back with a reason."""
+        import uuid
+        req_id = uuid.uuid4().hex[:8]
+        msg = self._PointStamped()
+        msg.header.frame_id = req_id
+        msg.point.x = float(u)
+        msg.point.y = float(v)
+        self._pixel_query_pub.publish(msg)
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            with self._pixel_lock:
+                if req_id in self._pixel_results:
+                    return self._pixel_results.pop(req_id)
+            time.sleep(0.05)
+        return {"ok": False, "reason": "no_reply_from_jetson"}
 
     # ── Music (Jetson music_node — see JETSON_VOICE_UPGRADE.md) ───────────
 

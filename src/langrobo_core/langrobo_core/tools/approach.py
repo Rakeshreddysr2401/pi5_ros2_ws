@@ -182,6 +182,153 @@ def approach_object(target: str,
             f"I'll say when I'm there.")
 
 
+# ── VLM pixel-grounding approach (arbitrary described objects) ───────────────
+# For things YOLO has no class for ("surf excel packet", "the red mug"): the
+# VLM points at the object in the look frame (normalized coords), the Jetson
+# pixel_to_goal node deprojects that pixel with real depth into a map-frame
+# Nav2 goal (standoff already applied). Search = rotate the base in 90° steps,
+# one VLM check per orientation — each check is an LLM round-trip (~10-40 s),
+# so the sweep is bounded at a full circle.
+
+_VLM_LOCATE_PROMPT = (
+    'Look at this image. Find: "{description}". '
+    "Reply with ONLY a JSON object, no other text: "
+    '{{"found": true, "x": N, "y": N}} or {{"found": false}}. '
+    "x and y are the CENTER of the object in normalized image coordinates "
+    "from 0 to 1000, where (0,0) is the top-left corner."
+)
+
+
+def _vlm_locate(frame: bytes, description: str) -> tuple[float, float] | None:
+    """Ask the multimodal LLM where `description` is in the JPEG frame.
+    Returns color-image pixel (u, v) or None (not found / unparseable)."""
+    import base64
+    import io
+    import json as _json
+    import re
+
+    from langchain_core.messages import HumanMessage
+    from PIL import Image
+
+    from ..services.llm import get_llm
+
+    width, height = Image.open(io.BytesIO(frame)).size
+    b64 = base64.b64encode(frame).decode()
+    reply = get_llm("local_agent").invoke([HumanMessage(content=[
+        {"type": "text", "text": _VLM_LOCATE_PROMPT.format(description=description)},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+    ])])
+    m = re.search(r"\{.*\}", str(reply.content), re.DOTALL)
+    if not m:
+        return None
+    try:
+        data = _json.loads(m.group(0))
+    except _json.JSONDecodeError:
+        return None
+    if not data.get("found"):
+        return None
+    try:
+        x, y = float(data["x"]), float(data["y"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not (0 <= x <= 1000 and 0 <= y <= 1000):
+        return None
+    return (x / 1000.0 * width, y / 1000.0 * height)
+
+
+def _fresh_frame(bridge, settle_s: float = 2.5) -> bytes | None:
+    """Frame captured AFTER now — the 2 Hz look feed needs a beat to publish
+    a post-motion view; a pre-rotation cache hit would re-check the old view."""
+    end = time.time() + settle_s
+    while time.time() < end:
+        if bridge.motion_interrupted():
+            return None
+        frame = bridge.get_frame(max_age_s=0.8)
+        if frame is not None:
+            return frame
+        time.sleep(0.15)
+    return bridge.get_frame(max_age_s=10.0)   # degraded fallback: newest we have
+
+
+@tool
+def approach_described_object(description: str,
+                              state: Annotated[dict, InjectedState]) -> str:
+    """Find ANY described object with the camera and drive up close to it,
+    avoiding obstacles (Nav2). Use for objects YOLO has no class for —
+    brands, specific or unusual items: "the surf excel detergent packet",
+    "the red coffee mug", "my black backpack". For common object classes
+    (person, chair, cup, ...) approach_object is faster — prefer it.
+
+    If the object isn't in the current view the robot turns in 90° steps and
+    re-checks, up to a full circle (each check takes a while — the vision
+    model looks at a fresh photo every step).
+
+    Returns once the object is found and the drive starts — the drive
+    continues in the background and a system message reports arrival."""
+    bridge = _bridge.get()
+    description = description.strip()
+    bridge.clear_motion_stop()
+    _mv.ensure_head_centred(bridge)
+
+    try:
+        from geometry_msgs.msg import Twist
+    except ImportError:
+        Twist = None                    # Studio/tests — forward check only
+
+    uv = None
+    # Orientation 0 = current view; then up to 4 × 90° rotations (full circle
+    # + a recheck of the start orientation in case odometry under-rotates).
+    for step in range(5):
+        if bridge.motion_interrupted():
+            return f"Stopped searching for the {description}."
+        if step > 0:
+            if Twist is None:
+                break
+            twist = Twist()
+            twist.angular.z = _mv._ANGULAR_VEL_RS
+            if not _mv._drive_for_duration(bridge, twist, _mv._duration("L", 90.0)):
+                return f"Stopped searching for the {description}."
+        frame = _fresh_frame(bridge)
+        if frame is None:
+            if bridge.motion_interrupted():
+                return f"Stopped searching for the {description}."
+            return ("My camera feed isn't giving me a fresh image right now, "
+                    "so I can't look for it.")
+        try:
+            uv = _vlm_locate(frame, description)
+        except Exception as e:
+            return (f"I couldn't analyse the camera image (vision model error: "
+                    f"{type(e).__name__}). Try again in a moment.")
+        if uv is not None:
+            break
+
+    if uv is None:
+        return (f"I turned a full circle and looked carefully, but I couldn't "
+                f"spot the {description} anywhere around me.")
+
+    res = bridge.ground_pixel(*uv)
+    if not res.get("ok"):
+        reason = res.get("reason", "unknown")
+        if reason == "no_reply_from_jetson":
+            return ("I can see it, but the depth-grounding service on the "
+                    "Jetson isn't answering, so I can't work out where it is "
+                    "in the room.")
+        return (f"I can see the {description}, but I couldn't measure its "
+                f"distance (depth reading failed: {reason}) — it may be too "
+                f"close, too far, or reflective.")
+
+    goal = res["goal"]
+    _mv._last_nav_requester = {
+        "channel": state.get("channel") or "voice",
+        "sender": state.get("sender_name") or "voice",
+    }
+    bridge.start_nav_to_pose(round(goal["x"], 2), round(goal["y"], 2),
+                             round(math.degrees(goal["yaw"]), 1),
+                             label=f"near the {description}")
+    return (f"I can see the {description} — about {res['depth_m']:.1f} m away. "
+            f"On my way; I'll say when I'm there.")
+
+
 @tool
 def scan_surroundings() -> str:
     """Turn a full slow circle in place so the depth camera can map everything
