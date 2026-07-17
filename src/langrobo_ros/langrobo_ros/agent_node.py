@@ -663,22 +663,34 @@ class AgentNode(Node):
             # meaningless (and misleading) for a phone conversation.
             self._pub_thinking.publish(Bool(data=True))
         try:
-            # ── Deterministic movement fast-path (voice only) ──────────────
+            # ── Deterministic movement fast-path (voice + text Telegram) ───
             # Exact movement commands skip the graph entirely: no supervisor,
             # no LLM, no KV-cache traffic — the intent regex either matches
             # with certainty or falls through to the normal LLM route. The
             # exchange is appended to history as a plain text turn (append-only
             # → cache-safe) so the LLM keeps full context of what the robot did.
-            if self._fast_path and not is_system and not telegram:
+            # Telegram turns reply to the sender's chat (never the speaker) and
+            # route the deferred nav-arrival report back to that chat; photo
+            # turns always take the graph (the image needs the VLM).
+            if self._fast_path and not is_system and not (telegram and telegram.photo):
                 from langrobo_core import fastpath
                 from langchain_core.messages import AIMessage
-                spoken = fastpath.try_handle(text)
+                if telegram:
+                    spoken = fastpath.try_handle(
+                        text,
+                        say_fn=lambda m: self._telegram.send_message(telegram.chat_id, m),
+                        state={"channel": "telegram", "sender_name": telegram.name,
+                               "messages": []})
+                else:
+                    spoken = fastpath.try_handle(text)
                 if spoken is not None:
                     timing.emit("fastpath_done", trace=trace)
                     self.get_logger().info(f"Fast-path handled: {text!r} → {spoken[:120]}")
                     metrics.inc("fastpath_turns_total")
                     with self._history_lock:
-                        self._history.append(HumanMessage(content=text))
+                        self._history.append(HumanMessage(
+                            content=self._frame_telegram_turn(telegram, text)
+                            if telegram else text))
                         self._history.append(AIMessage(content=spoken))
                     self._memory.record_turn(text, spoken, agent="fastpath")
                     self._start_cache_warm()

@@ -10,9 +10,10 @@ compound commands and context-dependent requests.
 
 Contract with agent_node:
   - try_handle(text) → the full spoken reply (for history) or None (no match).
-  - It speaks by itself via the bridge (ack BEFORE slow actions, result after),
-    so the user hears an instant response while the robot moves.
-  - Voice turns only; Telegram/system turns take the normal graph.
+  - It replies by itself through say_fn (ack BEFORE slow actions, result
+    after) — the speaker for voice turns, the sender's chat for Telegram —
+    so the user gets an instant response while the robot moves.
+  - Voice and text-only Telegram turns; system and photo turns take the graph.
 
 Pure zone: no rclpy; robot I/O via tools + _bridge.get(). match() is a pure
 function of (text, known_locations) and is unit-tested exhaustively.
@@ -203,9 +204,14 @@ def match(text: str, known_locations: set | None = None) -> FastIntent | None:
 _VOICE_STATE = {"channel": "voice", "sender_name": "voice", "messages": []}
 
 
-def try_handle(text: str) -> str | None:
+def try_handle(text: str, say_fn=None, state: dict | None = None) -> str | None:
     """Match + execute. Returns everything that was spoken (for the history
-    record) or None when the utterance is not a fast-path command."""
+    record) or None when the utterance is not a fast-path command.
+
+    say_fn: reply sink — defaults to the speaker (bridge.publish_speech);
+    Telegram turns pass a chat-send closure so nothing reaches the speaker.
+    state: turn state handed to the nav tools ({channel, sender_name}) — it
+    governs where the deferred arrival report goes. Defaults to voice."""
     bridge = _bridge.get()
     try:
         known = set(bridge.get_known_locations().keys())
@@ -216,14 +222,15 @@ def try_handle(text: str) -> str | None:
         return None
     logger.info("fastpath: %r → %s %s", text, intent.kind, intent.args)
 
+    sink = say_fn or bridge.publish_speech
     spoken: list[str] = []
 
     def say(msg: str) -> None:
         spoken.append(msg)
-        bridge.publish_speech(msg)
+        sink(msg)
 
     try:
-        _execute(intent, bridge, say)
+        _execute(intent, bridge, say, state or dict(_VOICE_STATE))
     except Exception as e:
         logger.error("fastpath execution failed: %s", e)
         if not spoken:
@@ -232,7 +239,7 @@ def try_handle(text: str) -> str | None:
     return " ".join(spoken)
 
 
-def _execute(intent: FastIntent, bridge, say) -> None:
+def _execute(intent: FastIntent, bridge, say, state: dict) -> None:
     from .tools.approach import approach_object, list_saved_locations, scan_surroundings
     from .tools.movement import move_robot, navigate_to_pose, point_camera, save_location
 
@@ -259,7 +266,7 @@ def _execute(intent: FastIntent, bridge, say) -> None:
     elif kind == "goto":
         say(f"On my way to the {a['name']}.")
         result = navigate_to_pose.invoke(
-            {"location": _loc_key(a["name"]), "state": dict(_VOICE_STATE)})
+            {"location": _loc_key(a["name"]), "state": dict(state)})
         if "Unknown location" in result:
             say(f"Actually, I don't have '{a['name']}' saved.")
 
@@ -267,7 +274,7 @@ def _execute(intent: FastIntent, bridge, say) -> None:
         target = a["target"]
         say("Coming to you." if target == "person" else f"Looking for the {target}.")
         result = approach_object.invoke(
-            {"target": target, "state": dict(_VOICE_STATE)})
+            {"target": target, "state": dict(state)})
         say(result)
 
     elif kind == "save":

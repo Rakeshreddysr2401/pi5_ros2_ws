@@ -15,6 +15,7 @@ All geometry is pure and unit-tested; robot I/O goes through _bridge.get().
 """
 
 import math
+import os
 import time
 from typing import Annotated
 
@@ -25,9 +26,12 @@ from . import _bridge
 from . import movement as _mv
 
 # How close the robot parks from the object's map position (metres). People
-# get more personal space than furniture.
-_STANDOFF_M = 0.65
-_STANDOFF_PERSON_M = 0.9
+# get more personal space than furniture. Floor: D555 depth goes blind under
+# ~0.4 m, and Nav2 can stop up to xy_goal_tolerance (0.20 m) short of the
+# goal — don't set the object standoff below ~0.4 or the camera loses the
+# target it just approached. Env-tunable without a code change.
+_STANDOFF_M = float(os.environ.get("LANGROBO_STANDOFF_M", "0.45"))
+_STANDOFF_PERSON_M = float(os.environ.get("LANGROBO_STANDOFF_PERSON_M", "0.8"))
 # A detection older than this is "not in view" — trigger the search.
 _FRESH_DETECTION_S = 3.0
 # Camera-head sweep angles (D555 HFOV ≈ 87°, so ±55° pan covers ≈ ±98°).
