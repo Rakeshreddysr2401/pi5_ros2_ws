@@ -36,3 +36,7 @@ but make sure to commit all these changes once done in new branch dev-1.0.9_fabl
 
 you can add more things what ever possible
 
+
+9.HARDWARE (decided 2026-07-19, do when parts arrive): add wheel ENCODERS to ESP32 + PID velocity loop.
+Why: nav2 currently drives open-loop — commands 0.10 m/s, PWM floor makes real speed 0.2-0.6 m/s, so MPPI predictions are wrong -> veers near walls, overshoots. Encoders = closed-loop speed + real wheel odometry over micro-ROS -> fuse with cuVSLAM (EKF), delete deadband shim, true slow creep near goals, no coast past stop.
+Also consider: 2-4 VL53L1X ToF (side/rear) + bumper strip -> collision-monitor hard veto independent of camera. And proper D555 stereo calibration to kill the x1.2 scale error everywhere (today nav plans on a ~20% wrong map).
