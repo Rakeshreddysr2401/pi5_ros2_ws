@@ -186,3 +186,18 @@ Suggested build order: **0 → 6 → 1 → 2 → 3 → 4 → 5 → 7** (safety n
 Encoders + PID + wheel-odom EKF fusion (ThingsToDo #9) → true slow creep, recovery
 behaviors unlocked; D555 stereo recalibration; ToF ring; place migration between map
 versions; vision fastpath (cut the ~60 s vision turn); map viewer on the teleop page.
+
+## Progress log
+
+**2026-07-19 (late night)** — Steps 2 (core) + 6 implemented on the Jetson (commit `1617c84`,
+branch `dev_0.0.2_cuVslam_nav`):
+- cuVSLAM now runs FULL SLAM (planar constraints, loop closure, pose graph): live map→odom
+  TF replaces the static bridge; `/slam/save_map` + `/slam/localize` services; `/slam/status`
+  1 Hz JSON; maps persist on the Jetson at `~/orin-nav-stack/maps/`.
+- No-crash layer live: `safety_guard.py` = pose-sanity watchdog (jump/z/tilt → cancel nav
+  goals + zero wheels, auto-clear 10 s) + nvblox virtual bumper (blocks forward only).
+  Wheel chain: `cmd_vel_nav → deadband → /cmd_vel_shim → guard → /cmd_vel`.
+- Laptop RViz live view working: run `~/rover_view.sh` on the laptop (192.168.1.12).
+- Verified stationary only. NEXT (needs operator): teleop mapping run → save a real map →
+  relocalize test (stationary-map relocalize correctly refuses: too few keyframes).
+  Then Step 0 ESP32 flash, Steps 1/3/4/5.
