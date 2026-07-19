@@ -23,6 +23,12 @@ langrobo-microros.service   micro-ROS agent (ESP32 bridge), Restart=always
 langrobo-brain.service      agent_node via scripts/run_brain.sh, Restart=always
 ```
 
+The brain unit has a drop-in `/etc/systemd/system/langrobo-brain.service.d/10-avahi-ordering.conf`
+(repo copy: `src/langrobo_ros/systemd/langrobo-brain.service.d/`) adding
+`After=/Wants=avahi-daemon.service` — without it the brain starts before mDNS
+is ready and the first slot probe to `singireddys-mac-mini.local` fails with
+"Name or service not known" (harmless but noisy; added 2026-07-19).
+
 ```bash
 systemctl status langrobo-brain langrobo-microros
 journalctl -u langrobo-brain -f -o cat            # follow structured JSON logs
@@ -215,6 +221,14 @@ boot. Inbound is rate-limited to 10 msg/min per sender. `/status` shows the
 - `--jinja` — required for grammar-forced handover + streamed tool calls.
 - Prompt cache + context checkpoints give cross-restart KV reuse; slot pinning
   is insurance on top.
+- **Reach it by mDNS name only, never a pinned IP** — DHCP moved the Mac
+  (.7 → .3, observed 2026-07-19); `singireddys-mac-mini.local` kept resolving.
+- **Outage signature** (2026-07-19, 16:26–17:28): every LLM call fails with
+  `APIConnectionError`, journal shows "Primary LLM marked down for 60s" each
+  consolidation cycle, while the network itself is fine. Cause = the Mac asleep
+  or llama-server not running. Brain self-recovers when the server returns —
+  no restart needed. Durable fix pending on the Mac: `sudo pmset -a sleep 0`
+  + run llama-server as a LaunchAgent.
 
 ## Troubleshooting
 
@@ -222,12 +236,13 @@ boot. Inbound is rate-limited to 10 msg/min per sender. `/status` shows the
 |---|---|
 | Spoken "my brain server is offline" | Mac Mini down/unreachable → check server, or arm `LANGROBO_FALLBACK_*` |
 | Every turn slow (~20s before speech) | KV cache cold: slot scatter (server without `--parallel`/pins), clock in a prompt, or mid-history mutation — see ARCHITECTURE.md KV-cache discipline |
-| "I cannot see right now" | Jetson camera node down or frame >10s stale — check `/camera/color/image_raw/compressed` |
+| "I cannot see right now" | Jetson camera node down or frame >10s stale — check `/camera/color/image_raw/compressed`. On the orin-nav stack that topic is a 2 Hz republish from `detections_3d` — it goes dark whenever YOLO is paused (nav safety procedure) or the `vision` layer isn't up |
+| Vision turn slow (~60s end-to-end) | Measured 2026-07-19: router call ~43s + vision call ~16s on the Mac, sequential. Known cost of graph routing — text-only nav turns already bypass it via fastpath; a vision fastpath is the open optimization |
 | Tool calls flaky / early stops | GGUF chat template mislabels control tokens → suspect the quant; try `strict_tool_calls:=false` |
 | Food/grocery/dineout "temporarily unavailable" | No Swiggy token or it expired (~5 days) — run `scripts/swiggy_login.py` (see "Swiggy login" above); `/status .mcp` shows which provider is down |
 | Memory unavailable in /status | first boot downloads the embed model (~130MB) — check network, see journal |
 | ESP32 not moving | `langrobo-microros` unit down, or ESP32 not on WiFi → `systemctl status langrobo-microros`, then power-cycle ESP32 |
-| DDS discovery fails Pi5↔Jetson | `ROS_DOMAIN_ID` mismatch, `langrobo-discovery` (meeting point) down, or a client started before the meeting point came up — see NETWORKING.md; restart the client (brain/microros/Jetson launch) after the meeting point is confirmed up |
+| DDS discovery fails Pi5↔Jetson | `ROS_DOMAIN_ID` mismatch, or a stray `ROS_DISCOVERY_SERVER` in the environment. **Prod is plain multicast since 2026-07-16** (the D555 is a raw DDS participant that discovery-server clients cannot see) — every prod script unsets `ROS_DISCOVERY_SERVER`; `langrobo-discovery` remains only for `dev.sh`/`langgraph dev` (127.0.0.1:11811). A client accidentally pointed at it goes silently invisible to the Jetson |
 
 ## Pi5 system record
 
