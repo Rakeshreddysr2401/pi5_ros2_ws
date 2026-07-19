@@ -201,3 +201,17 @@ branch `dev_0.0.2_cuVslam_nav`):
 - Verified stationary only. NEXT (needs operator): teleop mapping run → save a real map →
   relocalize test (stationary-map relocalize correctly refuses: too few keyframes).
   Then Step 0 ESP32 flash, Steps 1/3/4/5.
+
+**2026-07-19 (first live mapping run, operator present)** — jetson commit `9777fa2`:
+- SLAM tuning: `async_sba=True` + `lc_throttle_ms=2000` (now defaults). Before: 2 pose
+  explosions (fast straight bursts / loop-closure revisit CPU spikes). After: rotations
+  mm-accurate (out-and-back → 0.000/−0.001 m), loop closures firing + correcting live.
+- **safety_guard validated in real failures**: caught both explosions (0.41 m jump; |z| 0.55 m),
+  cancelled goals, zeroed wheels, auto-cleared. The no-crash layer works.
+- **Translation mapping blocked by hardware**: motors stall or breakaway ~0.5 m/s (nothing
+  between; threshold rises as battery sags — by end of session cmd 0.30 stalled). ~0.5 m/s
+  real speed explodes tracking. → Step 0 (ESP32 flash) is now the critical path; charge
+  battery before next run. Mapping recipe that works: nav2 OFF during teleop-map, short
+  bursts, rotations freely.
+- Laptop RViz: works but laptop must be logged into the desktop; `~/rover_view.sh`.
+- New Claude skills on the Jetson: `/rover-start`, `/rover-stop` (full cross-machine runbooks).
