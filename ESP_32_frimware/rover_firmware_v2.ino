@@ -6,17 +6,19 @@
 //             (2 motors per side, paralleled onto ONE BTS7960 per side).
 //  Transport: WiFi UDP -> micro_ros_agent on Pi5 (192.168.1.16:8888)
 //
-//  ── ROS INTERFACE ───────────────────────────────────────────────────────────
+//  ── ROS INTERFACE (all BEST_EFFORT QoS — reliable stalls over micro-ROS WiFi) ─
 //  IN   /cmd_vel     geometry_msgs/Twist    target body vx, wz   (nav2 / teleop)
-//  OUT  /wheel_odom  nav_msgs/Odometry      encoder odom -> Jetson EKF (odom1)
-//       Both use BEST_EFFORT QoS — reliable stalls over micro-ROS WiFi.
-//       Frames: header=odom, child=base_link. Twist (vx, vyaw) is what the EKF
-//       fuses; pose is integrated too. This node does NOT publish any TF — the
-//       robot_localization EKF owns odom->base_link (see config/ekf.yaml).
+//  IN   /pid_gains   geometry_msgs/Vector3  live PID tuning: x=Kp y=Ki z=minMoveDuty
+//  OUT  /wheel_state geometry_msgs/Vector3  x=velL y=velR z=cmd vx (small -> crosses WiFi)
+//       NOTE: nav_msgs/Odometry on /wheel_odom is intentionally NOT published — it
+//       exceeds the micro-ROS WiFi message size (never reached the host) AND stalled
+//       the control loop to ~1 Hz. A Pi5 relay rebuilds Odometry from /wheel_state
+//       for the EKF. This node publishes NO TF (the EKF owns odom->base_link).
 //
 //  ── CONTROL ──────────────────────────────────────────────────────────────────
-//  Per-side PID velocity loop off the wheel encoders (avg of front+rear each
-//  side). 500 ms /cmd_vel watchdog. WiFi agent-reconnect state machine.
+//  Per-side PID velocity loop off the wheel encoders (avg of front+rear each side),
+//  using REAL elapsed time (micros) so a wobbling loop rate can't produce bogus
+//  velocities. 500 ms /cmd_vel watchdog. WiFi agent-reconnect state machine.
 //
 //  ── TOOLCHAIN (ESP32 Arduino core 3.x + micro_ros_arduino) ──────────────────
 //   * core 3.x LEDC is by-PIN: ledcAttach(pin,freq,res) + ledcWrite(pin,duty).
@@ -48,7 +50,6 @@
 #include <rmw_microros/rmw_microros.h>
 #include <geometry_msgs/msg/twist.h>
 #include <geometry_msgs/msg/vector3.h>
-#include <nav_msgs/msg/odometry.h>
 
 // ── WiFi + agent ─────────────────────────────────────────────────────────────
 //  Fill WIFI_PASS locally before flashing. Do NOT commit real credentials.
@@ -146,13 +147,11 @@ float odomX = 0.0f, odomY = 0.0f, odomTh = 0.0f;
 // ── micro-ROS entities ───────────────────────────────────────────────────────
 rcl_subscription_t cmdVelSub;
 rcl_subscription_t pidGainsSub;      // live PID tuning (Vector3 x=Kp y=Ki z=minMoveDuty)
-rcl_publisher_t    odomPub;
 rcl_publisher_t    wheelStatePub;    // small telemetry: x=velL y=velR z=cmd vx (crosses WiFi)
 rcl_timer_t        controlTimer;
 geometry_msgs__msg__Twist   twistMsg;
 geometry_msgs__msg__Vector3 pidGainsMsg;
 geometry_msgs__msg__Vector3 wheelStateMsg;
-nav_msgs__msg__Odometry     odomMsg;
 rclc_executor_t executor;
 rclc_support_t  support;
 rcl_allocator_t allocator;
@@ -176,10 +175,10 @@ void stopMotors() {
 }
 
 // ── PID (velocity) for one side -> duty ──────────────────────────────────────
-float pidStep(float target, float meas, float &integ) {
+float pidStep(float target, float meas, float &integ, float dt) {
     if (fabsf(target) < 0.01f) { integ = 0.0f; return 0.0f; }
     float err = target - meas;
-    integ += err * CONTROL_DT;
+    integ += err * dt;
     float ilim = 1.0f / Ki;                 // anti-windup: |Ki*integ| <= 1
     if (integ >  ilim) integ =  ilim;
     if (integ < -ilim) integ = -ilim;
@@ -194,6 +193,16 @@ float pidStep(float target, float meas, float &integ) {
 void controlCb(rcl_timer_t* timer, int64_t /*last*/) {
     if (!timer) return;
 
+    // real elapsed time since last run — velocities stay correct even if the loop
+    // rate wobbles. (A fixed dt turned a slow tick's big count delta into a bogus
+    // huge velocity that made the PID slam into reverse -> "forward then back".)
+    static uint32_t lastUs = 0;
+    uint32_t nowUs = micros();
+    if (lastUs == 0) { lastUs = nowUs; return; }
+    float dt = (nowUs - lastUs) * 1e-6f;   // unsigned math handles rollover
+    lastUs = nowUs;
+    if (dt <= 0.0f) return;
+
     // 1) measure per-side velocity — average both encoders on each side
     long cLF = (long)encLF.getCount() * ENC_LF_DIR;
     long cLR = (long)encLR.getCount() * ENC_LR_DIR;
@@ -205,8 +214,8 @@ void controlCb(rcl_timer_t* timer, int64_t /*last*/) {
     long dRR = cRR - lastRR;  lastRR = cRR;
     float distL = 0.5f * (dLF + dLR) * METRES_PER_COUNT;
     float distR = 0.5f * (dRF + dRR) * METRES_PER_COUNT;
-    float velL  = distL / CONTROL_DT;
-    float velR  = distR / CONTROL_DT;
+    float velL  = distL / dt;
+    float velR  = distR / dt;
 
     // 2) watchdog: silence from the Pi5 -> stop (log the transition once)
     static bool wdStopped = false;
@@ -221,8 +230,8 @@ void controlCb(rcl_timer_t* timer, int64_t /*last*/) {
     // 3) target -> per-wheel setpoints -> PID -> BTS7960
     float wTargetL = tvx - twz * WHEEL_BASE_M * 0.5f;
     float wTargetR = tvx + twz * WHEEL_BASE_M * 0.5f;
-    driveSide(L_RPWM, L_LPWM, L_MOTOR_DIR, pidStep(wTargetL, velL, integL));
-    driveSide(R_RPWM, R_LPWM, R_MOTOR_DIR, pidStep(wTargetR, velR, integR));
+    driveSide(L_RPWM, L_LPWM, L_MOTOR_DIR, pidStep(wTargetL, velL, integL, dt));
+    driveSide(R_RPWM, R_LPWM, R_MOTOR_DIR, pidStep(wTargetR, velR, integR, dt));
 
     // 4) integrate odometry from MEASURED wheel travel
     float ds  = 0.5f * (distL + distR);
@@ -231,20 +240,13 @@ void controlCb(rcl_timer_t* timer, int64_t /*last*/) {
     odomY  += ds * sinf(odomTh + 0.5f * dth);
     odomTh += dth;
 
-    // 5) publish /wheel_odom (twist = vx, vyaw = what the EKF fuses)
-    int64_t ns = rmw_uros_epoch_nanos();
-    odomMsg.header.stamp.sec     = (int32_t)(ns / 1000000000LL);
-    odomMsg.header.stamp.nanosec = (uint32_t)(ns % 1000000000LL);
-    odomMsg.pose.pose.position.x = odomX;
-    odomMsg.pose.pose.position.y = odomY;
-    odomMsg.pose.pose.orientation.z = sinf(odomTh * 0.5f);
-    odomMsg.pose.pose.orientation.w = cosf(odomTh * 0.5f);
-    odomMsg.twist.twist.linear.x  = ds  / CONTROL_DT;
-    odomMsg.twist.twist.angular.z = dth / CONTROL_DT;
-    rcl_publish(&odomPub, &odomMsg, NULL);
+    // NOTE: the big nav_msgs/Odometry publish is DISABLED — it exceeds the micro-ROS
+    // WiFi message size (never reached the host) AND jammed this loop down to ~1 Hz.
+    // The Pi5 relay node rebuilds Odometry from /wheel_state for the EKF instead.
+    // (odomX/Y/Th kept for that future relay / debug only.)
 
-    // small telemetry that DOES cross the WiFi link (Odometry is too big): lets the
-    // host watch each wheel's real speed/direction + the commanded vx for tuning.
+    // small telemetry that DOES cross the WiFi link: lets the host watch each
+    // wheel's real speed/direction + the commanded vx for tuning.
     wheelStateMsg.x = velL;
     wheelStateMsg.y = velR;
     wheelStateMsg.z = tvx;
@@ -279,26 +281,6 @@ void pidGainsCb(const void* msgIn) {
     Serial.printf("[PID] set Kp=%.3f Ki=%.3f minDuty=%.3f\n", Kp, Ki, minMoveDuty);
 }
 
-// ── Odometry message static setup (frame ids + covariance) ───────────────────
-void initOdomMsg() {
-    static char odom_frame[]  = "odom";
-    static char base_frame[]  = "base_link";
-    odomMsg.header.frame_id.data     = odom_frame;
-    odomMsg.header.frame_id.size     = strlen(odom_frame);
-    odomMsg.header.frame_id.capacity = sizeof(odom_frame);
-    odomMsg.child_frame_id.data      = base_frame;
-    odomMsg.child_frame_id.size      = strlen(base_frame);
-    odomMsg.child_frame_id.capacity  = sizeof(base_frame);
-    for (int i = 0; i < 36; i++) { odomMsg.pose.covariance[i] = 0.0; odomMsg.twist.covariance[i] = 0.0; }
-    odomMsg.pose.covariance[0]  = 0.02;  odomMsg.pose.covariance[7]  = 0.02;   // x, y
-    odomMsg.pose.covariance[14] = 1e6;   odomMsg.pose.covariance[21] = 1e6;
-    odomMsg.pose.covariance[28] = 1e6;   odomMsg.pose.covariance[35] = 0.05;   // yaw
-    odomMsg.twist.covariance[0]  = 0.01;                                        // vx
-    odomMsg.twist.covariance[7]  = 1e6;  odomMsg.twist.covariance[14] = 1e6;
-    odomMsg.twist.covariance[21] = 1e6;  odomMsg.twist.covariance[28] = 1e6;
-    odomMsg.twist.covariance[35] = 0.02;                                        // vyaw
-    odomMsg.pose.pose.orientation.w = 1.0;
-}
 
 // ── micro-ROS entity lifecycle ───────────────────────────────────────────────
 bool createEntities() {
@@ -312,8 +294,6 @@ bool createEntities() {
     // BEST_EFFORT both ways — reliable QoS stalls over the micro-ROS WiFi link.
     if (rclc_subscription_init_best_effort(&cmdVelSub, &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist), "/cmd_vel") != RCL_RET_OK) return false;
-    if (rclc_publisher_init_best_effort(&odomPub, &node,
-            ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry), "/wheel_odom") != RCL_RET_OK) return false;
     if (rclc_publisher_init_best_effort(&wheelStatePub, &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Vector3), "/wheel_state") != RCL_RET_OK) return false;
     if (rclc_subscription_init_best_effort(&pidGainsSub, &node,
@@ -341,14 +321,13 @@ bool createEntities() {
     lastRR = (long)encRR.getCount() * ENC_RR_DIR;
     integL = integR = 0.0f;
     lastCmdMs = millis();
-    Serial.println("[uROS] entities live — IN /cmd_vel /pid_gains, OUT /wheel_odom /wheel_state");
+    Serial.println("[uROS] entities live — IN /cmd_vel /pid_gains, OUT /wheel_state");
     return true;
 }
 
 void destroyEntities() {
     rcl_subscription_fini(&cmdVelSub, &node);
     rcl_subscription_fini(&pidGainsSub, &node);
-    rcl_publisher_fini(&odomPub, &node);
     rcl_publisher_fini(&wheelStatePub, &node);
     rcl_timer_fini(&controlTimer);
     rclc_executor_fini(&executor);
@@ -388,8 +367,6 @@ void setup() {
     encLF.clearCount(); encLR.clearCount();
     encRF.clearCount(); encRR.clearCount();
     Serial.println("[ENC] 4x quadrature attached");
-
-    initOdomMsg();
 
     Serial.printf("[WiFi] agent %s:%d\n", AGENT_IP, AGENT_PORT);
     set_microros_wifi_transports((char*)WIFI_SSID, (char*)WIFI_PASS, (char*)AGENT_IP, AGENT_PORT);
