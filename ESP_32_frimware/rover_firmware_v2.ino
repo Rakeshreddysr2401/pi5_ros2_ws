@@ -14,10 +14,12 @@
 //  micro-ROS executor, which stalled it to ~1 Hz -> laggy + a bogus-velocity
 //  reversal on long presses. This split fixes both.)
 //
-//  ── ROS INTERFACE (all BEST_EFFORT QoS — reliable stalls over micro-ROS WiFi) ─
-//  IN   /cmd_vel     geometry_msgs/Twist    target body vx, wz   (nav2 / teleop)
-//  IN   /pid_gains   geometry_msgs/Vector3  live PID tuning: x=Kp y=Ki z=minMoveDuty
-//  OUT  /wheel_state geometry_msgs/Vector3  x=velL y=velR z=cmd vx  (small -> crosses WiFi)
+//  ── ROS INTERFACE ────────────────────────────────────────────────────────────
+//  IN   /cmd_vel     geometry_msgs/Twist    target body vx, wz   (nav2 / teleop)  [RELIABLE]
+//  IN   /pid_gains   geometry_msgs/Vector3  live PID tuning: x=Kp y=Ki z=minMoveDuty [RELIABLE]
+//  OUT  /wheel_state geometry_msgs/Vector3  x=velL y=velR z=cmd vx  (small)         [BEST_EFFORT]
+//       Commands IN are RELIABLE (guaranteed delivery — small msgs); only the
+//       high-rate telemetry OUT is best_effort (reliable stalls ESP32->host on WiFi).
 //       For the EKF (cuVSLAM + IMU gyro + wheel odom): a small Pi5 RELAY node
 //       subscribes /wheel_state and publishes nav_msgs/Odometry on /wheel_odom
 //       (odom->base_link owned by robot_localization, config/ekf.yaml). Odometry
@@ -276,9 +278,13 @@ bool createEntities() {
 
     if (rclc_node_init_default(&node, "rover_esp32", "", &support) != RCL_RET_OK) return false;
 
-    if (rclc_subscription_init_best_effort(&cmdVelSub, &node,
+    // Commands IN use RELIABLE QoS: best_effort was dropping /cmd_vel over WiFi, so
+    // the 500ms watchdog kept zeroing the target -> slow / twitchy / pivot wheel
+    // never sustained. Reliable guarantees small command msgs arrive (matches nav2
+    // + teleop reliable publishers). Only the high-rate telemetry OUT is best_effort.
+    if (rclc_subscription_init_default(&cmdVelSub, &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist), "/cmd_vel") != RCL_RET_OK) return false;
-    if (rclc_subscription_init_best_effort(&pidGainsSub, &node,
+    if (rclc_subscription_init_default(&pidGainsSub, &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Vector3), "/pid_gains") != RCL_RET_OK) return false;
     if (rclc_publisher_init_best_effort(&wheelStatePub, &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Vector3), "/wheel_state") != RCL_RET_OK) return false;
