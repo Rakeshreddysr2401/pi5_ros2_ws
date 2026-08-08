@@ -6,26 +6,34 @@
 //             (2 motors per side, paralleled onto ONE BTS7960 per side).
 //  Transport: WiFi UDP -> micro_ros_agent on Pi5 (192.168.1.16:8888)
 //
+//  ── ARCHITECTURE (why it's accurate + nav2-ready) ────────────────────────────
+//  The PID control loop runs on its OWN FreeRTOS task (core 1, high priority) at a
+//  GUARANTEED 50 Hz, using real elapsed time (micros). It is fully decoupled from
+//  the micro-ROS/WiFi work in loop() — so even if the network stalls, the wheels
+//  are still controlled smoothly at 50 Hz. (Earlier the control ran inside the
+//  micro-ROS executor, which stalled it to ~1 Hz -> laggy + a bogus-velocity
+//  reversal on long presses. This split fixes both.)
+//
 //  ── ROS INTERFACE (all BEST_EFFORT QoS — reliable stalls over micro-ROS WiFi) ─
 //  IN   /cmd_vel     geometry_msgs/Twist    target body vx, wz   (nav2 / teleop)
 //  IN   /pid_gains   geometry_msgs/Vector3  live PID tuning: x=Kp y=Ki z=minMoveDuty
-//  OUT  /wheel_state geometry_msgs/Vector3  x=velL y=velR z=cmd vx (small -> crosses WiFi)
-//       NOTE: nav_msgs/Odometry on /wheel_odom is intentionally NOT published — it
-//       exceeds the micro-ROS WiFi message size (never reached the host) AND stalled
-//       the control loop to ~1 Hz. A Pi5 relay rebuilds Odometry from /wheel_state
-//       for the EKF. This node publishes NO TF (the EKF owns odom->base_link).
+//  OUT  /wheel_state geometry_msgs/Vector3  x=velL y=velR z=cmd vx  (small -> crosses WiFi)
+//       For the EKF (cuVSLAM + IMU gyro + wheel odom): a small Pi5 RELAY node
+//       subscribes /wheel_state and publishes nav_msgs/Odometry on /wheel_odom
+//       (odom->base_link owned by robot_localization, config/ekf.yaml). Odometry
+//       is NOT published from here — it exceeds the micro-ROS WiFi message size.
+//       This node publishes NO TF.
 //
-//  ── CONTROL ──────────────────────────────────────────────────────────────────
-//  Per-side PID velocity loop off the wheel encoders (avg of front+rear each side),
-//  using REAL elapsed time (micros) so a wobbling loop rate can't produce bogus
-//  velocities. 500 ms /cmd_vel watchdog. WiFi agent-reconnect state machine.
+//  ── SAFETY ───────────────────────────────────────────────────────────────────
+//  500 ms /cmd_vel watchdog (silence -> stop). Motors driven ONLY while the agent
+//  is connected AND a fresh command exists. WiFi agent-reconnect state machine.
 //
 //  ── TOOLCHAIN (ESP32 Arduino core 3.x + micro_ros_arduino) ──────────────────
 //   * core 3.x LEDC is by-PIN: ledcAttach(pin,freq,res) + ledcWrite(pin,duty).
-//   * time-sync API varies; call is behind a compile guard (see createEntities).
-//   * EXECUTE_EVERY_N_MS uses Arduino millis() (uxr_millis not always exported).
-//   * Encoder internal pull-ups OFF: input-only pads (34/35/36/39) can't have
-//     them (harmless boot errors otherwise); GB37 encoders are push-pull @3V3.
+//   * time-sync API varies; behind a compile guard (see createEntities).
+//   * EXECUTE_EVERY_N_MS uses Arduino millis().
+//   * Encoder internal pull-ups OFF (input-only pads 34/35/36/39 can't have them;
+//     GB37 encoders are push-pull @3V3).
 //
 //  ── WIRING ───────────────────────────────────────────────────────────────────
 //    Left  BTS7960 : RPWM=18 LPWM=19 R_EN=21 L_EN=22
@@ -91,14 +99,12 @@ const char* OTA_HOSTNAME = "rover-esp32";
 #define ENCODER_CPR      1560.0f  // 13 PPR * 4 (quad) * 30 gear = counts / wheel rev
 #define MAX_WHEEL_VEL    0.86f    // m/s at full PWM = (193/60)*PI*0.085
 
-// Direction flags — SET FROM BENCH TEST. Right side is mounted mirror-image, so
-// both its motor AND its encoders are inverted vs the left (verified 2026-08-07:
-// forward cmd drove left fwd, right backward; right encoders count -ve on fwd).
-#define L_MOTOR_DIR (+1)   // +cmd spins LEFT side forward
-#define R_MOTOR_DIR (-1)   // +cmd spins RIGHT side forward  (flipped)
-#define ENC_LF_DIR (+1)    // forward motion => +count
+// Direction flags — SET FROM BENCH TEST (right side mirror-mounted -> inverted).
+#define L_MOTOR_DIR (+1)
+#define R_MOTOR_DIR (-1)
+#define ENC_LF_DIR (+1)
 #define ENC_LR_DIR (+1)
-#define ENC_RF_DIR (-1)    // right encoders inverted (flipped)
+#define ENC_RF_DIR (-1)
 #define ENC_RR_DIR (-1)
 // ╚═════════════════════════════════════════════════════════════════════════════╝
 
@@ -106,49 +112,34 @@ const char* OTA_HOSTNAME = "rover-esp32";
 #define METRES_PER_COUNT (WHEEL_CIRC / ENCODER_CPR)
 
 // ── Control loop + PID ───────────────────────────────────────────────────────
-#define CONTROL_HZ      50.0f
-#define CONTROL_DT      (1.0f / CONTROL_HZ)
+#define CONTROL_HZ      50
 #define CMD_TIMEOUT_MS  500
-// PID gains — RUNTIME-TUNABLE live via /pid_gains (Vector3 x=Kp y=Ki z=minMoveDuty),
-// so tuning needs no reflash. Defaults lowered from (1.5/4.0/0.12): the old high Kp +
-// hard breakaway step caused a limit cycle (wheel overshoots -> Kp drives it negative ->
-// "goes forward then comes back"), worst when lifted/unloaded.
-float Kp  = 0.6f;
-float Ki  = 2.0f;
-float Kff = 1.0f / MAX_WHEEL_VEL;
-float minMoveDuty = 0.08f;   // static-friction breakaway (0 = pure PI + feedforward)
+const float Kff = 1.0f / MAX_WHEEL_VEL;     // feedforward (constant)
+// Live-tunable via /pid_gains. Defaults tuned for stable, non-oscillating tracking.
+volatile float gKp = 0.6f;
+volatile float gKi = 2.0f;
+volatile float gMinDuty = 0.08f;            // static-friction breakaway
+float integL = 0.0f, integR = 0.0f;         // PID integrators (control task only)
 
-#define DEBUG_SERIAL 1     // 1 = print IN/OUT at ~2 Hz on Serial @115200
+#define DEBUG_SERIAL 1     // 1 = control task prints IN/OUT at ~2 Hz @115200
 
-// ── Agent connection state machine ──────────────────────────────────────────
-enum AgentState { WAITING_AGENT, AGENT_AVAILABLE, AGENT_CONNECTED, AGENT_DISCONNECTED };
-AgentState agentState = WAITING_AGENT;
+// ── Shared state (single-core: loop + control task both on core 1 -> aligned
+//    32-bit float/uint reads are atomic; volatile is enough, no mutex needed) ──
+volatile float    targetVx = 0.0f, targetWz = 0.0f;   // set by /cmd_vel, read by task
+volatile uint32_t lastCmdMs = 0;
+volatile bool     controlEnabled = false;             // true only when agent connected
+volatile float    gVelL = 0.0f, gVelR = 0.0f;         // measured (task -> telemetry)
 
-//  Plain Arduino millis(). Unsigned subtraction handles rollover. last=0 fires
-//  the first call immediately.
-#define EXECUTE_EVERY_N_MS(MS, X) do {         \
-    static uint32_t last = 0;                  \
-    uint32_t now = millis();                   \
-    if ((now - last) >= (MS)) { last = now; X; } \
-} while (0)
+// ── Odometry pose (integrated in the control task) ───────────────────────────
+float odomX = 0.0f, odomY = 0.0f, odomTh = 0.0f;
 
 // ── Encoders ─────────────────────────────────────────────────────────────────
 ESP32Encoder encLF, encLR, encRF, encRR;
-long lastLF = 0, lastLR = 0, lastRF = 0, lastRR = 0;
-
-// ── Command + PID state ──────────────────────────────────────────────────────
-volatile float targetVx = 0.0f, targetWz = 0.0f;
-unsigned long lastCmdMs = 0;
-float integL = 0.0f, integR = 0.0f;
-
-// ── Odometry pose ────────────────────────────────────────────────────────────
-float odomX = 0.0f, odomY = 0.0f, odomTh = 0.0f;
 
 // ── micro-ROS entities ───────────────────────────────────────────────────────
 rcl_subscription_t cmdVelSub;
-rcl_subscription_t pidGainsSub;      // live PID tuning (Vector3 x=Kp y=Ki z=minMoveDuty)
-rcl_publisher_t    wheelStatePub;    // small telemetry: x=velL y=velR z=cmd vx (crosses WiFi)
-rcl_timer_t        controlTimer;
+rcl_subscription_t pidGainsSub;
+rcl_publisher_t    wheelStatePub;
 geometry_msgs__msg__Twist   twistMsg;
 geometry_msgs__msg__Vector3 pidGainsMsg;
 geometry_msgs__msg__Vector3 wheelStateMsg;
@@ -157,6 +148,16 @@ rclc_support_t  support;
 rcl_allocator_t allocator;
 rcl_node_t      node;
 bool timeSynced = false;
+
+// ── Agent connection state machine ──────────────────────────────────────────
+enum AgentState { WAITING_AGENT, AGENT_AVAILABLE, AGENT_CONNECTED, AGENT_DISCONNECTED };
+AgentState agentState = WAITING_AGENT;
+
+#define EXECUTE_EVERY_N_MS(MS, X) do {         \
+    static uint32_t last = 0;                  \
+    uint32_t now = millis();                   \
+    if ((now - last) >= (MS)) { last = now; X; } \
+} while (0)
 
 // ── BTS7960 drive: duty -1..+1 for one side ──────────────────────────────────
 void driveSide(int pinR, int pinL, int dir, float duty) {
@@ -179,91 +180,77 @@ float pidStep(float target, float meas, float &integ, float dt) {
     if (fabsf(target) < 0.01f) { integ = 0.0f; return 0.0f; }
     float err = target - meas;
     integ += err * dt;
-    float ilim = 1.0f / Ki;                 // anti-windup: |Ki*integ| <= 1
+    float ilim = 1.0f / gKi;                 // anti-windup: |Ki*integ| <= 1
     if (integ >  ilim) integ =  ilim;
     if (integ < -ilim) integ = -ilim;
-    float out = Kff * target + Kp * err + Ki * integ;
-    out += (target > 0.0f) ? minMoveDuty : -minMoveDuty;
+    float out = Kff * target + gKp * err + gKi * integ;
+    out += (target > 0.0f) ? gMinDuty : -gMinDuty;
     if (out >  1.0f) out =  1.0f;
     if (out < -1.0f) out = -1.0f;
     return out;
 }
 
-// ── Control + odom timer @ CONTROL_HZ ────────────────────────────────────────
-void controlCb(rcl_timer_t* timer, int64_t /*last*/) {
-    if (!timer) return;
+// ── Control task — GUARANTEED 50 Hz, independent of micro-ROS/WiFi ───────────
+void controlTask(void* /*arg*/) {
+    long lLF = (long)encLF.getCount() * ENC_LF_DIR;
+    long lLR = (long)encLR.getCount() * ENC_LR_DIR;
+    long lRF = (long)encRF.getCount() * ENC_RF_DIR;
+    long lRR = (long)encRR.getCount() * ENC_RR_DIR;
+    uint32_t lastUs = micros();
+    TickType_t wake = xTaskGetTickCount();
+    const TickType_t period = pdMS_TO_TICKS(1000 / CONTROL_HZ);   // 20 ms
+    uint16_t dbg = 0;
 
-    // real elapsed time since last run — velocities stay correct even if the loop
-    // rate wobbles. (A fixed dt turned a slow tick's big count delta into a bogus
-    // huge velocity that made the PID slam into reverse -> "forward then back".)
-    static uint32_t lastUs = 0;
-    uint32_t nowUs = micros();
-    if (lastUs == 0) { lastUs = nowUs; return; }
-    float dt = (nowUs - lastUs) * 1e-6f;   // unsigned math handles rollover
-    lastUs = nowUs;
-    if (dt <= 0.0f) return;
+    for (;;) {
+        vTaskDelayUntil(&wake, period);
 
-    // 1) measure per-side velocity — average both encoders on each side
-    long cLF = (long)encLF.getCount() * ENC_LF_DIR;
-    long cLR = (long)encLR.getCount() * ENC_LR_DIR;
-    long cRF = (long)encRF.getCount() * ENC_RF_DIR;
-    long cRR = (long)encRR.getCount() * ENC_RR_DIR;
-    long dLF = cLF - lastLF;  lastLF = cLF;
-    long dLR = cLR - lastLR;  lastLR = cLR;
-    long dRF = cRF - lastRF;  lastRF = cRF;
-    long dRR = cRR - lastRR;  lastRR = cRR;
-    float distL = 0.5f * (dLF + dLR) * METRES_PER_COUNT;
-    float distR = 0.5f * (dRF + dRR) * METRES_PER_COUNT;
-    float velL  = distL / dt;
-    float velR  = distR / dt;
+        uint32_t nowUs = micros();
+        float dt = (nowUs - lastUs) * 1e-6f;   // real elapsed (unsigned rollover-safe)
+        lastUs = nowUs;
+        if (dt <= 0.0f) continue;
 
-    // 2) watchdog: silence from the Pi5 -> stop (log the transition once)
-    static bool wdStopped = false;
-    float tvx = targetVx, twz = targetWz;
-    if (millis() - lastCmdMs > CMD_TIMEOUT_MS) {
-        tvx = 0.0f; twz = 0.0f;
-        if (!wdStopped) { wdStopped = true; Serial.println("[WD] /cmd_vel stale -> stop"); }
-    } else {
-        wdStopped = false;
-    }
+        // measure per-side velocity (average both encoders on each side)
+        long cLF = (long)encLF.getCount() * ENC_LF_DIR;
+        long cLR = (long)encLR.getCount() * ENC_LR_DIR;
+        long cRF = (long)encRF.getCount() * ENC_RF_DIR;
+        long cRR = (long)encRR.getCount() * ENC_RR_DIR;
+        long dLF = cLF - lLF; lLF = cLF;
+        long dLR = cLR - lLR; lLR = cLR;
+        long dRF = cRF - lRF; lRF = cRF;
+        long dRR = cRR - lRR; lRR = cRR;
+        float distL = 0.5f * (dLF + dLR) * METRES_PER_COUNT;
+        float distR = 0.5f * (dRF + dRR) * METRES_PER_COUNT;
+        float velL = distL / dt;
+        float velR = distR / dt;
+        gVelL = velL; gVelR = velR;
 
-    // 3) target -> per-wheel setpoints -> PID -> BTS7960
-    float wTargetL = tvx - twz * WHEEL_BASE_M * 0.5f;
-    float wTargetR = tvx + twz * WHEEL_BASE_M * 0.5f;
-    driveSide(L_RPWM, L_LPWM, L_MOTOR_DIR, pidStep(wTargetL, velL, integL, dt));
-    driveSide(R_RPWM, R_LPWM, R_MOTOR_DIR, pidStep(wTargetR, velR, integR, dt));
+        // target with safety gates: only drive when connected AND command is fresh
+        float tvx = targetVx, twz = targetWz;
+        if (!controlEnabled || (millis() - lastCmdMs > CMD_TIMEOUT_MS)) { tvx = 0.0f; twz = 0.0f; }
 
-    // 4) integrate odometry from MEASURED wheel travel
-    float ds  = 0.5f * (distL + distR);
-    float dth = (distR - distL) / WHEEL_BASE_M;
-    odomX  += ds * cosf(odomTh + 0.5f * dth);
-    odomY  += ds * sinf(odomTh + 0.5f * dth);
-    odomTh += dth;
+        float wL = tvx - twz * WHEEL_BASE_M * 0.5f;
+        float wR = tvx + twz * WHEEL_BASE_M * 0.5f;
+        driveSide(L_RPWM, L_LPWM, L_MOTOR_DIR, pidStep(wL, velL, integL, dt));
+        driveSide(R_RPWM, R_LPWM, R_MOTOR_DIR, pidStep(wR, velR, integR, dt));
 
-    // NOTE: the big nav_msgs/Odometry publish is DISABLED — it exceeds the micro-ROS
-    // WiFi message size (never reached the host) AND jammed this loop down to ~1 Hz.
-    // The Pi5 relay node rebuilds Odometry from /wheel_state for the EKF instead.
-    // (odomX/Y/Th kept for that future relay / debug only.)
-
-    // small telemetry that DOES cross the WiFi link: lets the host watch each
-    // wheel's real speed/direction + the commanded vx for tuning.
-    wheelStateMsg.x = velL;
-    wheelStateMsg.y = velR;
-    wheelStateMsg.z = tvx;
-    rcl_publish(&wheelStatePub, &wheelStateMsg, NULL);
+        // odometry pose (for the Pi5 relay / debug)
+        float ds  = 0.5f * (distL + distR);
+        float dth = (distR - distL) / WHEEL_BASE_M;
+        odomX  += ds * cosf(odomTh + 0.5f * dth);
+        odomY  += ds * sinf(odomTh + 0.5f * dth);
+        odomTh += dth;
 
 #if DEBUG_SERIAL
-    static uint16_t dbg = 0;               // ~2 Hz: IN (tgt) + OUT (vel/enc)
-    if (++dbg >= 25) {
-        dbg = 0;
-        Serial.printf("IN tgt vx=%.2f wz=%.2f | OUT velL=%.2f velR=%.2f odom(x=%.2f y=%.2f th=%.2f) "
-                      "| enc LF=%ld LR=%ld RF=%ld RR=%ld\n",
-                      tvx, twz, velL, velR, odomX, odomY, odomTh, cLF, cLR, cRF, cRR);
-    }
+        if (++dbg >= (CONTROL_HZ / 2)) {   // ~2 Hz -> confirms the loop really runs at 50 Hz
+            dbg = 0;
+            Serial.printf("IN vx=%.2f wz=%.2f | OUT velL=%.2f velR=%.2f | odom(x=%.2f y=%.2f th=%.2f) dt=%.3f\n",
+                          tvx, twz, velL, velR, odomX, odomY, odomTh, dt);
+        }
 #endif
+    }
 }
 
-// ── /cmd_vel callback ────────────────────────────────────────────────────────
+// ── Callbacks (run in loop()/executor context) ───────────────────────────────
 void cmdVelCb(const void* msgIn) {
     const geometry_msgs__msg__Twist* m = (const geometry_msgs__msg__Twist*)msgIn;
     targetVx = (float)m->linear.x;
@@ -271,16 +258,14 @@ void cmdVelCb(const void* msgIn) {
     lastCmdMs = millis();
 }
 
-// Live PID tuning — no reflash needed. Vector3: x=Kp, y=Ki, z=minMoveDuty.
-void pidGainsCb(const void* msgIn) {
+void pidGainsCb(const void* msgIn) {   // live tuning: Vector3 x=Kp y=Ki z=minMoveDuty
     const geometry_msgs__msg__Vector3* m = (const geometry_msgs__msg__Vector3*)msgIn;
-    Kp = (float)m->x;
-    Ki = (float)m->y;
-    minMoveDuty = (float)m->z;
-    integL = integR = 0.0f;   // reset windup on retune
-    Serial.printf("[PID] set Kp=%.3f Ki=%.3f minDuty=%.3f\n", Kp, Ki, minMoveDuty);
+    gKp = (float)m->x;
+    gKi = (float)m->y;
+    gMinDuty = (float)m->z;
+    integL = integR = 0.0f;
+    Serial.printf("[PID] set Kp=%.3f Ki=%.3f minDuty=%.3f\n", gKp, gKi, gMinDuty);
 }
-
 
 // ── micro-ROS entity lifecycle ───────────────────────────────────────────────
 bool createEntities() {
@@ -291,37 +276,25 @@ bool createEntities() {
 
     if (rclc_node_init_default(&node, "rover_esp32", "", &support) != RCL_RET_OK) return false;
 
-    // BEST_EFFORT both ways — reliable QoS stalls over the micro-ROS WiFi link.
     if (rclc_subscription_init_best_effort(&cmdVelSub, &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist), "/cmd_vel") != RCL_RET_OK) return false;
-    if (rclc_publisher_init_best_effort(&wheelStatePub, &node,
-            ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Vector3), "/wheel_state") != RCL_RET_OK) return false;
     if (rclc_subscription_init_best_effort(&pidGainsSub, &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Vector3), "/pid_gains") != RCL_RET_OK) return false;
-    if (rclc_timer_init_default(&controlTimer, &support,
-            RCL_MS_TO_NS((int)(1000.0f / CONTROL_HZ)), controlCb) != RCL_RET_OK) return false;
+    if (rclc_publisher_init_best_effort(&wheelStatePub, &node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Vector3), "/wheel_state") != RCL_RET_OK) return false;
 
-    rclc_executor_init(&executor, &support.context, 3, &allocator);   // 2 subs + 1 timer
+    rclc_executor_init(&executor, &support.context, 2, &allocator);   // 2 subs
     rclc_executor_add_subscription(&executor, &cmdVelSub, &twistMsg, &cmdVelCb, ON_NEW_DATA);
     rclc_executor_add_subscription(&executor, &pidGainsSub, &pidGainsMsg, &pidGainsCb, ON_NEW_DATA);
-    rclc_executor_add_timer(&executor, &controlTimer);
 
-    // Align stamps with the agent clock so robot_localization accepts them.
 #if defined(RMW_UROS_SYNC_SESSION) || __has_include(<rmw_microros/time_sync.h>)
     timeSynced = (rmw_uros_sync_session(1000) == RMW_RET_OK);
 #else
     timeSynced = false;
 #endif
-    Serial.printf("[uROS] time sync %s\n", timeSynced ? "OK" : "off (board-time stamps)");
-
-    // fresh baseline so the first tick isn't a huge accumulated delta
-    lastLF = (long)encLF.getCount() * ENC_LF_DIR;
-    lastLR = (long)encLR.getCount() * ENC_LR_DIR;
-    lastRF = (long)encRF.getCount() * ENC_RF_DIR;
-    lastRR = (long)encRR.getCount() * ENC_RR_DIR;
-    integL = integR = 0.0f;
     lastCmdMs = millis();
-    Serial.println("[uROS] entities live — IN /cmd_vel /pid_gains, OUT /wheel_state");
+    Serial.printf("[uROS] entities live (time sync %s) — IN /cmd_vel /pid_gains, OUT /wheel_state\n",
+                  timeSynced ? "OK" : "off");
     return true;
 }
 
@@ -329,7 +302,6 @@ void destroyEntities() {
     rcl_subscription_fini(&cmdVelSub, &node);
     rcl_subscription_fini(&pidGainsSub, &node);
     rcl_publisher_fini(&wheelStatePub, &node);
-    rcl_timer_fini(&controlTimer);
     rclc_executor_fini(&executor);
     rcl_node_fini(&node);
     rclc_support_fini(&support);
@@ -340,15 +312,15 @@ void destroyEntities() {
 void setup() {
     Serial.begin(115200);
     delay(500);
-    Serial.println("=== Rover ESP32 v2 (BTS7960 + encoders) starting ===");
+    Serial.println("=== Rover ESP32 v2 (BTS7960 + encoders, RT control task) ===");
 
-    // BTS7960 enables — hold both HIGH so each half-bridge is active
+    // BTS7960 enables HIGH
     pinMode(L_REN, OUTPUT); pinMode(L_LEN, OUTPUT);
     pinMode(R_REN, OUTPUT); pinMode(R_LEN, OUTPUT);
     digitalWrite(L_REN, HIGH); digitalWrite(L_LEN, HIGH);
     digitalWrite(R_REN, HIGH); digitalWrite(R_LEN, HIGH);
 
-    // PWM (core 3.x): ledcAttach(pin, freq, resolution). Verify each.
+    // PWM (core 3.x)
     bool pwmOK = true;
     pwmOK &= ledcAttach(L_RPWM, PWM_FREQ, PWM_RES);
     pwmOK &= ledcAttach(L_LPWM, PWM_FREQ, PWM_RES);
@@ -357,8 +329,7 @@ void setup() {
     Serial.printf("[PWM] attach %s\n", pwmOK ? "OK" : "FAILED — motors won't drive");
     stopMotors();
 
-    // Encoders (PCNT hardware quadrature). Internal pull-ups OFF (input-only
-    // pads can't have them; GB37 encoders are push-pull at 3V3).
+    // Encoders (PCNT hardware quadrature). Pull-ups OFF (push-pull @3V3).
     ESP32Encoder::useInternalWeakPullResistors = puType::none;
     encLF.attachFullQuad(ENC_LF_A, ENC_LF_B);
     encLR.attachFullQuad(ENC_LR_A, ENC_LR_B);
@@ -368,51 +339,60 @@ void setup() {
     encRF.clearCount(); encRR.clearCount();
     Serial.println("[ENC] 4x quadrature attached");
 
+    // Real-time control task on core 1, priority above the Arduino loop so it
+    // preempts any micro-ROS/WiFi stall and holds a solid 50 Hz.
+    xTaskCreatePinnedToCore(controlTask, "control", 8192, NULL, 2, NULL, 1);
+    Serial.println("[CTRL] 50 Hz control task started (core 1)");
+
     Serial.printf("[WiFi] agent %s:%d\n", AGENT_IP, AGENT_PORT);
     set_microros_wifi_transports((char*)WIFI_SSID, (char*)WIFI_PASS, (char*)AGENT_IP, AGENT_PORT);
-    WiFi.setSleep(false);   // modem sleep adds ~100 ms latency to every cmd
+    WiFi.setSleep(false);
 
     ArduinoOTA.setHostname(OTA_HOSTNAME);
 #ifdef OTA_PASSWORD
     ArduinoOTA.setPassword(OTA_PASSWORD);
 #endif
-    ArduinoOTA.onStart([]() { stopMotors(); });
+    ArduinoOTA.onStart([]() { controlEnabled = false; stopMotors(); });
     ArduinoOTA.begin();
 
     agentState = WAITING_AGENT;
     Serial.println("[READY] waiting for micro-ROS agent");
 }
 
-// ── Loop ──────────────────────────────────────────────────────────────────────
+// ── Loop — micro-ROS messaging only (control lives in the task) ──────────────
 void loop() {
     ArduinoOTA.handle();
     switch (agentState) {
     case WAITING_AGENT:
-        stopMotors();
+        controlEnabled = false;   // task holds motors stopped
         EXECUTE_EVERY_N_MS(1000,
             agentState = (rmw_uros_ping_agent(300, 1) == RMW_RET_OK) ? AGENT_AVAILABLE : WAITING_AGENT);
         break;
 
     case AGENT_AVAILABLE:
-        if (createEntities()) { agentState = AGENT_CONNECTED; Serial.println("[uROS] CONNECTED"); }
+        if (createEntities()) { agentState = AGENT_CONNECTED; controlEnabled = true; Serial.println("[uROS] CONNECTED"); }
         else                  { destroyEntities(); agentState = WAITING_AGENT; }
         break;
 
     case AGENT_CONNECTED: {
-        // Tolerate transient WiFi: only drop after 3 consecutive missed pings,
-        // so a single lost packet doesn't tear down the session (was flapping).
         static uint8_t pingMiss = 0;
         EXECUTE_EVERY_N_MS(2000, {
             if (rmw_uros_ping_agent(300, 1) == RMW_RET_OK) pingMiss = 0;
             else if (++pingMiss >= 3) agentState = AGENT_DISCONNECTED;
         });
-        if (agentState == AGENT_CONNECTED)
+        if (agentState == AGENT_CONNECTED) {
             rclc_executor_spin_some(&executor, RCL_MS_TO_NS(5));
+            // publish telemetry from the shared measured velocities (~20 Hz)
+            EXECUTE_EVERY_N_MS(50, {
+                wheelStateMsg.x = gVelL; wheelStateMsg.y = gVelR; wheelStateMsg.z = targetVx;
+                rcl_publish(&wheelStatePub, &wheelStateMsg, NULL);
+            });
+        }
         break;
     }
 
     case AGENT_DISCONNECTED:
-        stopMotors();
+        controlEnabled = false;
         destroyEntities();
         agentState = WAITING_AGENT;
         Serial.println("[uROS] agent lost — reconnecting");
