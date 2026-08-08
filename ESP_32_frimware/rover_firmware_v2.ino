@@ -47,6 +47,7 @@
 #include <rclc/executor.h>
 #include <rmw_microros/rmw_microros.h>
 #include <geometry_msgs/msg/twist.h>
+#include <geometry_msgs/msg/vector3.h>
 #include <nav_msgs/msg/odometry.h>
 
 // ── WiFi + agent ─────────────────────────────────────────────────────────────
@@ -107,10 +108,14 @@ const char* OTA_HOSTNAME = "rover-esp32";
 #define CONTROL_HZ      50.0f
 #define CONTROL_DT      (1.0f / CONTROL_HZ)
 #define CMD_TIMEOUT_MS  500
-float Kp  = 1.5f;
-float Ki  = 4.0f;
+// PID gains — RUNTIME-TUNABLE live via /pid_gains (Vector3 x=Kp y=Ki z=minMoveDuty),
+// so tuning needs no reflash. Defaults lowered from (1.5/4.0/0.12): the old high Kp +
+// hard breakaway step caused a limit cycle (wheel overshoots -> Kp drives it negative ->
+// "goes forward then comes back"), worst when lifted/unloaded.
+float Kp  = 0.6f;
+float Ki  = 2.0f;
 float Kff = 1.0f / MAX_WHEEL_VEL;
-#define MIN_MOVE_DUTY   0.12f
+float minMoveDuty = 0.08f;   // static-friction breakaway (0 = pure PI + feedforward)
 
 #define DEBUG_SERIAL 1     // 1 = print IN/OUT at ~2 Hz on Serial @115200
 
@@ -140,10 +145,14 @@ float odomX = 0.0f, odomY = 0.0f, odomTh = 0.0f;
 
 // ── micro-ROS entities ───────────────────────────────────────────────────────
 rcl_subscription_t cmdVelSub;
+rcl_subscription_t pidGainsSub;      // live PID tuning (Vector3 x=Kp y=Ki z=minMoveDuty)
 rcl_publisher_t    odomPub;
+rcl_publisher_t    wheelStatePub;    // small telemetry: x=velL y=velR z=cmd vx (crosses WiFi)
 rcl_timer_t        controlTimer;
-geometry_msgs__msg__Twist twistMsg;
-nav_msgs__msg__Odometry   odomMsg;
+geometry_msgs__msg__Twist   twistMsg;
+geometry_msgs__msg__Vector3 pidGainsMsg;
+geometry_msgs__msg__Vector3 wheelStateMsg;
+nav_msgs__msg__Odometry     odomMsg;
 rclc_executor_t executor;
 rclc_support_t  support;
 rcl_allocator_t allocator;
@@ -175,7 +184,7 @@ float pidStep(float target, float meas, float &integ) {
     if (integ >  ilim) integ =  ilim;
     if (integ < -ilim) integ = -ilim;
     float out = Kff * target + Kp * err + Ki * integ;
-    out += (target > 0.0f) ? MIN_MOVE_DUTY : -MIN_MOVE_DUTY;
+    out += (target > 0.0f) ? minMoveDuty : -minMoveDuty;
     if (out >  1.0f) out =  1.0f;
     if (out < -1.0f) out = -1.0f;
     return out;
@@ -234,6 +243,13 @@ void controlCb(rcl_timer_t* timer, int64_t /*last*/) {
     odomMsg.twist.twist.angular.z = dth / CONTROL_DT;
     rcl_publish(&odomPub, &odomMsg, NULL);
 
+    // small telemetry that DOES cross the WiFi link (Odometry is too big): lets the
+    // host watch each wheel's real speed/direction + the commanded vx for tuning.
+    wheelStateMsg.x = velL;
+    wheelStateMsg.y = velR;
+    wheelStateMsg.z = tvx;
+    rcl_publish(&wheelStatePub, &wheelStateMsg, NULL);
+
 #if DEBUG_SERIAL
     static uint16_t dbg = 0;               // ~2 Hz: IN (tgt) + OUT (vel/enc)
     if (++dbg >= 25) {
@@ -251,6 +267,16 @@ void cmdVelCb(const void* msgIn) {
     targetVx = (float)m->linear.x;
     targetWz = (float)m->angular.z;
     lastCmdMs = millis();
+}
+
+// Live PID tuning — no reflash needed. Vector3: x=Kp, y=Ki, z=minMoveDuty.
+void pidGainsCb(const void* msgIn) {
+    const geometry_msgs__msg__Vector3* m = (const geometry_msgs__msg__Vector3*)msgIn;
+    Kp = (float)m->x;
+    Ki = (float)m->y;
+    minMoveDuty = (float)m->z;
+    integL = integR = 0.0f;   // reset windup on retune
+    Serial.printf("[PID] set Kp=%.3f Ki=%.3f minDuty=%.3f\n", Kp, Ki, minMoveDuty);
 }
 
 // ── Odometry message static setup (frame ids + covariance) ───────────────────
@@ -288,11 +314,16 @@ bool createEntities() {
             ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist), "/cmd_vel") != RCL_RET_OK) return false;
     if (rclc_publisher_init_best_effort(&odomPub, &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry), "/wheel_odom") != RCL_RET_OK) return false;
+    if (rclc_publisher_init_best_effort(&wheelStatePub, &node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Vector3), "/wheel_state") != RCL_RET_OK) return false;
+    if (rclc_subscription_init_best_effort(&pidGainsSub, &node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Vector3), "/pid_gains") != RCL_RET_OK) return false;
     if (rclc_timer_init_default(&controlTimer, &support,
             RCL_MS_TO_NS((int)(1000.0f / CONTROL_HZ)), controlCb) != RCL_RET_OK) return false;
 
-    rclc_executor_init(&executor, &support.context, 2, &allocator);
+    rclc_executor_init(&executor, &support.context, 3, &allocator);   // 2 subs + 1 timer
     rclc_executor_add_subscription(&executor, &cmdVelSub, &twistMsg, &cmdVelCb, ON_NEW_DATA);
+    rclc_executor_add_subscription(&executor, &pidGainsSub, &pidGainsMsg, &pidGainsCb, ON_NEW_DATA);
     rclc_executor_add_timer(&executor, &controlTimer);
 
     // Align stamps with the agent clock so robot_localization accepts them.
@@ -310,13 +341,15 @@ bool createEntities() {
     lastRR = (long)encRR.getCount() * ENC_RR_DIR;
     integL = integR = 0.0f;
     lastCmdMs = millis();
-    Serial.println("[uROS] entities live — IN /cmd_vel, OUT /wheel_odom (best_effort)");
+    Serial.println("[uROS] entities live — IN /cmd_vel /pid_gains, OUT /wheel_odom /wheel_state");
     return true;
 }
 
 void destroyEntities() {
     rcl_subscription_fini(&cmdVelSub, &node);
+    rcl_subscription_fini(&pidGainsSub, &node);
     rcl_publisher_fini(&odomPub, &node);
+    rcl_publisher_fini(&wheelStatePub, &node);
     rcl_timer_fini(&controlTimer);
     rclc_executor_fini(&executor);
     rcl_node_fini(&node);
