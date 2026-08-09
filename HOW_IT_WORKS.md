@@ -12,9 +12,9 @@ All of this was verified live on 2026-07-03 (18 turns, zero errors).
 | Machine | Runs | Talks over |
 |---|---|---|
 | **Pi5** (this repo) | `langrobo-brain` (agent_node) + `langrobo-microros` (ESP32 bridge), both systemd | ROS2 DDS on Ethernet LAN |
-| **Jetson Orin** | `stt_node` (Whisper), `tts_node` (Kokoro), `camera_node`, `target_node` (YOLOv8n) — separate `speech_vision` repo | ROS2 DDS |
+| **Jetson Orin** | Rover mode = perception: cuVSLAM + nvblox + Nav2 + YOLO detections_3d (`orin-nav-stack`). Voice role (`stt_node`/`tts_node`/`target_node`, separate `speech_vision` repo) is OFF on the Orin in rover mode | ROS2 DDS |
 | **Mac Mini** | llama.cpp server, Gemma multimodal GGUF, 4 KV-cache slots | HTTP (OpenAI-compatible) |
-| **ESP32** | wheel firmware | micro-ROS over WiFi UDP 8888 → Pi5 |
+| **ESP32** | wheel firmware — 2-motor diff drive, BTS7960 + encoders, 50 Hz PID | micro-ROS over WiFi UDP 8888 → Pi5 |
 
 ---
 

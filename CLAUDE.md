@@ -1,11 +1,11 @@
 # LangRobo Pi5 brain — project guide
 
 Home robot "Rakhi": Pi5 (this repo) runs the LangGraph brain; Jetson Orin runs
-STT/TTS/camera/YOLO (separate `speech_vision` repo); Mac Mini serves the LLM
+perception in rover mode (cuVSLAM/nvblox/Nav2/YOLO, `orin-nav-stack`); voice (STT/TTS, separate `speech_vision` repo) is a DIFFERENT role, OFF on the Orin in rover mode; Mac Mini serves the LLM
 (llama.cpp, `singireddys-mac-mini.local:8080`); ESP32 drives the wheels.
 Read HOW_IT_WORKS.md for the end-to-end walkthrough (boot, turn lifecycle,
 failure paths); ARCHITECTURE.md before touching graph/agent code;
-OPERATIONS.md for run/deploy/troubleshooting; PRODUCT.md for the roadmap.
+OPERATIONS.md for run/deploy/troubleshooting; PRODUCT.md for the roadmap; the Jetson `orin-nav-stack/SYSTEM_INTEGRATION.md` for the cross-machine ROS contract.
 
 ## Fleet start — one command brings up the whole robot
 
@@ -17,10 +17,10 @@ OPERATIONS.md for run/deploy/troubleshooting; PRODUCT.md for the roadmap.
   container (nvblox/SLAM consuming the sim's /cam_1 depth/RGB). Also switches the brain's
   `robot_body` to `sim` (cmd_vel becomes TwistStamped on /mecanum_drive_controller/cmd_vel).
 - **`rover`** — the REAL body: starts this Pi5's micro-ROS agent (ESP32 wheels) and the
-  Jetson's `isaac_ros` perception role in REAL mode (D555 + RTAB-Map localization +
+  Jetson's `isaac_ros` perception role in REAL mode (D555 + cuVSLAM localization +
   nvblox + Nav2 + YOLO detections_3d — see JETSON_D555_SETUP.md). Voice is OFF on the
-  Jetson in this mode (perception owns the 8GB Orin; cuVSLAM does NOT run on Orin —
-  RTAB-Map is the localizer): talk to the robot via Telegram, or start voice manually
+  Jetson in this mode (perception owns the 8GB Orin; cuVSLAM RUNS on Orin (standalone pyCuVSLAM cu12 wheel) —
+  cuVSLAM is the localizer): talk to the robot via Telegram, or start voice manually
   with `fleet_role.sh voice start`. Switches `robot_body` back to `rover` (plain Twist
   on /cmd_vel).
 - **`stop`** parks the robot: stops the body (sim + Jetson roles) but keeps `langrobo-brain`
@@ -147,7 +147,7 @@ change both repos together or neither.
 ## Gotchas
 
 - Real-robot Nav2/SLAM software is DEPLOYED (Jetson `langrobo_perception`
-  mode:=real — RTAB-Map + nvblox + Nav2, smoke-tested camera-less) and waits
+  mode:=real — cuVSLAM + nvblox + Nav2, smoke-tested camera-less) and waits
   only for the D555 hardware; JETSON_D555_SETUP.md is the camera-day
   checklist + acceptance tests. Without the camera, `navigate_to_pose`/
   `approach_object` still report honestly after a 10s wait. New depth contract: Jetson publishes map-frame objects on

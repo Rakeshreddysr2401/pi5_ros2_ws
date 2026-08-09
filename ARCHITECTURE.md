@@ -8,9 +8,9 @@ How the brain works, how the pieces fit together, and how to extend it.
 
 ```
 Mac Mini          llama.cpp at singireddys-mac-mini.local:8080 — Gemma multimodal GGUF (OpenAI-compatible HTTP)
-Jetson Orin 8GB   USB cam · STT (Whisper) · TTS (Kokoro) · YOLOv8n (target_node) · (Isaac ROS SLAM/Nav2: phase 2)
+Jetson Orin 8GB   Rover mode = PERCEPTION: cuVSLAM + nvblox 3D map + Nav2 + YOLOv8n detections (2D bearing + 3D metric), `orin-nav-stack`. Voice (STT/TTS, separate `speech_vision`) is a different role, OFF on the Orin in rover mode
 Pi 5  [this repo] LangGraph supervisor + agents + services + micro-ROS agent (ESP32 bridge)
-ESP32             4-wheel drive chassis (micro-ROS over WiFi UDP port 8888)
+ESP32             2-motor differential drive: BTS7960 + encoder motors, 50 Hz PID (micro-ROS over WiFi UDP port 8888)
 ```
 
 The Pi5 receives speech from the Jetson, runs the LangGraph decision graph, and
