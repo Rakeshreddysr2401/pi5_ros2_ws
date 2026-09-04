@@ -16,3 +16,10 @@ pi5_stt_node:
     vad_aggressiveness: 2
     wake_aliases: ["rakhi", "chotu", "hey pi"]
     stop_words: ["stop"]
+    # local | sarvam | soniox — see PI5_VOICE.md for the cost/latency comparison.
+    # sarvam/soniox need SARVAM_API_KEY / SONIOX_API_KEY in ~/ros2_ws/.env (example.env
+    # has placeholders); missing key or any request failure falls back to local
+    # automatically (never goes silent — CLAUDE.md #4).
+    stt_provider: local
+    stt_source_language: te   # Telugu
+    stt_target_language: en

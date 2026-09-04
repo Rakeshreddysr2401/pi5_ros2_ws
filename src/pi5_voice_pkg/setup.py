@@ -12,7 +12,7 @@ setup(
         ('share/' + package_name + '/launch', ['launch/voice_launch.py']),
         ('share/' + package_name + '/config', ['config/voice_params.yaml']),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'requests', 'websockets', 'python-dotenv'],
     zip_safe=True,
     maintainer='rakhi24',
     maintainer_email='sumanasomineni09@gmail.com',

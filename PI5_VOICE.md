@@ -53,6 +53,61 @@ the same topic, running on the same machine.
 
 ---
 
+## STT provider switch — local | Sarvam | Soniox
+
+Added 2026-09-04. `stt_node`'s mic/VAD/wake-gate logic is unchanged; only the
+*transcribe this utterance* step is now swappable
+(`stt_providers/`, one file per provider + a `REGISTRY` dict in `__init__.py`
+— add a fourth provider by adding one file, nothing else changes). Set in
+`voice_params.yaml`:
+
+```yaml
+stt_provider: local          # local | sarvam | soniox
+stt_source_language: te      # Telugu
+stt_target_language: en
+```
+
+**Why this exists:** the household speaks Telugu-English code-switched, and
+generic Whisper is measurably bad at that specific case — a benchmark on
+code-switched speech found Whisper Large-v3's error rate jumps from 7–28%
+CER on same-script language pairs to **32–51% CER on different-script pairs**
+(exactly Telugu↔English). Sarvam's Saaras v3 and Soniox both offer direct
+speech→English *translation* (not just transcription) trained for exactly
+this. Cost/latency comparison (2026-09-04, see chat log for the full
+numbers): Soniox is ~3–15x cheaper per audio-hour ($0.10–0.12/hr STT vs
+Sarvam's ~$1.7–1.8/hr equivalent); Sarvam has lower published latency
+(<150ms time-to-first-token vs Soniox's 260ms median) and is purpose-trained
+on code-mixed Indian speech specifically, which is the more likely deciding
+factor at household usage volumes (~$8/mo vs ~$36/mo either way — both
+trivial).
+
+| Provider | How it's called | Endpoint |
+|---|---|---|
+| `local` | in-process `faster-whisper` | — |
+| `sarvam` | REST, one POST per utterance (matches how stt_node already batches) | `POST api.sarvam.ai/speech-to-text`, `mode=translate` |
+| `soniox` | WebSocket, opened fresh per utterance (not kept alive across utterances — simpler, costs the connection handshake per utterance) | `wss://stt-rt.soniox.com/transcribe-websocket` |
+
+**Degrade behavior (CLAUDE.md #4 — missing keys degrade, never crash):**
+`SARVAM_API_KEY` / `SONIOX_API_KEY` live in `~/ros2_ws/.env` (placeholders in
+`example.env`, loaded via `load_dotenv` exactly like `agent_node` does).
+Missing key at startup, or *any* failure at call time (network, timeout, bad
+response) → logs a warning and falls back to `local` for that utterance.
+Verified live (no keys set): both `sarvam` and `soniox` selections start
+clean and log `<provider> unavailable at startup (... not set); using local`
+— confirmed the node never crashes or goes silent over this.
+
+**⚠️ Not yet verified against a real key.** Sarvam's REST shape (multipart
+file upload, `{"transcript": "..."}` response) is simple and was fetched
+straight from the current API docs — reasonably high confidence. Soniox's
+WebSocket path (batch-send: open, send config+audio+`""`, collect
+`translation_status=="translation"` tokens, close) is transcribed from docs
+without a live session — the token-joining logic in particular
+(`''.join` vs `' '.join`, whether tokens carry their own spacing) needs
+sanity-checking against real output before trusting it. Get a key, flip
+`stt_provider`, say something in Telugu, check `/voice/user_input`.
+
+---
+
 ## Measured performance (this Pi5, Cortex-A76 @ 2.4GHz, 4 cores, 2026-09-04)
 
 | | RTF | note |

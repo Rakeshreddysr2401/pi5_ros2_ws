@@ -1,5 +1,23 @@
 # TODO — pending on-device work
 
+## OUTSTANDING 2026-09-04: Soniox STT provider needs a real API key to verify
+
+`stt_providers/soniox.py` (PI5_VOICE.md has the design + why) is written
+against the published WebSocket docs but never run against a real session —
+no key available yet. Sarvam's REST path is lower-risk (simple POST, fetched
+straight from current docs) but also unverified live. Both correctly degrade
+to local when no key is set (verified: `sarvam unavailable at startup (...
+not set); using local` / same for soniox — neither crashes, neither goes
+silent).
+
+**Next step:** get `SARVAM_API_KEY` and/or `SONIOX_API_KEY` into `~/ros2_ws/.env`,
+set `stt_provider: sarvam` (or `soniox`) in `voice_params.yaml`, restart, say
+something in Telugu, check `/voice/user_input` for a clean English
+translation. For Soniox specifically, watch the log for whether the
+token-joining in `_run()` produces correctly-spaced text — that logic is
+unverified. Delete this section once one real Telugu utterance round-trips
+correctly through at least one cloud provider.
+
 ## OUTSTANDING 2026-09-04: pi5_voice_pkg needs a live mic test
 
 Built and wired today (commit `1eaa106`, PI5_VOICE.md has the full writeup):
