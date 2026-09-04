@@ -1,5 +1,29 @@
 # TODO — pending on-device work
 
+## OUTSTANDING 2026-09-04: pi5_voice_pkg needs a live mic test
+
+Built and wired today (commit `1eaa106`, PI5_VOICE.md has the full writeup):
+CPU-only STT (`faster-whisper` base/int8, measured RTF ~0.75 — faster than
+real time) + TTS (`kokoro-onnx` fp32, RTF ~1.8) on the Pi5's own Blackwire
+C3220 headset, publishing the exact same `/voice/*` wire protocol the
+Jetson's `stt_node`/`tts_node` use — `agent_node`'s `_on_user_input` needed
+zero changes, it already subscribes to that topic name.
+
+Verified end-to-end EXCEPT true wake-word recognition:
+- TTS: real audio out the Blackwire speaker, `/voice/tts_speaking` correctly
+  flips true→false around the `<|eou|>` marker. Confirmed working.
+- STT: VAD → whisper → confidence filter → wake-alias gate all run and
+  correctly reject noise ('.  .  .  .') and a Whisper hallucination ("Thank
+  you very much.") rather than false-publishing to `/voice/user_input`. But
+  the only inputs tried were a speaker bounced across a room into a
+  close-talk boom mic (the worst case VOICE_QUALITY.md already warns about)
+  — nobody has said a real wake phrase into the headset yet.
+
+**Next step:** wear the headset, say "Rakhi, &lt;anything&gt;" close to the mic,
+confirm `/voice/user_input` gets a clean transcript. Delete this section
+once that's done and the wake_aliases list (`rakhi`/`chotu`/`hey pi` —
+config/voice_params.yaml) has been tuned against a few real tries.
+
 ## OUTSTANDING 2026-07-10: Mac Mini llama.cpp returns "Compute error" on EVERY request
 
 Found while verifying the day's deploys: `/health` says ok and `/slots` lists

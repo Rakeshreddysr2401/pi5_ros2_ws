@@ -1,11 +1,12 @@
 # LangRobo Pi5 brain — project guide
 
 Home robot "Rakhi": Pi5 (this repo) runs the LangGraph brain; Jetson Orin runs
-perception in rover mode (cuVSLAM/nvblox/Nav2/YOLO, `orin-nav-stack`); voice (STT/TTS, separate `speech_vision` repo) is a DIFFERENT role, OFF on the Orin in rover mode; Mac Mini serves the LLM
+perception in rover mode (cuVSLAM/nvblox/Nav2/YOLO, `orin-nav-stack`); voice (STT/TTS, separate `speech_vision` repo) is a DIFFERENT role, OFF on the Orin in rover mode; a second, independent CPU-only voice pair (`pi5_voice_pkg`, this repo) now runs
+locally on the Pi5 instead, so voice works concurrently with driving — see PI5_VOICE.md; Mac Mini serves the LLM
 (llama.cpp, `singireddys-mac-mini.local:8080`); ESP32 drives the wheels.
 Read HOW_IT_WORKS.md for the end-to-end walkthrough (boot, turn lifecycle,
 failure paths); ARCHITECTURE.md before touching graph/agent code;
-OPERATIONS.md for run/deploy/troubleshooting; PRODUCT.md for the roadmap; the Jetson `orin-nav-stack/SYSTEM_INTEGRATION.md` for the cross-machine ROS contract.
+OPERATIONS.md for run/deploy/troubleshooting; PRODUCT.md for the roadmap; PI5_VOICE.md for the local STT/TTS pair; the Jetson `orin-nav-stack/SYSTEM_INTEGRATION.md` for the cross-machine ROS contract.
 
 ## Fleet start — one command brings up the whole robot
 
@@ -20,8 +21,10 @@ OPERATIONS.md for run/deploy/troubleshooting; PRODUCT.md for the roadmap; the Je
   Jetson's `isaac_ros` perception role in REAL mode (D555 + cuVSLAM localization +
   nvblox + Nav2 + YOLO detections_3d — see JETSON_D555_SETUP.md). Voice is OFF on the
   Jetson in this mode (perception owns the 8GB Orin; cuVSLAM RUNS on Orin (standalone pyCuVSLAM cu12 wheel) —
-  cuVSLAM is the localizer): talk to the robot via Telegram, or start voice manually
-  with `fleet_role.sh voice start`. Switches `robot_body` back to `rover` (plain Twist
+  cuVSLAM is the localizer): talk to the robot via Telegram, start voice manually
+  with `fleet_role.sh voice start` (won't fit alongside perception — see PI5_VOICE.md),
+  or `ros2 launch pi5_voice_pkg voice_launch.py` here for CPU-only voice that runs
+  fine alongside it. Switches `robot_body` back to `rover` (plain Twist
   on /cmd_vel).
 - **`stop`** parks the robot: stops the body (sim + Jetson roles) but keeps `langrobo-brain`
   + `langrobo-discovery` up, so chat/Telegram keeps listening. No password.

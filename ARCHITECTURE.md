@@ -9,7 +9,7 @@ How the brain works, how the pieces fit together, and how to extend it.
 ```
 Mac Mini          llama.cpp at singireddys-mac-mini.local:8080 — Gemma multimodal GGUF (OpenAI-compatible HTTP)
 Jetson Orin 8GB   Rover mode = PERCEPTION: cuVSLAM + nvblox 3D map + Nav2 + YOLOv8n detections (2D bearing + 3D metric), `orin-nav-stack`. Voice (STT/TTS, separate `speech_vision`) is a different role, OFF on the Orin in rover mode
-Pi 5  [this repo] LangGraph supervisor + agents + services + micro-ROS agent (ESP32 bridge)
+Pi 5  [this repo] LangGraph supervisor + agents + services + micro-ROS agent (ESP32 bridge); also runs pi5_voice_pkg (CPU-only STT/TTS, PI5_VOICE.md) so voice works while the Jetson is in rover mode
 ESP32             2-motor differential drive: BTS7960 + encoder motors, 50 Hz PID (micro-ROS over WiFi UDP port 8888)
 ```
 
