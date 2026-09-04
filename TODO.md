@@ -1,8 +1,25 @@
 # TODO — pending on-device work
 
-## OUTSTANDING 2026-09-04: STT — one real utterance worked, then VAD went silent
+## RESOLVED 2026-09-04 (evening): STT VAD-silence could not be reproduced
 
-Full writeup in PI5_VOICE.md. Summary of today's live testing, in order:
+Update: in an evening live session, both `local` (English→English) and
+`sarvam` (Telugu→English) STT ran cleanly across **many consecutive
+utterances** — the "worked once then silent" symptom did not recur. Added
+`[diag]` logging (audio-callback heartbeat + `voiced` state; ALSA `status`
+promoted `.debug()`→`.warning()`); the callback fired continuously and VAD
+tracked speech normally throughout. Leading theory: the morning's in-callback
+8s Sarvam timeout corrupted the PortAudio stream and the resulting ALSA input
+overflow was swallowed at `.debug()`. Both are now addressed (worker-thread
+transcribe in `3f3395b`; visible overflow warnings). Sarvam's success path is
+confirmed (HTTP 200 + live speech). Remaining follow-ups: (a) remove the
+`[diag]` lines after a few more clean multi-day sessions; (b) exercise the
+wake-word gate through translation (say "Rakhi …" and confirm
+`/voice/user_input`, not just `/voice/debug_transcript`). The original
+morning writeup and diagnostic playbook are kept below in case it recurs.
+
+<details><summary>Original writeup + diagnostic playbook (kept in case it recurs)</summary>
+
+Full writeup in PI5_VOICE.md. Summary of the morning's live testing, in order:
 
 1. **First real utterance ("Rakhi, ఇవాళ టైమ్ ఎంత") worked end-to-end**,
    through the actual mic, actual VAD, actual `agent_node`: Sarvam itself
@@ -58,8 +75,12 @@ Full writeup in PI5_VOICE.md. Summary of today's live testing, in order:
   one attempt has actually reached it, and that one timed out) and Soniox
   (never reached at all — no key yet, see below).
 
-Delete this section once a real Telugu utterance reliably reaches
-`/voice/user_input` on repeat attempts, not just once.
+(Original deletion criterion — "a real Telugu utterance reliably reaches STT
+on repeat attempts, not just once" — is now met on `/voice/debug_transcript`;
+see the RESOLVED note above. Kept for history until the `[diag]` lines are
+removed.)
+
+</details>
 
 ## OUTSTANDING 2026-09-04: Soniox STT provider needs a real API key to verify
 
