@@ -14,11 +14,21 @@ No trained wake-word model exists yet for this project (Jetson TODO:
 hey_rakhi training pending), so this runs the same "transcribe everything,
 gate on a name in the transcript" fallback mode VOICE_PIPELINE.md documents
 for when openWakeWord is unavailable — not a new design.
+
+Transcription runs on a background worker thread, not inside the
+sounddevice audio callback. Found live 2026-09-04: a cloud provider's
+request timeout (8s) blocked the callback thread for the full 8s, and the
+mic never produced a usable utterance again afterward — PortAudio callbacks
+that don't return promptly stall or corrupt the stream. The callback now
+only does VAD + framing (fast, no I/O) and hands the finished utterance to
+a queue; the worker thread does the (possibly slow) transcribe() call.
 """
 
 import collections
 import os
+import queue
 import re
+import threading
 
 import numpy as np
 import rclpy
@@ -91,6 +101,10 @@ class STTNode(Node):
         self._in_speech = False
         self._silence_run = 0
 
+        self._queue: queue.Queue = queue.Queue()
+        self._worker = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker.start()
+
         self._stream = sd.InputStream(
             samplerate=SAMPLE_RATE, channels=1, dtype='int16',
             blocksize=FRAME_SAMPLES, device=self._in_device,
@@ -152,7 +166,15 @@ class STTNode(Node):
         if len(frames) < MIN_UTTERANCE_FRAMES:
             return
         pcm = np.frombuffer(b''.join(frames), dtype=np.int16).astype(np.float32) / 32768.0
-        self._transcribe(pcm)
+        self._queue.put(pcm)  # hand off — never block the audio callback (see module docstring)
+
+    def _worker_loop(self):
+        while rclpy.ok():
+            pcm = self._queue.get()
+            try:
+                self._transcribe(pcm)
+            except Exception:
+                self.get_logger().exception('transcribe worker failed')
 
     def _transcribe(self, pcm: np.ndarray):
         try:
