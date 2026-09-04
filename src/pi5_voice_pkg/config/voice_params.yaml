@@ -6,6 +6,14 @@ pi5_tts_node:
     speed: 1.0
     output_device: Blackwire
     threads: 4
+    # local | sarvam | soniox — see PI5_VOICE.md. Local Kokoro measured RTF ~1.8
+    # (slower than real time); both cloud options publish sub-second/streaming
+    # latency instead — this switch is about speed, not translation (that's the
+    # STT side's reason). Same key/degrade rules as pi5_stt_node below.
+    tts_provider: local
+    tts_language: en
+    tts_sarvam_voice: ritu     # bulbul:v3 speaker
+    tts_soniox_voice: Adrian
 
 pi5_stt_node:
   ros__parameters:

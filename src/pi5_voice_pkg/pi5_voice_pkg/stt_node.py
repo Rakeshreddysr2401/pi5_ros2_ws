@@ -15,6 +15,16 @@ hey_rakhi training pending), so this runs the same "transcribe everything,
 gate on a name in the transcript" fallback mode VOICE_PIPELINE.md documents
 for when openWakeWord is unavailable — not a new design.
 
+Debug topics (added for live self-testing without SSH, 2026-09-04):
+  /voice/debug_vad         — published the instant VAD hands off an
+                              utterance, before transcription. If you speak
+                              and see nothing here, the problem is VAD/mic,
+                              not the STT provider.
+  /voice/debug_transcript  — the raw transcribed text, before the wake-alias
+                              gate, published for every utterance whether or
+                              not it ends up addressed to the robot. Watch
+                              this with `ros2 topic echo /voice/debug_transcript`.
+
 Transcription runs on a background worker thread, not inside the
 sounddevice audio callback. Found live 2026-09-04: a cloud provider's
 request timeout (8s) blocked the callback thread for the full 8s, and the
@@ -29,6 +39,7 @@ import os
 import queue
 import re
 import threading
+import traceback
 
 import numpy as np
 import rclpy
@@ -95,6 +106,8 @@ class STTNode(Node):
 
         self._input_pub = self.create_publisher(String, '/voice/user_input', 10)
         self._tts_stop_pub = self.create_publisher(String, '/voice/tts_stop', 10)
+        self._debug_vad_pub = self.create_publisher(String, '/voice/debug_vad', 10)
+        self._debug_transcript_pub = self.create_publisher(String, '/voice/debug_transcript', 10)
 
         self._ring: collections.deque = collections.deque(maxlen=PRE_PAD_FRAMES)
         self._utterance: list[bytes] = []
@@ -165,6 +178,8 @@ class STTNode(Node):
         self._ring.clear()
         if len(frames) < MIN_UTTERANCE_FRAMES:
             return
+        ms = len(frames) * FRAME_MS
+        self._debug_vad_pub.publish(String(data=f'utterance detected: {len(frames)} frames (~{ms}ms)'))
         pcm = np.frombuffer(b''.join(frames), dtype=np.int16).astype(np.float32) / 32768.0
         self._queue.put(pcm)  # hand off — never block the audio callback (see module docstring)
 
@@ -174,7 +189,10 @@ class STTNode(Node):
             try:
                 self._transcribe(pcm)
             except Exception:
-                self.get_logger().exception('transcribe worker failed')
+                # rclpy's logger has no .exception() (stdlib logging does) — this call itself
+                # used to raise AttributeError and kill the worker thread silently. Found live
+                # 2026-09-04 in the TTS-side twin of this bug (tts_node.py _play).
+                self.get_logger().error(f'transcribe worker failed\n{traceback.format_exc()}')
 
     def _transcribe(self, pcm: np.ndarray):
         try:
@@ -183,6 +201,7 @@ class STTNode(Node):
             self.get_logger().warning(f'{self._provider.name} failed ({e}); falling back to local')
             text = self._fallback.transcribe(pcm, SAMPLE_RATE)
         text = text.strip()
+        self._debug_transcript_pub.publish(String(data=text if text else '(empty — filtered as noise/silence)'))
         if not text:
             return
 

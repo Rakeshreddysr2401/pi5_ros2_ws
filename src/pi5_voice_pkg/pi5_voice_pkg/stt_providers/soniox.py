@@ -22,7 +22,7 @@ import numpy as np
 import websockets
 
 from .base import ProviderUnavailable, STTProvider
-from ._wav import pcm_to_wav_bytes
+from .._wav import pcm_to_wav_bytes
 
 WS_URL = 'wss://stt-rt.soniox.com/transcribe-websocket'
 TIMEOUT_S = 8.0

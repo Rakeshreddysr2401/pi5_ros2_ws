@@ -11,7 +11,7 @@ import numpy as np
 import requests
 
 from .base import ProviderUnavailable, STTProvider
-from ._wav import pcm_to_wav_bytes
+from .._wav import pcm_to_wav_bytes
 
 ENDPOINT = 'https://api.sarvam.ai/speech-to-text'
 TIMEOUT_S = 8.0
