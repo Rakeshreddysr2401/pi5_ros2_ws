@@ -20,3 +20,8 @@ __pycache__/
 
 # Other
 .DS_Store
+
+# Voice model weights (downloaded, not tracked — see langrobo_ros/models/README.md)
+src/langrobo_ros/models/**/*.onnx
+src/langrobo_ros/models/**/*.bin
+src/langrobo_ros/models/whisper/

@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pi5_voice_pkg</name>
+  <version>0.1.0</version>
+  <description>
+    CPU-only STT/TTS for the Pi5, active while the Jetson's ai_stack voice
+    role is off (i.e. while perception owns the Orin). Same /voice/* wire
+    protocol as the Jetson's voice_pkg — see langrobo_core/utils/speech_stream.py.
+  </description>
+  <maintainer email="sumanasomineni09@gmail.com">rakhi24</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

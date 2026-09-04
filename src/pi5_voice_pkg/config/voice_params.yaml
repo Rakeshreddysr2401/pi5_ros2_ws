@@ -1,0 +1,18 @@
+pi5_tts_node:
+  ros__parameters:
+    model_path: /home/rakhi24/ros2_ws/src/langrobo_ros/models/kokoro/kokoro-v1.0.onnx
+    voices_path: /home/rakhi24/ros2_ws/src/langrobo_ros/models/kokoro/voices-v1.0.bin
+    voice: af_heart
+    speed: 1.0
+    output_device: Blackwire
+    threads: 4
+
+pi5_stt_node:
+  ros__parameters:
+    input_device: Blackwire
+    model_size: base
+    model_dir: /home/rakhi24/ros2_ws/src/langrobo_ros/models/whisper
+    threads: 4
+    vad_aggressiveness: 2
+    wake_aliases: ["rakhi", "chotu", "hey pi"]
+    stop_words: ["stop"]
