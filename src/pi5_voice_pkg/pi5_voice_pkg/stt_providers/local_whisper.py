@@ -6,6 +6,8 @@ Measured on the Pi5 (Cortex-A76, 4 threads), 2026-09-04: base/int8, RTF ~0.75.
 Filters match VOICE_QUALITY.md's validated fix (see PI5_VOICE.md).
 """
 
+from collections.abc import Mapping
+
 import numpy as np
 from faster_whisper import WhisperModel
 
@@ -17,6 +19,16 @@ AVG_LOGPROB_MIN = -1.0
 
 class LocalWhisperProvider(STTProvider):
     name = "local"
+
+    @classmethod
+    def from_config(cls, params: dict, env: Mapping[str, str]) -> "LocalWhisperProvider":
+        # language/task are set by the node: 'en'/transcribe when local is the
+        # chosen provider, or src-lang/translate when local is the safety-net
+        # fallback behind a translating cloud provider (see stt_node).
+        return cls(
+            params['model_size'], params['model_dir'], params['threads'],
+            language=params.get('language', 'en'), task=params.get('task', 'transcribe'),
+        )
 
     def __init__(self, model_size: str, model_dir: str, threads: int,
                  language: str = 'en', task: str = 'transcribe'):

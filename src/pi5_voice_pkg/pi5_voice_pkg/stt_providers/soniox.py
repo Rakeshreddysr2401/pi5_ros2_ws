@@ -17,6 +17,7 @@ production.
 
 import asyncio
 import json
+from collections.abc import Mapping
 
 import numpy as np
 import websockets
@@ -30,6 +31,12 @@ TIMEOUT_S = 8.0
 
 class SonioxProvider(STTProvider):
     name = "soniox"
+
+    @classmethod
+    def from_config(cls, params: dict, env: Mapping[str, str]) -> "SonioxProvider":
+        return cls(api_key=env.get('SONIOX_API_KEY', ''),
+                   source_language=params['source_language'],
+                   target_language=params['target_language'])
 
     def __init__(self, api_key: str, source_language: str = 'te', target_language: str = 'en'):
         if not api_key:

@@ -3,11 +3,13 @@
 from .base import ProviderUnavailable, TTSProvider
 from .local_kokoro import LocalKokoroProvider
 from .sarvam import SarvamTTSProvider
+from .sarvam_translate import SarvamTranslateTTSProvider
 from .soniox import SonioxTTSProvider
 
 REGISTRY = {
     'local': LocalKokoroProvider,
     'sarvam': SarvamTTSProvider,
+    'sarvam_translate': SarvamTranslateTTSProvider,  # English text -> Telugu speech
     'soniox': SonioxTTSProvider,
 }
 

@@ -17,6 +17,7 @@ whatever rate you switch to is one this specific headset actually accepts.
 """
 
 import base64
+from collections.abc import Mapping
 
 import numpy as np
 import requests
@@ -30,6 +31,13 @@ TIMEOUT_S = 8.0
 
 class SarvamTTSProvider(TTSProvider):
     name = "sarvam"
+
+    @classmethod
+    def from_config(cls, params: dict, env: Mapping[str, str]) -> "SarvamTTSProvider":
+        # Sarvam wants BCP-47 with region (en-IN); the node param is just 'en'.
+        return cls(api_key=env.get('SARVAM_API_KEY', ''),
+                   language=f"{params['language']}-IN",
+                   speaker=params['sarvam_voice'])
 
     def __init__(self, api_key: str, language: str = 'en-IN', speaker: str = 'ritu'):
         if not api_key:

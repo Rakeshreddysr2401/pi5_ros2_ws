@@ -16,6 +16,8 @@ successfully) is. Soniox's docs list 24000 as a valid explicit choice —
 being explicit here avoids relying on whatever Soniox's own default is.
 """
 
+from collections.abc import Mapping
+
 import numpy as np
 import requests
 
@@ -28,6 +30,11 @@ TIMEOUT_S = 8.0
 
 class SonioxTTSProvider(TTSProvider):
     name = "soniox"
+
+    @classmethod
+    def from_config(cls, params: dict, env: Mapping[str, str]) -> "SonioxTTSProvider":
+        return cls(api_key=env.get('SONIOX_API_KEY', ''),
+                   language=params['language'], voice=params['soniox_voice'])
 
     def __init__(self, api_key: str, language: str = 'en', voice: str = 'Adrian'):
         if not api_key:

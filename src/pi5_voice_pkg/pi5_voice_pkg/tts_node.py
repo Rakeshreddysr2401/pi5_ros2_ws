@@ -44,10 +44,13 @@ class TTSNode(Node):
         self.declare_parameter('speed', 1.0)
         self.declare_parameter('output_device', 'Blackwire')
         self.declare_parameter('threads', 4)
-        self.declare_parameter('tts_provider', 'local')   # local | sarvam | soniox
+        self.declare_parameter('tts_provider', 'local')   # local | sarvam | sarvam_translate | soniox
         self.declare_parameter('tts_language', 'en')
         self.declare_parameter('tts_sarvam_voice', 'ritu')
         self.declare_parameter('tts_soniox_voice', 'Adrian')
+        # Only used by tts_provider=sarvam_translate (English text -> Telugu speech).
+        self.declare_parameter('tts_translate_from', 'en')
+        self.declare_parameter('tts_translate_to', 'te')
 
         model_path = self.get_parameter('model_path').value
         voices_path = self.get_parameter('voices_path').value
@@ -61,11 +64,21 @@ class TTSNode(Node):
         self._out_device = self._find_device(device_hint)
         self.get_logger().info(f'output device: {self._out_device}')
 
-        self._fallback = LocalKokoroProvider(model_path, voices_path, voice, speed, threads)
+        # One params dict handed to every provider's from_config(); each picks the keys it
+        # needs. Adding a provider touches only tts_providers/ — never this node.
+        params = {
+            'model_path': model_path, 'voices_path': voices_path, 'voice': voice,
+            'speed': speed, 'threads': threads, 'language': language,
+            'sarvam_voice': self.get_parameter('tts_sarvam_voice').value,
+            'soniox_voice': self.get_parameter('tts_soniox_voice').value,
+            'translate_from': self.get_parameter('tts_translate_from').value,
+            'translate_to': self.get_parameter('tts_translate_to').value,
+        }
+        self._fallback = LocalKokoroProvider.from_config(params, os.environ)
         self.get_logger().info('kokoro model loaded (fallback path)')
 
         self._provider = self._fallback if provider_name == 'local' else self._build_provider(
-            provider_name, language)
+            provider_name, params)
         self.get_logger().info(f'tts_provider = {self._provider.name}')
 
         self._speaking_pub = self.create_publisher(Bool, '/voice/tts_speaking', 10)
@@ -77,21 +90,13 @@ class TTSNode(Node):
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
 
-    def _build_provider(self, name: str, language: str):
+    def _build_provider(self, name: str, params: dict):
         cls = REGISTRY.get(name)
         if cls is None:
             self.get_logger().error(f'unknown tts_provider {name!r}; using local')
             return self._fallback
         try:
-            if name == 'sarvam':
-                return cls(api_key=os.environ.get('SARVAM_API_KEY', ''),
-                            language=f'{language}-IN',
-                            speaker=self.get_parameter('tts_sarvam_voice').value)
-            if name == 'soniox':
-                return cls(api_key=os.environ.get('SONIOX_API_KEY', ''),
-                            language=language,
-                            voice=self.get_parameter('tts_soniox_voice').value)
-            return cls()
+            return cls.from_config(params, os.environ)
         except ProviderUnavailable as e:
             self.get_logger().warning(f'{name} unavailable at startup ({e}); using local')
             return self._fallback

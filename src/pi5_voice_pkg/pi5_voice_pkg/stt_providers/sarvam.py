@@ -7,6 +7,8 @@ stt_node already batches one full utterance per call). See PI5_VOICE.md for
 the cost/latency comparison against Soniox that led to adding this.
 """
 
+from collections.abc import Mapping
+
 import numpy as np
 import requests
 
@@ -19,6 +21,12 @@ TIMEOUT_S = 8.0
 
 class SarvamProvider(STTProvider):
     name = "sarvam"
+
+    @classmethod
+    def from_config(cls, params: dict, env: Mapping[str, str]) -> "SarvamProvider":
+        # Sarvam wants BCP-47 with region (te-IN); the node param is just 'te'.
+        return cls(api_key=env.get('SARVAM_API_KEY', ''),
+                   source_language=f"{params['source_language']}-IN")
 
     def __init__(self, api_key: str, source_language: str = 'te-IN', model: str = 'saaras:v3'):
         if not api_key:

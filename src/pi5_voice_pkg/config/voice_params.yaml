@@ -10,10 +10,15 @@ pi5_tts_node:
     # (slower than real time); both cloud options publish sub-second/streaming
     # latency instead — this switch is about speed, not translation (that's the
     # STT side's reason). Same key/degrade rules as pi5_stt_node below.
+    # local | sarvam | sarvam_translate | soniox. 'sarvam_translate' takes
+    # English reply text and SPEAKS it in Telugu (translate -> TTS); see below.
     tts_provider: local
     tts_language: en
-    tts_sarvam_voice: ritu     # bulbul:v3 speaker
+    tts_sarvam_voice: ritu     # bulbul:v3 speaker (used by sarvam + sarvam_translate)
     tts_soniox_voice: Adrian
+    # Only used by tts_provider=sarvam_translate: source text language -> spoken language.
+    tts_translate_from: en
+    tts_translate_to: te
 
 pi5_stt_node:
   ros__parameters:

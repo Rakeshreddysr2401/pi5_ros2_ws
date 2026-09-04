@@ -89,19 +89,31 @@ class STTNode(Node):
 
         self._in_device = self._find_device(device_hint)
         self.get_logger().info(f'input device: {self._in_device}')
+        # [diag 2026-09-04] full enumeration — arecord and sounddevice number devices
+        # from different backends, so log the whole table to catch index drift.
+        self.get_logger().info('audio devices:\n' + '\n'.join(
+            f'  [{i}] in={d["max_input_channels"]:>2} {d["name"]!r}'
+            for i, d in enumerate(sd.query_devices())))
 
         self.get_logger().info(f'loading local whisper {model_size} (int8, {threads} threads)...')
+        # One params dict handed to every provider's from_config(); each picks the keys it
+        # needs. Adding a provider touches only stt_providers/ — never this node.
+        base_params = {
+            'model_size': model_size, 'model_dir': model_dir, 'threads': threads,
+            'source_language': src_lang, 'target_language': tgt_lang,
+        }
         # Fallback path when a cloud provider fails: same task/language intent as the primary
         # provider, so "degraded" still means "still tries to answer the same question".
         fallback_task = 'translate' if provider_name != 'local' and tgt_lang == 'en' and src_lang != 'en' else 'transcribe'
-        self._fallback = LocalWhisperProvider(
-            model_size, model_dir, threads,
-            language=src_lang if fallback_task == 'translate' else 'en', task=fallback_task,
+        self._fallback = LocalWhisperProvider.from_config(
+            {**base_params, 'task': fallback_task,
+             'language': src_lang if fallback_task == 'translate' else 'en'},
+            os.environ,
         )
         self.get_logger().info('local whisper loaded (fallback path)')
 
         self._provider = self._fallback if provider_name == 'local' else self._build_provider(
-            provider_name, src_lang, tgt_lang)
+            provider_name, base_params)
         self.get_logger().info(f'stt_provider = {self._provider.name}')
 
         self._input_pub = self.create_publisher(String, '/voice/user_input', 10)
@@ -113,6 +125,7 @@ class STTNode(Node):
         self._utterance: list[bytes] = []
         self._in_speech = False
         self._silence_run = 0
+        self._dbg_frames = 0  # [diag 2026-09-04] audio-callback heartbeat counter
 
         self._queue: queue.Queue = queue.Queue()
         self._worker = threading.Thread(target=self._worker_loop, daemon=True)
@@ -125,19 +138,13 @@ class STTNode(Node):
         )
         self._stream.start()
 
-    def _build_provider(self, name: str, src_lang: str, tgt_lang: str):
+    def _build_provider(self, name: str, params: dict):
         cls = REGISTRY.get(name)
         if cls is None:
             self.get_logger().error(f'unknown stt_provider {name!r}; using local')
             return self._fallback
         try:
-            if name == 'sarvam':
-                return cls(api_key=os.environ.get('SARVAM_API_KEY', ''),
-                            source_language=f'{src_lang}-IN')
-            if name == 'soniox':
-                return cls(api_key=os.environ.get('SONIOX_API_KEY', ''),
-                            source_language=src_lang, target_language=tgt_lang)
-            return cls()
+            return cls.from_config(params, os.environ)
         except ProviderUnavailable as e:
             self.get_logger().warning(f'{name} unavailable at startup ({e}); using local')
             return self._fallback
@@ -151,9 +158,18 @@ class STTNode(Node):
 
     def _on_audio(self, indata, frames, time_info, status):
         if status:
-            self.get_logger().debug(f'input status: {status}')
+            # [diag 2026-09-04] was .debug() — ALSA input-overflow was invisible at the
+            # default level. If the callback is starved (e.g. whisper pegging all cores),
+            # dropped frames show up here and VAD silently sees nothing.
+            self.get_logger().warning(f'input status: {status}')
         frame = indata[:, 0].tobytes()
         voiced = self._vad.is_speech(frame, SAMPLE_RATE)
+        # [diag 2026-09-04] ~1s heartbeat proving the callback fires and whether VAD ever
+        # classifies voice. Remove once the VAD-silence issue is closed (see TODO.md).
+        self._dbg_frames += 1
+        if self._dbg_frames % 33 == 0:
+            self.get_logger().info(
+                f'[diag] frames={self._dbg_frames} voiced={voiced} in_speech={self._in_speech}')
 
         if not self._in_speech:
             self._ring.append(frame)
