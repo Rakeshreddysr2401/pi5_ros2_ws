@@ -133,18 +133,35 @@ playback before any ROS code was involved.
 `/voice/robot_speech` through the actual node — audible output, correct
 `/voice/tts_speaking` true→false transition around `<|eou|>`.
 
-✅ **STT pipeline logic verified.** VAD triggers on real audio, whisper
-transcribes, the confidence filter and wake-alias gate both correctly
-*reject* bad input — tested against ambient noise (silently dropped) and a
-Whisper hallucination on weak/reverberant round-trip audio ("Thank you very
-much." — the exact failure mode VOICE_QUALITY.md documents for a mic that
-isn't close-talk). No false publish to `/voice/user_input` in either case.
+✅ **STT reached a real human voice once, genuinely end-to-end.** "Rakhi,
+ఇవాళ టైమ్ ఎంత" spoken into the actual headset → VAD → (Sarvam timed out) →
+local-fallback translate → "what is the time today" → `/voice/user_input` →
+`agent_node` picked it up and started a turn. This is the one and only real
+(non-bounced-audio) test run so far, and it worked. See TODO.md for what
+happened on every attempt after it.
 
-❌ **True wake-word recognition — not yet tested.** Every STT test so far
-was a speaker bounced across a room into a close-talk boom mic (the Blackwire
-is built for a mouth a few cm away, not room pickup) — an artificial,
-worst-case test that can't validate a real "Rakhi, ..." said close to the
-mic. See TODO.md.
+🟡 **STT is currently unreliable on repeat attempts — open, unexplained.**
+After that first success, no further utterance (several tries) has
+triggered VAD at all, despite `arecord` on the same hardware confirming real
+signal reaches the mic every time. Not yet root-caused; TODO.md has the
+elimination steps taken so far (raw capture fine, `pw-record` tool itself is
+a red herring, the threading fix below didn't fix it either) and the next
+diagnostic steps. **Don't treat this as "STT works" yet — treat it as "STT
+worked once and needs its flakiness explained before it's trustworthy."**
+
+🐛 **Found and fixed: `_transcribe()` was blocking the audio callback
+thread.** The one live Sarvam attempt timed out after 8s — that 8s ran
+*inside* the sounddevice/PortAudio callback, which can stall or corrupt the
+input stream if a callback doesn't return promptly. Fixed (commit
+`3f3395b`): `_on_audio` now only does VAD + framing; a background worker
+thread does the actual `transcribe()` call. Confirmed this wasn't the whole
+story, though — the VAD-silence issue above recurred on a freshly-launched
+node after the fix.
+
+❌ **Sarvam's own success path — still unconfirmed.** The only live attempt
+against Sarvam timed out; the correctness of a real 2xx response was never
+observed, only the fallback path. Soniox has never been reached at all (no
+key yet).
 
 ---
 

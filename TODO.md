@@ -1,43 +1,84 @@
 # TODO — pending on-device work
 
+## OUTSTANDING 2026-09-04: STT — one real utterance worked, then VAD went silent
+
+Full writeup in PI5_VOICE.md. Summary of today's live testing, in order:
+
+1. **First real utterance ("Rakhi, ఇవాళ టైమ్ ఎంత") worked end-to-end**,
+   through the actual mic, actual VAD, actual `agent_node`: Sarvam itself
+   timed out (`ConnectTimeoutError`, 8s) but the fallback caught it cleanly
+   and local Whisper translated it correctly — "what is the time today" —
+   published to `/voice/user_input`, picked up by `agent_node`, which then
+   hit a *separate* pre-existing issue (Mac Mini LLM unreachable) and
+   degraded correctly (spoke the offline apology, didn't crash).
+
+2. **Diagnosed why Sarvam itself timed out despite fine connectivity**
+   (`curl` to the same endpoint from the same box: 0.19s) — the blocking
+   8s network call was running **inside the sounddevice audio callback
+   thread**, which can stall/corrupt the PortAudio stream if a callback
+   doesn't return promptly. Fixed (commit `3f3395b`): `_on_audio` now only
+   does VAD + framing; a background worker thread does the actual
+   `transcribe()` call via a queue handoff.
+
+3. **After the fix, deployed and relaunched clean — but no utterance since
+   has triggered VAD at all**, not even a fallback/reject log line, across
+   several attempts. Isolated step by step:
+   - Raw `arecord` on the same hardware, run *between* attempts, captured
+     clear real speech (RMS jumped from ~15–90 ambient to 422 mid-utterance,
+     max amplitude 3075/32767) — **the mic and ALSA path are fine.**
+   - `pw-record` against the same PipeWire source produced empty (44-byte,
+     header-only) files on every attempt — but this is very likely a
+     `pw-record` tool issue, not signal — the ALSA-level test above
+     confirms real signal reaches the hardware layer fine, so this is a
+     red herring, not the STT node's problem.
+   - The threading fix (#2) did **not** resolve this — it recurred on a
+     freshly-launched node, ruling out "stale/corrupted stream from the
+     earlier stall" as the sole explanation.
+   - `--log-level debug` on `stt_node` produced nothing per-attempt either
+     — but `_on_audio` has no per-frame logging today, so this doesn't
+     distinguish "callback never fires" from "callback fires, VAD just
+     never classifies it as voiced" from "captures the wrong device
+     silently." No conclusion reached; ran out of synchronous back-and-forth
+     time to keep isolating live.
+
+**Next step, in order of cheapest-first:**
+- Add temporary logging in `_on_audio` — log `voiced` and a running
+  frame-count once, or on every Nth frame, to see whether the callback is
+  even firing during a real attempt (rules callback-not-firing in/out).
+- If it's firing but never `voiced`: try `vad_aggressiveness: 0` or `1`
+  (currently 2) — webrtcvad's classifier can reject a speaker/mic gain
+  combination even at moderate settings; the round-trip test earlier today
+  (weaker signal, RMS ~68) *did* trigger VAD, so a strong live-speech signal
+  (RMS ~422) failing to trigger is the specific thing to explain.
+- Confirm `_find_device` is resolving to the same index run over run — log
+  `sd.query_devices()` in full at startup, not just the matched index,
+  since `arecord -l` numbering and `sd.query_devices()` numbering come from
+  different enumerations and could silently drift.
+- Once real speech round-trips reliably, retest Sarvam specifically (only
+  one attempt has actually reached it, and that one timed out) and Soniox
+  (never reached at all — no key yet, see below).
+
+Delete this section once a real Telugu utterance reliably reaches
+`/voice/user_input` on repeat attempts, not just once.
+
 ## OUTSTANDING 2026-09-04: Soniox STT provider needs a real API key to verify
 
 `stt_providers/soniox.py` (PI5_VOICE.md has the design + why) is written
 against the published WebSocket docs but never run against a real session —
-no key available yet. Sarvam's REST path is lower-risk (simple POST, fetched
-straight from current docs) but also unverified live. Both correctly degrade
-to local when no key is set (verified: `sarvam unavailable at startup (...
-not set); using local` / same for soniox — neither crashes, neither goes
-silent).
+no key available yet, and blocked on the VAD issue above anyway. Sarvam's
+REST path is lower-risk (simple POST, fetched straight from current docs)
+and reached the network successfully once (timed out, but connected and got
+a real response back from `curl` independently) — still needs one actual
+2xx response to call it verified. Both correctly degrade to local when no
+key is set (verified for both: `<provider> unavailable at startup (... not
+set); using local`).
 
-**Next step:** get `SARVAM_API_KEY` and/or `SONIOX_API_KEY` into `~/ros2_ws/.env`,
-set `stt_provider: sarvam` (or `soniox`) in `voice_params.yaml`, restart, say
-something in Telugu, check `/voice/user_input` for a clean English
-translation. For Soniox specifically, watch the log for whether the
+**Next step:** once the VAD issue above is fixed, retry with `stt_provider:
+sarvam`, watch for a real transcript vs. another timeout/fallback. For
+Soniox specifically, once a key exists, watch the log for whether the
 token-joining in `_run()` produces correctly-spaced text — that logic is
 unverified. Delete this section once one real Telugu utterance round-trips
-correctly through at least one cloud provider.
-
-## OUTSTANDING 2026-09-04: pi5_voice_pkg needs a live mic test
-
-Built and wired today (commit `1eaa106`, PI5_VOICE.md has the full writeup):
-CPU-only STT (`faster-whisper` base/int8, measured RTF ~0.75 — faster than
-real time) + TTS (`kokoro-onnx` fp32, RTF ~1.8) on the Pi5's own Blackwire
-C3220 headset, publishing the exact same `/voice/*` wire protocol the
-Jetson's `stt_node`/`tts_node` use — `agent_node`'s `_on_user_input` needed
-zero changes, it already subscribes to that topic name.
-
-Verified end-to-end EXCEPT true wake-word recognition:
-- TTS: real audio out the Blackwire speaker, `/voice/tts_speaking` correctly
-  flips true→false around the `<|eou|>` marker. Confirmed working.
-- STT: VAD → whisper → confidence filter → wake-alias gate all run and
-  correctly reject noise ('.  .  .  .') and a Whisper hallucination ("Thank
-  you very much.") rather than false-publishing to `/voice/user_input`. But
-  the only inputs tried were a speaker bounced across a room into a
-  close-talk boom mic (the worst case VOICE_QUALITY.md already warns about)
-  — nobody has said a real wake phrase into the headset yet.
-
-**Next step:** wear the headset, say "Rakhi, &lt;anything&gt;" close to the mic,
+correctly through at least one cloud provider (not the fallback).
 confirm `/voice/user_input` gets a clean transcript. Delete this section
 once that's done and the wake_aliases list (`rakhi`/`chotu`/`hey pi` —
 config/voice_params.yaml) has been tuned against a few real tries.
