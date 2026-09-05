@@ -46,10 +46,20 @@ Wire protocol (must match `speech_stream.py` / the Jetson's tts_node exactly):
 | `/voice/robot_speech` | `std_msgs/String`, one sentence per message, utterance closed by a message whose data is exactly `<\|eou\|>` | `agent_node` → `pi5_tts_node` |
 | `/voice/tts_speaking` | `std_msgs/Bool` | `pi5_tts_node` → `agent_node` (true from first chunk to EOU) |
 | `/voice/tts_stop` | `std_msgs/String` | `pi5_stt_node` → both (stop-word barge-in) |
+| `/voice/stt_meta` | `std_msgs/String` (JSON) | `pi5_stt_node` → `agent_node` — cost of the transcription that produced the next `/voice/user_input`: provider actually used, `fell_back`, latency, audio ms, RTF. **Observational only** |
+| `/voice/tts_meta` | `std_msgs/String` (JSON) | `pi5_tts_node` → `agent_node` — same for each synthesised sentence. **Observational only** |
 
 `agent_node._on_user_input` needed **zero changes** — it already subscribes
 to `/voice/user_input` by name; this package is just a second publisher on
 the same topic, running on the same machine.
+
+The two `_meta` topics are an addition, not a protocol change: the Jetson's
+`speech_vision` nodes don't publish them and never need to. agent_node treats
+them as optional (missing → the turn just traces without the voice legs), so
+the two repos stay compatible without a coordinated change. They carry cost
+only — a character count, never the transcript or the spoken text (that is
+already on `/voice/debug_transcript` and `/voice/robot_speech`). They exist to
+feed the LangSmith trace of a turn — see OPERATIONS.md § LangSmith tracing.
 
 ---
 

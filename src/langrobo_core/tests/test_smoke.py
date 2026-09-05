@@ -39,7 +39,7 @@ def test_graph_builds_with_all_agents():
 
 
 def test_registry_covers_all_routable_agents():
-    from langrobo_core.graph.registry import AGENTS
+    from langrobo_core.registry import AGENTS
     # supervisor routes; it is not itself a routing target in the registry
     assert set(AGENTS) == EXPECTED_AGENTS - {"supervisor"}
     for name, meta in AGENTS.items():
@@ -165,3 +165,20 @@ def test_music_tools_against_stub():
     assert "NOW PLAYING" in music_context()
     assert "stopped" in stop_music.invoke({}).lower()
     assert music_context() == ""
+
+
+def test_agents_package_imports_before_the_graph():
+    """`import langrobo_core.agents` must work on its own.
+
+    agents/ must never import graph/ — the graph imports the agents. A single
+    type annotation reaching the other way (agents.supervisor -> graph.state)
+    made this exact import blow up with a partially-initialised module, and it
+    only showed when something imported the agents package first.
+    """
+    import subprocess
+    import sys
+    subprocess.run(
+        [sys.executable, "-c",
+         "import langrobo_core.agents as a; assert a.NODES and a.BUILD_LLM_CALLS"],
+        check=True,
+    )

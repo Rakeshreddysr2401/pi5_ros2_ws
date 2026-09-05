@@ -94,21 +94,32 @@ pip3 install --break-system-packages -r requirements.txt
 
 ## Layout (detail in ARCHITECTURE.md)
 
-- `langrobo_core/graph/` — topology (build.py), routing registry, handover
-  resolution + loop guards
+- `langrobo_core/graph/` — topology (build.py, derived entirely from
+  registry.py), handover resolution + loop guards
 - `langrobo_core/fastpath.py` — deterministic movement lane: exact spoken
   movement commands ("stop", "come here", "go near the chair", "forward 30")
   execute tools directly with ZERO LLM calls (agent_node hook, `fast_path`
   param, default on); anything ambiguous falls through to the graph
-- `langrobo_core/prompts.py` — EVERY system prompt (agents + background jobs);
-  agents append only dynamic blocks (household, now-playing, date) in-module
-- `langrobo_core/agents/` — one module per agent (node fn + context assembly)
+- `langrobo_core/prompts.py` — EVERY system prompt (agents + background jobs).
+  `SPEECH_STYLE` (inside PERSONA) is the ONE spoken-output contract — reply
+  length, no-markdown, how numbers are read — don't restate it per agent.
+  Tool lists are NOT hand-written: prompts carry a `{tools}` placeholder that
+  `render_tools()` fills from the bound tool set. Dynamic blocks (household,
+  now-playing, date) append at the END via the spec's `context` callable
+- `langrobo_core/registry.py` — ONE `AgentSpec` per agent (routing copy, prompt,
+  tool set, sticky/keep_images/mcp flags). Adding an agent = a name in
+  `agent_ids.py` + a spec here; graph, handover grammar and supervisor routing
+  table all derive from it
+- `langrobo_core/agents/` — `factory.py` builds every agent node from its spec;
+  `supervisor.py` is the only hand-written node (forced tool_choice)
 - `langrobo_core/tools/` — @tool functions; per-agent sets in `__init__.py`;
   robot I/O via `_bridge.get()`
 - `langrobo_core/services/` — config (validated .env), llm (slots + fallback),
   mcp (remote MCP provider registry: Swiggy food/instamart/dineout + token
   lifecycle — future MCPs are one ProviderSpec + the add-an-agent recipe),
-  memory (embedded Qdrant + fastembed), consolidation (nightly episodic→facts,
+  memory (embedded Qdrant + fastembed), world_model (WHERE things are —
+  persistent map-frame object positions, multi-instance, feeds where_is +
+  approach_object), consolidation (nightly episodic→facts,
   local model only), knowledge (document ingest for the knowledge agent),
   briefing (once-daily scheduler), watch (armed person-detection alerts →
   Telegram), telegram (channel: long-poll + sends),
@@ -119,8 +130,10 @@ pip3 install --break-system-packages -r requirements.txt
   studio_voice_node (dev-mode voice ↔ `langgraph dev`, see OPERATIONS.md),
   ros2_bridge (all topics/services/actions), launch, systemd units
 
-Adding an agent/tool: recipes at the bottom of ARCHITECTURE.md (registry +
-build.py + handover Literal must stay in sync — the smoke tests catch drift).
+Adding an agent/tool: recipes at the bottom of ARCHITECTURE.md. `agent_ids.py`
++ `registry.py` are the only files to touch; `registry.py` asserts they agree at
+import, and `tests/test_prompt_contract.py` fails if a prompt and its tool set
+drift.
 
 ## Config split
 
@@ -129,6 +142,7 @@ build.py + handover Literal must stay in sync — the smoke tests catch drift).
 - `.env` (validated fail-fast at startup) — keys + LANGROBO_* service settings;
   full table in OPERATIONS.md; template in example.env
 - Robot state lives in `~/.langrobo/` (household.json, reminders.json,
+  world_model.json (seen objects — survives restarts, like locations.json),
   errands.json, qdrant/, telegram_offset, telegram_deferred.json, watch.json,
   consolidation.json)
 

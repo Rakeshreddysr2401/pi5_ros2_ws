@@ -178,6 +178,18 @@ class WatchConfig:
 
 
 @dataclass(frozen=True)
+class WorldModelConfig:
+    """Where the robot has seen things (services/world_model.py). Persistent,
+    like locations.json — a restart must not make the robot forget the chair
+    it has been looking at all day."""
+    enabled: bool = True
+    state_path: str = "~/.langrobo/world_model.json"
+    merge_radius_m: float = 0.6    # closer than this = the same object seen again
+    max_instances: int = 8         # per label; least-recently-seen is evicted
+    save_interval_s: float = 30.0  # detections arrive at several Hz; this boots off SD
+
+
+@dataclass(frozen=True)
 class ConsolidationConfig:
     """Nightly memory consolidation (services/consolidation.py): distill new
     episodic turns into durable facts, locally. Runs only when the robot is
@@ -216,6 +228,7 @@ class Settings:
     health: HealthConfig = field(default_factory=lambda: HealthConfig(True, "0.0.0.0", 8090))
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     watch: WatchConfig = field(default_factory=WatchConfig)
+    world_model: WorldModelConfig = field(default_factory=WorldModelConfig)
     consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
     briefing: BriefingConfig = field(default_factory=BriefingConfig)
     log_json: bool = True
@@ -289,6 +302,14 @@ def load_settings() -> Settings:
         min_confidence=_float_env("LANGROBO_WATCH_MIN_CONF", 0.5, 0.0, 1.0),
     )
 
+    # ── World model (where objects are) ───────────────────────────────────
+    world_model = WorldModelConfig(
+        enabled=_bool_env("LANGROBO_WORLD_MODEL", True),
+        state_path=os.getenv("LANGROBO_WORLD_MODEL_PATH",
+                             "~/.langrobo/world_model.json").strip(),
+        merge_radius_m=_float_env("LANGROBO_WORLD_MERGE_RADIUS_M", 0.6, 0.05, 5.0),
+    )
+
     # ── Memory consolidation ──────────────────────────────────────────────
     consolidation = ConsolidationConfig(
         enabled=_bool_env("LANGROBO_CONSOLIDATION", True),
@@ -307,6 +328,7 @@ def load_settings() -> Settings:
         health=health,
         telegram=telegram,
         watch=watch,
+        world_model=world_model,
         consolidation=consolidation,
         briefing=briefing,
         log_json=_bool_env("LANGROBO_LOG_JSON", True),

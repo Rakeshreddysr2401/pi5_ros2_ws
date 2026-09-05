@@ -1,7 +1,12 @@
 """Supervisor — pure router. Always calls handover(), never responds to the user.
 
+Nothing under agents/ imports graph/: the graph imports the agents, and a type
+annotation reaching back the other way made `import langrobo_core.agents`
+before `langrobo_core.graph` fail with a partially-initialised module. State is
+annotated as the plain dict langgraph actually hands the node.
+
 Prompt lives in langrobo_core/prompts.py (SUPERVISOR_PROMPT_TEMPLATE); the
-agent list is filled in from graph/registry.py at call time.
+agent list is filled in from registry.py at call time.
 """
 
 import logging
@@ -10,10 +15,9 @@ from langchain_core.messages import AIMessage, SystemMessage
 
 from ..services.llm import get_llm, strict_tools_enabled
 from ..prompts import SUPERVISOR_PROMPT_TEMPLATE
-from ..graph.state import AgentState
 from ..tools.handover import handover, HANDOVER_NAMES
 from ..utils.message_utils import prepare_messages_for_agent, safe_invoke
-from ..graph.registry import build_supervisor_agent_list
+from ..registry import build_supervisor_agent_list
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +47,7 @@ def build_llm_call(messages: list):
     return llm, [SystemMessage(content=_get_prompt())] + clean
 
 
-def supervisor_node(state: AgentState) -> dict:
+def supervisor_node(state: dict) -> dict:
     llm, msgs = build_llm_call(state["messages"])
     response = safe_invoke(llm, msgs, logger, agent="supervisor")
     # Strip stray text and deduplicate — supervisor emits exactly one handover call

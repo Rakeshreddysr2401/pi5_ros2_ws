@@ -82,10 +82,14 @@ class ROS2Bridge:
 
         # ── 3D object detections (Jetson detections_3d node, D555 depth) ──────
         # /vision/detections_3d JSON: {"frame":"map","objects":[{"label","x","y",
-        # "z","conf"}, ...]}. Cached per label with THIS machine's receive time
-        # (Pi5↔Jetson clocks drift ~1.5s — never compare their wall clocks).
-        self._det_lock = threading.Lock()
-        self._detections: dict[str, dict] = {}   # label → {x,y,z,conf,at}
+        # "z","conf"}, ...]}. Stamped on RECEIPT here, so the Pi5↔Jetson clock
+        # drift (~1.5s, CLAUDE.md gotcha) never enters an age comparison.
+        #
+        # The positions themselves live in services/world_model.py (persistent,
+        # multi-instance) — the bridge only feeds it. Reads go straight to that
+        # service, not through here: this class is the live robot-I/O seam
+        # (topics, poses, actions), and durable state belongs to a service, the
+        # way memory/watch/telegram already do.
 
         # Commanded pan/tilt (open-loop; servos settle in ~0.3s). Kept so tools
         # can re-centre and report the current aim without a state topic.
@@ -204,19 +208,22 @@ class ROS2Bridge:
             return
         if data.get("frame", "map") != "map":
             return
-        now = time.monotonic()
-        with self._det_lock:
-            for obj in objects:
-                label = str(obj.get("label", "")).lower().strip()
-                if not label:
-                    continue
-                self._detections[label] = {
-                    "x": float(obj.get("x", 0.0)),
-                    "y": float(obj.get("y", 0.0)),
-                    "z": float(obj.get("z", 0.0)),
-                    "conf": float(obj.get("conf", 0.0)),
-                    "at": now,
-                }
+        from langrobo_core.services import world_model
+        world = world_model.get()
+        for obj in objects:
+            label = str(obj.get("label", "")).lower().strip()
+            if not label:
+                continue
+            try:
+                world.observe(
+                    label,
+                    float(obj.get("x", 0.0)),
+                    float(obj.get("y", 0.0)),
+                    float(obj.get("z", 0.0)),
+                    float(obj.get("conf", 0.0)),
+                )
+            except (TypeError, ValueError):
+                continue          # one malformed object must not drop the batch
 
     # ── Cached reads (worker thread) ──────────────────────────────────────
 
@@ -262,41 +269,6 @@ class ROS2Bridge:
             json.dump({k: list(v) for k, v in self._saved_locations.items()}, f, indent=2)
 
     # ── 3D detections (Jetson detections_3d node — D555 depth pipeline) ───
-
-    def get_detected_object(self, label: str, max_age_s: float = 3.0) -> dict | None:
-        """Freshest map-frame detection for `label` ({x,y,z,conf,age_s}), or
-        None if never seen or older than max_age_s. Age uses receive time on
-        THIS machine, so Pi5↔Jetson clock drift doesn't matter."""
-        now = time.monotonic()
-        with self._det_lock:
-            det = self._detections.get(label.lower().strip())
-            if det is None:
-                return None
-            age = now - det["at"]
-            if age > max_age_s:
-                return None
-            return {**det, "age_s": age}
-
-    def get_detected_objects(self, max_age_s: float = 5.0) -> dict:
-        """All labels seen within max_age_s → {label: {x,y,z,conf,age_s}}."""
-        now = time.monotonic()
-        with self._det_lock:
-            return {
-                label: {**det, "age_s": now - det["at"]}
-                for label, det in self._detections.items()
-                if now - det["at"] <= max_age_s
-            }
-
-    def get_last_seen_object(self, label: str) -> dict | None:
-        """Last known map-frame position for `label` regardless of age
-        ({x,y,z,conf,age_s}) — the world-model fallback for "go near the chair"
-        when the chair isn't in view right now."""
-        now = time.monotonic()
-        with self._det_lock:
-            det = self._detections.get(label.lower().strip())
-            if det is None:
-                return None
-            return {**det, "age_s": now - det["at"]}
 
     # ── Camera pan/tilt (ESP32 dual servo + Jetson TF mirror) ─────────────
 

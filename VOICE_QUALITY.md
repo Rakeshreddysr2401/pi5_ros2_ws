@@ -14,6 +14,34 @@ far-field mic array**, **server-scale models**, and aggressive
 gap locally — but the order matters: **microphone first, model second,
 parameters third.** No model fixes bad audio in.
 
+## 0. UPDATE 2026-09-05 — the current Pi5 config undercuts §1
+
+This document was written against the **Jetson** voice stack. Voice now runs on
+the Pi5 (`pi5_voice_pkg`, PI5_VOICE.md), and the live config changes the
+microphone conclusion below in a way §1 does not cover:
+
+`src/pi5_voice_pkg/config/voice_params.yaml` sets `bt_profile: hfp` for the
+boAt Stone on BOTH nodes. HFP is the Bluetooth *call* profile: the mic comes
+back at **8-16 kHz narrowband**, which is worse input than the earphone §1
+already blames — `stt_node.py`'s own docstring flags it ("Whisper accuracy
+drops"). It is deliberate (the comment reads "Stone mic in use; a2dp would
+kill it"), so it is a trade, not a bug: one device for both legs, at the cost
+of the band the recogniser needs most.
+
+If STT accuracy is the thing that hurts, this is the first lever, ahead of
+every model change below: keep the Stone on **a2dp** (speaker only, full
+quality) and put a **separate USB mic** on the Pi5 — a ReSpeaker array or a
+USB speakerphone, exactly as §1 recommends. Then `input_device` points at the
+USB mic and `output_device`/`bt_mac` keep the Stone.
+
+Second lever, same file: `wake_detector: transcript_alias` with
+`stt_provider: sarvam`. The acoustic wake word is implemented
+(`wake/openwakeword_detector.py`) but switched OFF, so **every** utterance in
+the room is transcribed by a cloud provider — the config's own comment calls
+out the cost/privacy consequence. Turning on `wake_detector: openwakeword`
+means nothing leaves the house until the wake word is heard, and it removes
+the whole class of "the robot answered something it overheard".
+
 ## 1. The microphone is 70% of it (your earphone mic is the problem)
 
 An earphone mic is designed for a mouth 5 cm away. Across a room it delivers

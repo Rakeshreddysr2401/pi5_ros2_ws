@@ -10,6 +10,7 @@ as a ToolMessage error and the LLM can respond gracefully.
 """
 
 import logging
+import math
 import os
 import threading
 
@@ -25,7 +26,6 @@ class StubBridge:
         self._nav_done_callback = None
         self._system_turn_callback = None
         self.system_turns: list[str] = []   # tests inspect what was enqueued
-        self.detections: dict = {}          # tests seed {label: {x,y,z,conf,age_s}}
         logger.info("StubBridge initialised (no ROS2 — all publishes are logged)")
 
     # ── Self-initiated turns ──────────────────────────────────────────────
@@ -66,7 +66,10 @@ class StubBridge:
         return 0.0 if self.get_frame() is not None else None
 
     def get_current_pose(self):
-        return (0.0, 0.0, 0.0)
+        # Settable so tests can reach the no-localisation branch: the real
+        # bridge returns None when TF has no map->base_link fix, and tools are
+        # required to stay honest about that rather than invent a direction.
+        return getattr(self, "pose", (0.0, 0.0, 0.0))
 
     def add_known_location(self, name, x, y, yaw_deg):
         self._known_locations = getattr(self, "_known_locations", {})
@@ -83,22 +86,6 @@ class StubBridge:
         # approach loop holds still and exits instead of hanging.
         logger.info("[STUB] get_target_result -> None")
         return None
-
-    # ── 3D detections (depth pipeline) ────────────────────────────────────
-    # Tests seed `detections` directly: {label: {x,y,z,conf,age_s}}.
-
-    def get_detected_object(self, label: str, max_age_s: float = 3.0) -> dict | None:
-        det = self.detections.get(label.lower().strip())
-        if det is None or det.get("age_s", 0.0) > max_age_s:
-            return None
-        return det
-
-    def get_detected_objects(self, max_age_s: float = 5.0) -> dict:
-        return {k: v for k, v in self.detections.items()
-                if v.get("age_s", 0.0) <= max_age_s}
-
-    def get_last_seen_object(self, label: str) -> dict | None:
-        return self.detections.get(label.lower().strip())
 
     # ── Camera pan/tilt ───────────────────────────────────────────────────
 

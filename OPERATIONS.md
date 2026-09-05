@@ -202,6 +202,9 @@ not here.
 | `LANGROBO_WATCH` | `false` disables home watch mode entirely |
 | `LANGROBO_WATCH_COOLDOWN_S` | Min seconds between watch alerts (default 60) |
 | `LANGROBO_WATCH_MIN_CONF` | Person-detection confidence floor (default 0.5) |
+| `LANGROBO_WORLD_MODEL` | `false` makes the object map memory-only (forgotten on restart) |
+| `LANGROBO_WORLD_MODEL_PATH` | Where seen-object positions persist (default `~/.langrobo/world_model.json`) |
+| `LANGROBO_WORLD_MERGE_RADIUS_M` | Two sightings closer than this are the same object (default 0.6) |
 | `LANGROBO_CONSOLIDATION` | `false` disables nightly memory consolidation |
 | `LANGROBO_CONSOLIDATION_HOUR` | Local hour the nightly run becomes eligible (default 3) |
 | `LANGROBO_BRIEFING_HOUR` | Set (e.g. `8`) to enable the daily spoken morning briefing — unset = off |
@@ -289,6 +292,44 @@ boot. Inbound is rate-limited to 10 msg/min per sender. `/status` shows the
 `telegram` block (`polling`, `last_poll_age_s`, `last_error`) and
 `queued_telegram_messages`. Privileged sends are auditable:
 `journalctl -u langrobo-brain -o cat | grep "AUDIT telegram"`.
+
+## LangSmith tracing
+
+Off by default. Turn it on with **both** `LANGROBO_TRACING=true` and a
+`LANGSMITH_API_KEY` in `.env` (either alone → `services/config.sanitize_tracing_env`
+scrubs the tracing vars, which is what keeps a stale key from spamming a 403 on
+every LLM call). `LANGCHAIN_PROJECT` names the project in the UI. Restart the
+brain to pick it up.
+
+What a turn looks like in the UI:
+
+| | |
+|---|---|
+| Run name | `turn:voice` / `turn:telegram` / `turn:system`, or `fastpath:voice` for the zero-LLM movement lane |
+| Tags | `channel:<voice\|telegram\|system>`, `entry:<agent>` |
+| Tree | `turn_entry → <agent> → <agent>_tools → …`, one child chat-model run per LLM call, tool runs underneath |
+| Metadata | `trace_id`, `channel`, `entry_agent`, `sticky_agent`, `llm_provider`, `llm_base_url`, `llm_primary_available`, `llm_fallback`; Telegram turns add `sender_name`/`sender_role`/`telegram_photo`; voice turns add `stt_*` (provider, `fell_back`, latency, RTF) |
+| Sibling runs | `tts:<provider>` — one per synthesised sentence, carrying the same `trace_id` |
+
+`trace_id` is the join key across all three observability surfaces for one turn:
+the LangSmith runs, `journalctl -u langrobo-brain -f -o cat` (every JSON log line
+carries it), and the `/diag/timing` waterfall (`scripts/latency_replay.py`).
+
+Useful filters (Filters → Metadata in the UI picks key/value from a dropdown;
+the raw query equivalents are below):
+
+| Question | Raw filter |
+|---|---|
+| Only turns that came in over Telegram | `has(tags, "channel:telegram")` |
+| Turns the Mac Mini missed, answered by the cloud fallback | `and(eq(metadata_key, "llm_primary_available"), eq(metadata_value, "false"))` |
+| Turns where cloud STT failed and local Whisper silently took over (no Telugu→English translation on those) | `and(eq(metadata_key, "stt_fell_back"), eq(metadata_value, "true"))` |
+| Every leg of one turn — STT metadata, the LLM run, each spoken sentence | `and(eq(metadata_key, "trace_id"), eq(metadata_value, "<id>"))` |
+| Hide the KV-cache prefills (two per turn, `cache_warm:chat` / `cache_warm:supervisor` — full prompt, no answer) | `-has(tags, "cache_warm")` |
+
+Cost: LangSmith batches uploads on a background thread, so the turn path does not
+wait on the network. It does ship conversation content (prompts, replies, camera
+images that entered the context) to LangSmith — leave it off unless you are
+debugging.
 
 ## Deploy checklist (Pi5 + Jetson protocol change)
 

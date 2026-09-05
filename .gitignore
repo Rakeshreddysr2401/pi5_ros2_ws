@@ -16,6 +16,13 @@ __pycache__/
 
 # LangGraph Studio
 .env
+# Dated backups of .env hold the same live keys the rule above protects
+# (a `cp .env .env.bak.$(date +%F)` before editing is a habit worth keeping —
+# committing the result is not).
+.env.bak*
+.env.*.bak
+# LibreOffice/OpenOffice edit locks left next to the hardware docs
+.~lock.*#
 .langgraph_api/
 
 # Other

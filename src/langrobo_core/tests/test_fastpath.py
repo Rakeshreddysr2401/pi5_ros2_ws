@@ -158,11 +158,13 @@ def test_try_handle_approach_with_detection():
     from langrobo_core.tools import _bridge
     from langrobo_core import fastpath
 
+    from langrobo_core.services import world_model
+    from langrobo_core.services.world_model import WorldModel
+
     _bridge._instance = None
-    bridge = StubBridge()
-    bridge.detections = {"person": {"x": 2.0, "y": 0.0, "z": 0.4,
-                                    "conf": 0.9, "age_s": 0.5}}
-    _bridge.init(bridge)
+    _bridge.init(StubBridge())
+    world_model.reset(WorldModel(path=None))
+    world_model.get().observe("person", 2.0, 0.0, 0.4, 0.9)
 
     spoken = fastpath.try_handle("come here")
     assert spoken and "on my way" in spoken.lower()

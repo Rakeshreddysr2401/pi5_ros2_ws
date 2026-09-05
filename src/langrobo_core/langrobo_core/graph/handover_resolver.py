@@ -7,22 +7,20 @@ Decision logic:
 
 import json
 import logging
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Command
 
 from .state import AgentState
-from .registry import AGENTS
+from ..agent_ids import ROUTABLE
+from ..registry import AGENTS
 
 logger = logging.getLogger(__name__)
 
 _MAX_VISITS_PER_AGENT = 3
 
-# Every name Command(goto=...) may legally target. A handover to anything else
-# would be silently ignored by langgraph (unknown channel) and end the turn
-# with no reply at all.
-_ROUTABLE = set(AGENTS) | {"supervisor"}
+_ROUTABLE = set(ROUTABLE)
 
 
 def _parse_handover(content: str) -> tuple[str, str, bool]:
@@ -100,7 +98,7 @@ def _resolve(state: AgentState, raw_next: str, reason: str) -> _Resolution:
     return _Resolution(next_agent=raw_next, bridge_messages=[SystemMessage(content=content)])
 
 
-def handle_handover(state: AgentState):
+def handle_handover(state: AgentState) -> Command[Literal[ROUTABLE]] | dict:  # type: ignore[valid-type]
     next_agent, reason, chain, ai_content = _extract_handover_context(state)
 
     if not next_agent:

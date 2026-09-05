@@ -12,10 +12,12 @@ Everything else (graph, agents, tools, services) is langrobo_core — pure
 Python, no rclpy — so it runs and tests on any machine.
 """
 
+import json
 import logging
 import os
 import time
 import threading
+from contextlib import contextmanager
 
 import rclpy
 from rclpy.node import Node
@@ -32,6 +34,7 @@ from langrobo_core.services import memory as memory_service
 from langrobo_core.services import metrics
 from langrobo_core.services import telegram as telegram_service
 from langrobo_core.services import watch as watch_service
+from langrobo_core.services import world_model as world_model_service
 from langrobo_core.services.logging import new_trace, setup_logging
 from langrobo_core.tools import _bridge as bridge_module
 from langrobo_core.tools.errands import get_store as get_errand_store
@@ -240,6 +243,7 @@ class AgentNode(Node):
         self._memory = memory_service.init(settings.memory)
         self._telegram = telegram_service.init(settings.telegram)
         self._watch = watch_service.init(settings.watch)
+        self._world = world_model_service.init(settings.world_model)
         self._consolidator = consolidation_service.init(settings.consolidation, self._memory)
         self._briefing = briefing_service.init(settings.briefing)
 
@@ -264,6 +268,14 @@ class AgentNode(Node):
         # turn_entry re-enters it directly (skipping the supervisor hop) only if
         # it is STICKY_ELIGIBLE; [SYSTEM] events always force a fresh supervisor route.
         self._sticky_agent: str | None = None
+        # Last /voice/stt_meta, with the wall clock it arrived — stapled onto the
+        # next voice turn's trace. Stale ones are dropped: a Telegram turn (or a
+        # turn minutes later) must not inherit an old utterance's STT cost.
+        self._stt_meta: tuple[float, dict] | None = None
+        # The trace id of the turn in flight, readable from the ROS spin thread
+        # (new_trace()'s contextvar is worker-thread-local, so /voice/tts_meta
+        # arriving on the spin thread cannot see it).
+        self._trace_for_tts: str | None = None
         self._last_turn_ts: float | None = None
 
         # ── Input queue ───────────────────────────────────────────────────
@@ -302,6 +314,11 @@ class AgentNode(Node):
         # Stop keyword spotted by the Jetson while TTS plays: the Jetson halts
         # speech itself; here we make it a safety word — halt wheels too.
         self.create_subscription(String, "/voice/tts_stop", self._on_tts_stop, 10)
+        # Voice-pipeline cost telemetry from pi5_voice_pkg (input and output
+        # legs). Purely observational — nothing in the turn path depends on
+        # these arriving, so a voice stack without them changes nothing.
+        self.create_subscription(String, "/voice/stt_meta", self._on_stt_meta, 10)
+        self.create_subscription(String, "/voice/tts_meta", self._on_tts_meta, 10)
 
         if self._use_vision:
             from sensor_msgs.msg import CompressedImage
@@ -463,6 +480,45 @@ class AgentNode(Node):
         self._bridge.cancel_navigation()
         self._bridge.request_motion_stop()
         self._bridge.music_command({"action": "stop", "t": time.time()})
+
+    # ── Voice-pipeline telemetry (spin thread) ────────────────────────────
+
+    STT_META_MAX_AGE_S = 30.0   # older than this and it belongs to another utterance
+
+    def _on_stt_meta(self, msg: String) -> None:
+        """Cache the STT leg's cost for the voice turn that is about to arrive.
+
+        stt_node publishes this immediately before /voice/user_input, so the
+        turn that follows is (barring a dropped message) the one it describes.
+        """
+        try:
+            self._stt_meta = (time.time(), json.loads(msg.data))
+        except Exception:
+            self.get_logger().debug("bad /voice/stt_meta payload")
+
+    def _on_tts_meta(self, msg: String) -> None:
+        """Log one synthesised sentence to LangSmith as its own run.
+
+        Not a child of the turn's graph run: sentences are synthesised while
+        the graph is still streaming (and the last ones after it ends), and
+        graph.stream() gives us no run tree to hang them off. They carry the
+        turn's trace_id instead, so filtering the LangSmith UI on that one id
+        shows the LLM run and every sentence it spoke together.
+        """
+        try:
+            meta = json.loads(msg.data)
+        except Exception:
+            self.get_logger().debug("bad /voice/tts_meta payload")
+            return
+        trace = self._trace_for_tts
+        with self._trace_span(
+                f"tts:{meta.get('provider', 'unknown')}",
+                inputs={"chars": meta.get("chars")},
+                metadata={"trace_id": trace, "channel": "voice", **meta},
+                tags=["channel:voice", "leg:tts"]) as span:
+            if span is not None:
+                span.end(outputs={k: meta.get(k) for k in
+                                  ("ok", "latency_ms", "audio_ms", "rtf", "fell_back")})
 
     def _enqueue_system(self, text: str) -> None:
         """Enqueue a system event — never dropped, fires after current graph run."""
@@ -685,6 +741,90 @@ class AgentNode(Node):
                     f'send_telegram_message, then acknowledge {telegram.name}.]')
         return f"[{tag}]{''.join(notes)} {text}".rstrip()
 
+    # ── LangSmith tracing helpers ─────────────────────────────────────────
+    # Tracing is opt-in (LANGROBO_TRACING=true + a key; services.config scrubs
+    # the env otherwise), so everything here is a no-op on a robot that has not
+    # opted in. See PI5_VOICE.md / OPERATIONS.md for what the UI then shows.
+
+    def _trace_metadata(self, trace: str, source: str, entry_agent: str,
+                        telegram=None) -> dict:
+        """Metadata attached to a traced turn — searchable in the LangSmith UI.
+
+        Lets you pull up "every telegram turn from Mom", "every turn that
+        entered at navigate", or "every turn answered while the Mac Mini was
+        down" without grepping logs. `trace_id` is the join key back to the
+        JSON logs and the /diag/timing waterfall for the same turn.
+        """
+        llm = llm_module.status()
+        md = {
+            "trace_id": trace,
+            "channel": source,                 # voice | telegram | system
+            "entry_agent": entry_agent,
+            "sticky_agent": self._sticky_agent,
+            "llm_provider": llm.get("provider"),
+            "llm_base_url": llm.get("base_url"),
+            # False → the primary (Mac Mini) is in its failure cooldown, so this
+            # turn is answered by the CLOUD fallback; the child chat-model run's
+            # model name confirms which one actually served it.
+            "llm_primary_available": llm.get("primary_available"),
+            "llm_fallback": llm.get("fallback"),
+        }
+        if telegram is not None:
+            md.update({
+                "sender_name": telegram.name,
+                "sender_role": telegram.role,
+                "telegram_photo": telegram.photo is not None,
+            })
+        elif source == "voice" and self._stt_meta is not None:
+            at, stt = self._stt_meta
+            if time.time() - at <= self.STT_META_MAX_AGE_S:
+                md.update({f"stt_{k}": v for k, v in stt.items()})
+        return md
+
+    @contextmanager
+    def _trace_span(self, name: str, inputs: dict, metadata: dict, tags=None):
+        """A standalone LangSmith run for work that never enters the graph.
+
+        The fast path answers movement commands with zero LLM calls, so it
+        produces no LangChain runs at all — without this it would be an
+        invisible gap in the trace list ("why did 'stop' never show up?").
+        Yields the run (call .end(outputs=...)) or None when tracing is off.
+        """
+        try:
+            from langsmith.utils import tracing_is_enabled
+            from langsmith import trace as ls_trace
+            enabled = tracing_is_enabled()
+        except Exception:       # langsmith absent or incompatible — never fatal
+            enabled = False
+        if not enabled:
+            yield None
+            return
+        try:
+            span = ls_trace(name=name, run_type="chain", inputs=inputs,
+                            metadata=metadata, tags=tags or [])
+            run = span.__enter__()
+        except Exception:
+            self.get_logger().debug(f"LangSmith span {name!r} failed to start")
+            yield None
+            return
+        # Driven by hand rather than `with`: a `with` inside a @contextmanager
+        # can't catch the caller's exception and then yield again (the generator
+        # must stop after a throw). This forwards the caller's exception to the
+        # span so it is marked as errored, re-raises it untouched, and swallows
+        # only failures of the tracing teardown itself.
+        exc_info = (None, None, None)
+        try:
+            yield run
+        except BaseException:
+            import sys
+            exc_info = sys.exc_info()
+            raise
+        finally:
+            try:
+                span.__exit__(*exc_info)
+            except Exception:
+                self.get_logger().debug(f"LangSmith span {name!r} failed to close")
+
     # ── Graph invocation (worker thread) ──────────────────────────────────
 
     def _process(self, text: str, is_system: bool = False, telegram=None) -> None:
@@ -693,6 +833,10 @@ class AgentNode(Node):
         never touch the speaker. Both share the same history and graph."""
         from langchain_core.messages import HumanMessage
         trace = new_trace()   # stamps every log line + timing event this turn
+        # One word for where this turn came from — used for the LangSmith run
+        # name/tags and metadata so the trace list is filterable by channel.
+        source = "system" if is_system else ("telegram" if telegram else "voice")
+        self._trace_for_tts = trace   # read by _on_tts_meta on the spin thread
         turn_start = time.time()
         metrics.inc("turns_total")
         if is_system:
@@ -723,14 +867,24 @@ class AgentNode(Node):
             if self._fast_path and not is_system and not (telegram and telegram.photo):
                 from langrobo_core import fastpath
                 from langchain_core.messages import AIMessage
-                if telegram:
-                    spoken = fastpath.try_handle(
-                        text,
-                        say_fn=lambda m: self._telegram.send_message(telegram.chat_id, m),
-                        state={"channel": "telegram", "sender_name": telegram.name,
-                               "messages": []})
-                else:
-                    spoken = fastpath.try_handle(text)
+                with self._trace_span(
+                        f"fastpath:{source}",
+                        inputs={"text": text},
+                        metadata=self._trace_metadata(trace, source, "fastpath", telegram),
+                        tags=[f"channel:{source}", "entry:fastpath"]) as span:
+                    if telegram:
+                        spoken = fastpath.try_handle(
+                            text,
+                            say_fn=lambda m: self._telegram.send_message(telegram.chat_id, m),
+                            state={"channel": "telegram", "sender_name": telegram.name,
+                                   "messages": []})
+                    else:
+                        spoken = fastpath.try_handle(text)
+                    if span is not None:
+                        # handled=false means the regex declined and the turn
+                        # falls through to the graph — the LLM trace follows.
+                        span.end(outputs={"handled": spoken is not None,
+                                          "spoken": spoken})
                 if spoken is not None:
                     timing.emit("fastpath_done", trace=trace)
                     self.get_logger().info(f"Fast-path handled: {text!r} → {spoken[:120]}")
@@ -794,6 +948,21 @@ class AgentNode(Node):
             )
             callbacks = [self._timing_handler] + ([speech_stream] if speech_stream else [])
 
+            # LangSmith run config. Naming + tagging every turn is what makes
+            # the trace list explorable: the UI groups by run_name, filters on
+            # tags, and searches metadata. `trace_id` is the SAME id that
+            # stamps this turn's JSON log lines and /diag/timing events, so a
+            # LangSmith run, `journalctl -u langrobo-brain`, and the latency
+            # waterfall can all be joined on it. Costs nothing when tracing is
+            # off (LANGROBO_TRACING unset → services.config scrubs the env).
+            run_config = {
+                "callbacks": callbacks,
+                "run_name": f"turn:{source}",
+                "tags": [f"channel:{source}", f"entry:{incoming_agent}"],
+                "metadata": self._trace_metadata(
+                    trace, source, incoming_agent, telegram),
+            }
+
             result = None
             interrupted = False
             for event in self._graph.stream(
@@ -805,7 +974,7 @@ class AgentNode(Node):
                  "channel": "system" if is_system else self._turn_channel,
                  "sender_name": telegram.name if telegram else None,
                  "sender_role": telegram.role if telegram else None},
-                config={"callbacks": callbacks},
+                config=run_config,
                 stream_mode="values"):
                 if self._turn_interrupt.is_set():
                     # Barge-in: a newer utterance is waiting. Abandon this turn
@@ -983,16 +1152,23 @@ class AgentNode(Node):
                 return  # a turn is already pending — it will pay the prefill itself
             with self._history_lock:
                 history = list(self._history)
-            if agent == "local_agent":
-                from langrobo_core.agents.local_agent import build_llm_call
-            elif agent == "supervisor":
-                from langrobo_core.agents.supervisor import build_llm_call
-            else:
-                from langrobo_core.agents.chat import build_llm_call
+            # Same prompt assembly the real turn will use — the warmer must
+            # prefill a byte-identical prompt or it warms nothing. Registry-built
+            # agents all expose it (langrobo_core.agents.BUILD_LLM_CALLS).
+            from langrobo_core.agents import BUILD_LLM_CALLS
+            build_llm_call = BUILD_LLM_CALLS.get(agent) or BUILD_LLM_CALLS["chat"]
             # The trailing "(warmup)" user message only diverges at the tail —
             # everything before it (the expensive part) is cached for real turns.
             llm, msgs = build_llm_call(history + [HumanMessage(content="(warmup)")])
-            llm.bind(max_tokens=1).invoke(msgs)
+            # Named + tagged so these don't sit in the LangSmith trace list as
+            # anonymous root ChatOpenAI runs next to real turns: there are two
+            # per turn (chat + supervisor), they carry the full prompt, and they
+            # answer nothing. Hide them in the UI with -has(tags, "cache_warm").
+            llm.bind(max_tokens=1).invoke(msgs, config={
+                "run_name": f"cache_warm:{agent}",
+                "tags": ["cache_warm", f"entry:{agent}"],
+                "metadata": {"agent": agent, "history_messages": len(history)},
+            })
             self.get_logger().info(
                 f"KV-cache warmed for '{agent}' ({len(history)} history messages)")
         except Exception as e:
@@ -1027,6 +1203,18 @@ class AgentNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = AgentNode()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        # The world model batches its writes (detections arrive at several Hz
+        # and this boots off an SD card), so the last window of sightings is
+        # only in RAM. Flush it — without the finally, Ctrl-C skipped
+        # destroy_node entirely and took that window with it.
+        try:
+            world_model_service.get().save()
+        except Exception:
+            node.get_logger().warning("could not flush the world model on shutdown")
+        node.destroy_node()
+        rclpy.shutdown()

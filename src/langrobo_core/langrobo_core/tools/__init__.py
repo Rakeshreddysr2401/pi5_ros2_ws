@@ -14,6 +14,7 @@ from .announce import announce_at_home
 from .knowledge import KNOWLEDGE_TOOLS
 from .system import get_current_time, get_robot_status, ros2_publish, set_active_order
 from .watch import watch_home
+from .world import forget_object, list_known_objects, where_is
 from .handover import handover
 from ..services.mcp import load_provider_tools
 from .telegram import TELEGRAM_TOOLS
@@ -24,6 +25,13 @@ from .web import WEB_TOOLS
 SWIGGY_FOOD_MCP_TOOLS = load_provider_tools("swiggy_food")
 SWIGGY_INSTAMART_MCP_TOOLS = load_provider_tools("swiggy_instamart")
 SWIGGY_DINEOUT_MCP_TOOLS = load_provider_tools("swiggy_dineout")
+
+# Spatial memory — reading the same WorldModel the approach tools navigate
+# with, so what the robot SAYS about where things are and where it would
+# actually drive can never disagree. Shared by chat (the default responder
+# answers "where's the chair?" without a routing hop), local_agent (pairs a
+# camera view with real metres) and navigate (check before driving).
+WORLD_TOOLS = [where_is, list_known_objects, forget_object]
 
 # Per-agent tool sets
 # Speech has a single channel: each agent's final reply text is published to TTS
@@ -38,13 +46,13 @@ CHAT_TOOLS         = [get_current_time, get_robot_status, set_reminder,
                       forget, recall_memory, play_music, stop_music,
                       pause_music, resume_music, set_music_volume,
                       watch_home, announce_at_home,
-                      handover] + WEB_TOOLS + TELEGRAM_TOOLS
-LOCAL_AGENT_TOOLS  = [look, handover] + TELEGRAM_TOOLS
+                      handover] + WORLD_TOOLS + WEB_TOOLS + TELEGRAM_TOOLS
+LOCAL_AGENT_TOOLS  = [look, point_camera, handover] + WORLD_TOOLS + TELEGRAM_TOOLS
 NAVIGATE_TOOLS     = [move_robot, navigate_to_pose, approach_object,
                       approach_described_object,
                       navigate_to_visible_object, scan_surroundings,
                       point_camera, save_location, list_saved_locations,
-                      handover] + TELEGRAM_TOOLS
+                      handover] + WORLD_TOOLS + TELEGRAM_TOOLS
 STATUS_TOOLS       = [get_robot_status, ros2_publish, handover]
 SUPERVISOR_TOOLS   = [handover]
 KNOWLEDGE_AGENT_TOOLS = KNOWLEDGE_TOOLS + [handover]

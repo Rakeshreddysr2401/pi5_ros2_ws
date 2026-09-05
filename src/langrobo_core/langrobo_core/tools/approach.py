@@ -24,6 +24,7 @@ from langgraph.prebuilt import InjectedState
 
 from . import _bridge
 from . import movement as _mv
+from ..services import world_model
 
 # How close the robot parks from the object's map position (metres). People
 # get more personal space than furniture. Floor: D555 depth goes blind under
@@ -33,7 +34,7 @@ from . import movement as _mv
 _STANDOFF_M = float(os.environ.get("LANGROBO_STANDOFF_M", "0.45"))
 _STANDOFF_PERSON_M = float(os.environ.get("LANGROBO_STANDOFF_PERSON_M", "0.8"))
 # A detection older than this is "not in view" — trigger the search.
-_FRESH_DETECTION_S = 3.0
+_FRESH_DETECTION_S = world_model.LIVE_DETECTION_S
 # Camera-head sweep angles (D555 HFOV ≈ 87°, so ±55° pan covers ≈ ±98°).
 _PAN_SWEEP_DEG = (0.0, -55.0, 55.0)
 _PAN_DWELL_S = 1.6          # settle + let the detector publish at each stop
@@ -60,7 +61,9 @@ def compute_standoff_goal(rx: float, ry: float, ox: float, oy: float,
 
 
 def _fresh(bridge, target: str) -> dict | None:
-    return bridge.get_detected_object(target, max_age_s=_FRESH_DETECTION_S)
+    """Freshest sighting of `target`, or None. Positions come from the world
+    model (services/world_model.py) — the bridge only feeds it."""
+    return world_model.get().freshest(target, max_age_s=_FRESH_DETECTION_S)
 
 
 def _dwell_for_detection(bridge, target: str, dwell_s: float) -> dict | None:
@@ -146,7 +149,7 @@ def approach_object(target: str,
             if bridge.motion_interrupted():
                 return f"Stopped searching for {who}."
             # World-model fallback: drive to where it was LAST seen.
-            last = bridge.get_last_seen_object(target)
+            last = world_model.get().freshest(target)
             if last is not None:
                 det = last
             else:
@@ -163,6 +166,18 @@ def approach_object(target: str,
                 f"position, so I can't plan a safe path right now.")
 
     rx, ry, _ = pose
+
+    # Several chairs in the room? Among the ones the detector can see RIGHT NOW,
+    # take the closest — "go near the chair" means one you could walk to, and
+    # freshest-wins picked whichever the detector happened to publish last.
+    # Restricted to fresh instances on purpose: if we had to search for this
+    # one, or are working from memory, that specific object is what was meant.
+    if det.get("age_s", 0.0) <= _FRESH_DETECTION_S:
+        nearest = world_model.get().nearest(target, rx, ry,
+                                            max_age_s=_FRESH_DETECTION_S)
+        if nearest is not None:
+            det = nearest
+
     standoff = _STANDOFF_PERSON_M if target == "person" else _STANDOFF_M
     gx, gy, yaw = compute_standoff_goal(rx, ry, det["x"], det["y"], standoff)
 
@@ -360,7 +375,7 @@ def scan_surroundings() -> str:
                 return "Scan stopped."
             time.sleep(0.05)
 
-    seen = bridge.get_detected_objects(max_age_s=30.0)
+    seen = world_model.get().all_fresh(max_age_s=30.0)
     if seen:
         labels = ", ".join(sorted(seen.keys()))
         return f"Scan complete — full circle mapped. I can see: {labels}."

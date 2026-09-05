@@ -10,58 +10,20 @@ Architecture:
                                                       handle_handover
                                                             ↓ (chain=False, agent spoke)
                                                            END (sticky to next agent)
+
+Every agent below is derived from registry.py — the node, its ToolNode and its
+edges all come from one AgentSpec. Adding an agent needs NO edit to this file.
 """
 
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
+from ..agents import NODES
+from ..registry import SPECS
 from .state import AgentState
 from .turn_entry import turn_entry_node
 from .handover_resolver import handle_handover
-from ..agents.supervisor import supervisor_node
-from ..agents.chat import chat_node
-from ..agents.local_agent import local_agent_node
-from ..agents.navigate import navigate_node
-from ..agents.status import status_node
-from ..agents.swiggy import swiggy_node
-from ..agents.instamart import instamart_node
-from ..agents.dineout import dineout_node
-from ..agents.tracker import tracker_node
-from ..agents.knowledge import knowledge_node
-from ..agents.briefing import briefing_node
-from ..tools import (
-    SUPERVISOR_TOOLS,
-    CHAT_TOOLS,
-    LOCAL_AGENT_TOOLS,
-    NAVIGATE_TOOLS,
-    STATUS_TOOLS,
-    SWIGGY_TOOLS,
-    INSTAMART_TOOLS,
-    DINEOUT_TOOLS,
-    TRACKER_TOOLS,
-    KNOWLEDGE_AGENT_TOOLS,
-    BRIEFING_TOOLS,
-)
-
-# Agent registry — the single source of truth for the graph's agents. Each entry
-# maps an agent name to (node function, tool set). Everything below is derived from
-# this: the loop-guarded agent node, its ToolNode, and its edges. To add an agent,
-# add one line here (plus its node module and an entry in nodes/_registry.py so the
-# supervisor knows how to route to it) — no other change to this file is needed.
-_AGENT_SPECS = {
-    "supervisor":  (supervisor_node,  SUPERVISOR_TOOLS),
-    "chat":        (chat_node,        CHAT_TOOLS),
-    "local_agent": (local_agent_node, LOCAL_AGENT_TOOLS),
-    "navigate":    (navigate_node,    NAVIGATE_TOOLS),
-    "status":      (status_node,      STATUS_TOOLS),
-    "swiggy":      (swiggy_node,      SWIGGY_TOOLS),
-    "instamart":   (instamart_node,   INSTAMART_TOOLS),
-    "dineout":     (dineout_node,     DINEOUT_TOOLS),
-    "tracker":     (tracker_node,     TRACKER_TOOLS),
-    "knowledge":   (knowledge_node,   KNOWLEDGE_AGENT_TOOLS),
-    "briefing":    (briefing_node,    BRIEFING_TOOLS),
-}
 
 # Max times a single agent node may execute within one user turn. Legitimate
 # multi-step flows (navigate doing several moves, swiggy search→menu→cart→order)
@@ -122,7 +84,7 @@ def build_graph(checkpointer=None):
     """Build and compile the robot brain StateGraph.
 
     Called once at startup. The bridge must be initialised via
-    graph.tools._bridge.init(bridge) before calling this.
+    langrobo_core.tools._bridge.init(bridge) before calling this.
     """
     builder = StateGraph(AgentState)
 
@@ -131,9 +93,9 @@ def build_graph(checkpointer=None):
     builder.add_node("handle_handover", handle_handover)
 
     # Per agent: a loop-guarded agent node, its ToolNode, and the edges between them.
-    for name, (node_fn, tools) in _AGENT_SPECS.items():
-        builder.add_node(name, _loop_guarded(name, node_fn))
-        builder.add_node(f"{name}_tools", ToolNode(tools=tools))
+    for name, spec in SPECS.items():
+        builder.add_node(name, _loop_guarded(name, NODES[name]))
+        builder.add_node(f"{name}_tools", ToolNode(tools=spec.tools))
 
         # agent → its tools (if it called any) or END
         builder.add_conditional_edges(

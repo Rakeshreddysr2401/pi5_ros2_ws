@@ -58,12 +58,12 @@ def build_supervisor_payloads():
     from langrobo_core.utils import message_utils
     from langrobo_core.graph import build_graph
     import langrobo_core.agents.supervisor as sup_mod
-    import langrobo_core.agents.chat as chat_mod
+    import langrobo_core.agents.factory as factory_mod
     from langrobo_core.utils.history import trim_history
 
     captured, call_n = [], [0]
 
-    def scripted_safe_invoke(llm, messages, logger, retries=1):
+    def scripted_safe_invoke(llm, messages, logger, retries=1, agent=None):
         call_n[0] += 1
         bound = getattr(llm, "bound", llm)
         kwargs = dict(getattr(llm, "kwargs", {}) or {})
@@ -81,7 +81,7 @@ def build_supervisor_payloads():
 
     message_utils.safe_invoke = scripted_safe_invoke
     sup_mod.safe_invoke = scripted_safe_invoke
-    chat_mod.safe_invoke = scripted_safe_invoke
+    factory_mod.safe_invoke = scripted_safe_invoke
 
     graph = build_graph()
 

@@ -34,12 +34,15 @@ src/langrobo_core/langrobo_core/       pip package (editable install via require
 ├── graph/
 │   ├── build.py           StateGraph topology — the only file that knows how nodes connect
 │   ├── state.py           AgentState TypedDict
-│   ├── registry.py        Agent names/descriptions — single source of truth for routing
 │   ├── turn_entry.py      Start of every turn: resets loop guards, sticky routing
 │   └── handover_resolver.py  Centralized handover: chain vs sticky, loop guard
 ├── prompts.py             EVERY system prompt in the brain (agents + background jobs) —
 │                          agents import from here; only dynamic blocks are appended in-module
-├── agents/                One module per agent (node fn + dynamic context assembly)
+├── registry.py            One AgentSpec per agent — THE source of truth: routing copy,
+│                          prompt, tool set, stickiness, MCP binding, dynamic context
+├── agent_ids.py           Agent names only (leaf module — the handover grammar reads it)
+├── agents/                factory.py builds every agent node from its spec;
+│                          supervisor.py is the one hand-written node (forced tool_choice)
 │   ├── supervisor.py      Pure router — grammar-forced handover(), never speaks
 │   ├── chat.py            Default responder — general Q&A, web search, reminders, memory, music
 │   ├── local_agent.py     Multimodal vision — reasons over real frames via look()
@@ -217,6 +220,7 @@ image-preserving projection; every other agent gets image-stripped text.
 |---|---|---|---|
 | Household facts + lists | JSON (`~/.langrobo/household.json`) | **in-prompt** — always visible | dozens of facts; guaranteed recall beats retrieval |
 | Episodic (conversations) | **Qdrant** embedded (`~/.langrobo/qdrant`) | `recall_memory(query)` tool | unbounded history can't fit a prompt |
+| Where objects are | JSON (`~/.langrobo/world_model.json`) | `where_is` / `approach_object` | positions must outlive the process, like saved locations always did |
 | Consolidated facts | `facts` collection (same store) | merged into `recall_memory` results | nightly distillation of episodes — the "self-learning" tier |
 | Document knowledge | `knowledge` collection (same store) | `search_documents` (knowledge agent) | manuals/notes sent to the robot — chunked + embedded; re-sending a file replaces it |
 | Visual household memory | reserved `visual` collection | phase P4 | "where did I leave my keys" |
@@ -402,8 +406,9 @@ every extra LLM hop or cache-thrashing prompt costs real seconds.
   (`speech_stream.py`) while `stream_mode="values"` drives turn logic.
   Finer-grained streaming has nothing to feed: TTS is the only consumer.
 - **Folder-per-concern renames** (`nodes/`, `swiggy_food_agent`, …): the
-  separation exists — `graph/` is topology+plumbing nodes, `agents/` is one
-  module per agent, `tools/`, `services/`, prompts in `prompts.py`, and the
+  separation exists — `graph/` is topology+plumbing nodes, `agents/` is the
+  node factory, `registry.py` is what defines an agent, `tools/`, `services/`,
+  prompts in `prompts.py`, and the
   ROS boundary is a package split. Renaming working agents ("chat" →
   "general_query_agent") would churn the registry, handover Literal, slot
   map, sticky logic and tests for zero behaviour. New agents get the
@@ -439,24 +444,35 @@ servers use domain `"swiggy"`), and an optional legacy token env var.
 
 ## How to add an agent
 
+Three files, and the rest is derived. There is no per-agent node module any
+more — `agents/factory.py` builds the node from the spec.
+
 1. Write its system prompt in `prompts.py` (start from CHAT_PROMPT's shape;
-   prepend PERSONA for any user-facing agent)
-2. Create `agents/<name>.py` (copy `chat.py` as template) importing that prompt
-3. Add tools in `tools/`, a named tool set in `tools/__init__.py`
-4. Register in `graph/registry.py` (name + description + examples)
-5. Add one line to `_AGENT_SPECS` in `graph/build.py`
-6. Add the name to the `handover` tool's `next_agent` Literal (`tools/handover.py`)
-7. Give it a slot override in `agent_node.py` (`dict(_spec)` for specialists)
+   prepend PERSONA for any user-facing agent). Put a `{tools}` placeholder
+   where the tool list goes — never hand-write one; `render_tools()` fills it
+   from the bound tool set, which is what stops the prompt naming a tool that
+   does not exist.
+2. Add tools in `tools/`, a named tool set in `tools/__init__.py`
+3. Add the name to `agent_ids.py` and one `AgentSpec` to `registry.py`
+   (description, examples, prompt, tool set, and the `sticky` / `keep_images` /
+   `context` / `mcp_provider` flags). `graph/build.py`, the handover grammar,
+   the supervisor's routing table, sticky entry and the rendered tool block all
+   follow — no other source file needs an edit.
+4. Give it a slot override in `agent_node.py` (`dict(_spec)` for specialists)
    and add it to `EXPECTED_AGENTS` in `tests/test_smoke.py`
 
+`registry.py` asserts at import that it and `agent_ids.py` agree, and
+`tests/test_prompt_contract.py` fails if a prompt and its tool set drift.
+
 For an agent backed by a remote MCP server, add step 0: a `ProviderSpec` in
-`services/mcp.py` (see "MCP providers" above), load its tool set in
-`tools/__init__.py` via `load_provider_tools`, give the prompt an
-`*_UNAVAILABLE_NOTE`, and copy `agents/swiggy.py` (not chat.py) as the
-node template — it has the `provider_ok` prompt swap + token refresh.
+`services/mcp.py` (see "MCP providers" above) and load its tool set in
+`tools/__init__.py` via `load_provider_tools`. Then the spec just needs
+`mcp_provider=` and `unavailable_note=` — the factory does the `provider_ok`
+prompt swap and the token refresh.
 
 ## How to add a tool
 
 1. Write it in `tools/` with `@tool`, using `_bridge.get()` for robot I/O
 2. Add it to the agent's tool set in `tools/__init__.py`
-3. Mention it in that agent's system prompt (`prompts.py`)
+3. Nothing else — the agent's `== TOOLS ==` block is generated from the tool
+   set. Add prompt text only for *policy* the docstring cannot carry.

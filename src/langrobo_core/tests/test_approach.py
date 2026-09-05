@@ -3,6 +3,8 @@
 import math
 
 from langrobo_core.bridges import StubBridge
+from langrobo_core.services import world_model
+from langrobo_core.services.world_model import WorldModel
 from langrobo_core.tools import _bridge, NAVIGATE_TOOLS
 from langrobo_core.tools.approach import (approach_object, compute_standoff_goal,
                                           list_saved_locations)
@@ -21,11 +23,31 @@ mv._RECENTER_SETTLE_S = 0.01
 VOICE_STATE = {"channel": "voice", "sender_name": "voice", "messages": []}
 
 
+class Clock:
+    """Detections used to be seeded with a literal `age_s`; they now go through
+    the real WorldModel, so a test that needs a STALE sighting moves the clock
+    instead of asserting an age the production path never computes that way."""
+
+    def __init__(self, t=1000.0):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+    def advance(self, seconds):
+        self.t += seconds
+
+
 def fresh_bridge(**kw):
     _bridge._instance = None
     b = StubBridge(**kw)
     _bridge.init(b)
+    world_model.reset(WorldModel(path=None, clock=Clock()))
     return b
+
+
+def seen(label, x, y, z=0.0, conf=0.8):
+    world_model.get().observe(label, x, y, z, conf)
 
 
 # ── Registration ──────────────────────────────────────────────────────────────
@@ -60,19 +82,18 @@ def test_standoff_goal_already_close_turns_in_place():
 # ── Approach flow ─────────────────────────────────────────────────────────────
 
 def test_approach_with_fresh_detection_starts_nav():
-    bridge = fresh_bridge()
-    bridge.detections = {"chair": {"x": 2.0, "y": 0.0, "z": 0.3,
-                                   "conf": 0.8, "age_s": 0.2}}
+    fresh_bridge()
+    seen("chair", 2.0, 0.0, 0.3)
     result = approach_object.invoke({"target": "chair", "state": dict(VOICE_STATE)})
     assert "on my way" in result.lower()
 
 
 def test_approach_uses_last_seen_when_stale():
-    bridge = fresh_bridge()
+    fresh_bridge()
     # Seen 60s ago — not fresh, but remembered. StubBridge has no wheels, so
     # the search comes up empty and the world-model fallback should kick in.
-    bridge.detections = {"tv": {"x": 1.0, "y": 1.0, "z": 0.5,
-                                "conf": 0.7, "age_s": 60.0}}
+    seen("tv", 1.0, 1.0, 0.5, 0.7)
+    world_model.get()._clock.advance(60)
     result = approach_object.invoke({"target": "tv", "state": dict(VOICE_STATE)})
     assert "on my way" in result.lower()
 
@@ -85,8 +106,7 @@ def test_approach_unseen_object_is_honest():
 
 def test_approach_no_localisation_is_honest():
     bridge = fresh_bridge()
-    bridge.detections = {"person": {"x": 1.0, "y": 0.0, "z": 0.4,
-                                    "conf": 0.9, "age_s": 0.1}}
+    seen("person", 1.0, 0.0, 0.4, 0.9)
     bridge.get_current_pose = lambda: None
     result = approach_object.invoke({"target": "person", "state": dict(VOICE_STATE)})
     assert "localisation" in result.lower()
