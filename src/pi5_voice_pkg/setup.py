@@ -12,7 +12,19 @@ setup(
         ('share/' + package_name + '/launch', ['launch/voice_launch.py']),
         ('share/' + package_name + '/config', ['config/voice_params.yaml']),
     ],
-    install_requires=['setuptools', 'requests', 'websockets', 'python-dotenv'],
+    install_requires=[
+        'setuptools',
+        'numpy',
+        'sounddevice',        # mic capture / speaker playback (PortAudio)
+        'webrtcvad',          # VAD framing
+        'faster-whisper',     # local STT provider
+        'kokoro-onnx',        # local TTS provider
+        'onnxruntime',        # kokoro + openwakeword inference
+        'openwakeword',       # acoustic wake-word detector
+        'requests',           # sarvam REST (STT/TTS/translate)
+        'websockets',         # soniox STT websocket
+        'python-dotenv',      # load API keys from .env
+    ],
     zip_safe=True,
     maintainer='rakhi24',
     maintainer_email='sumanasomineni09@gmail.com',

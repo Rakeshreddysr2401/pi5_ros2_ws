@@ -7,10 +7,10 @@ pi5_tts_node:
     output_device: Blackwire
     # ── Bluetooth speaker (Boat Stone etc.) ───────────────────────────────
     # Pair once:  ./scripts/bt_speaker.sh scan   then   ./scripts/bt_speaker.sh pair <MAC>
-    # Then put the MAC here; the node connects it at startup and routes audio
+    # Then put the MAC here; both nodes connect it at startup and route audio
     # through PipeWire. Empty = wired audio only.
     bt_mac: "D6:AA:BB:59:EF:B6"        # boAt Stone 650
-    # a2dp = speaker only, full quality (recommended — a wired mic stays).
+    # a2dp = speaker only, full quality (recommended — the wired mic stays).
     # hfp  = the speaker's call mic too, 8-16kHz mono: worse recognition AND
     #        worse playback. Needs pulseaudio-utils for the profile switch.
     bt_profile: hfp   # Stone mic in use; a2dp would kill it
@@ -21,7 +21,8 @@ pi5_tts_node:
     # STT side's reason). Same key/degrade rules as pi5_stt_node below.
     # local | sarvam | sarvam_translate | soniox. 'sarvam_translate' takes
     # English reply text and SPEAKS it in Telugu (translate -> TTS); see below.
-    tts_provider: local
+    # Default = sarvam_translate so the brain's English replies are heard in Telugu.
+    tts_provider: sarvam_translate
     tts_language: en
     tts_sarvam_voice: ritu     # bulbul:v3 speaker (used by sarvam + sarvam_translate)
     tts_soniox_voice: Adrian
@@ -32,16 +33,43 @@ pi5_tts_node:
 pi5_stt_node:
   ros__parameters:
     input_device: Blackwire
+    bt_mac: "D6:AA:BB:59:EF:B6"        # boAt Stone 650
+    bt_profile: hfp   # Stone mic in use; a2dp would kill it
+    # Mic stays muted this long after TTS stops. 0.5 suits the USB headset;
+    # A2DP buffers 100-250ms on top, so raise to ~1.2 with a Bluetooth speaker
+    # or the robot transcribes the tail of its own reply.
+    tts_tail_mute_s: 1.2   # raised for A2DP buffering (was 0.5, for the USB headset)
     model_size: base
     model_dir: /home/rakhi24/ros2_ws/src/langrobo_ros/models/whisper
     threads: 4
     vad_aggressiveness: 2
-    wake_aliases: ["rakhi", "chotu", "hey pi"]
+    # Acoustic wake word (openWakeWord). While asleep the node transcribes NOTHING
+    # until it hears the wake word, then listens for follow_up_window_s. Set
+    # wake_detector: transcript_alias to disable it and use the legacy name-in-text gate.
+    wake_detector: transcript_alias      # openwakeword | transcript_alias  (wake word OFF for now)
+    wake_word: hey_jarvis                # bundled stand-in until the custom rakhi.onnx is trained
+    wake_model_path: ""                  # set to a custom .onnx (e.g. rakhi) to override wake_word
+    wake_threshold: 0.5
+    follow_up_window_s: 9.0
+    wake_aliases: ["rakhi", "chotu", "hey pi"]   # used only in transcript_alias mode with require_wake:true
+    # require_wake:false -> forward every transcript to the brain (no name needed in the
+    # text; the agent prompt knows it's "Rakhi" and judges relevance). Set true to gate on the aliases.
+    # true = only transcripts containing a wake alias become turns. Essential
+    # with a room mic: with it open, ambient noise the recogniser hallucinated
+    # into sentences was answered as if spoken (observed 2026-09-05).
+    require_wake: true
     stop_words: ["stop"]
+    # Noise gate before the cloud call — see vad_gate.py.
+    min_utterance_rms: 0.012
+    min_voiced_ratio: 0.35
     # local | sarvam | soniox — see PI5_VOICE.md for the cost/latency comparison.
     # sarvam/soniox need SARVAM_API_KEY / SONIOX_API_KEY in ~/ros2_ws/.env (example.env
     # has placeholders); missing key or any request failure falls back to local
     # automatically (never goes silent — CLAUDE.md #4).
-    stt_provider: local
+    # Default = sarvam: Telugu speech -> English text (household speaks Telugu).
+    # ⚠️ COST/PRIVACY: with the wake word OFF (wake_detector: transcript_alias) this
+    # sends EVERY ambient utterance to Sarvam. Re-enable the wake word to gate it,
+    # or set stt_provider: local for free offline transcription.
+    stt_provider: sarvam
     stt_source_language: te   # Telugu
     stt_target_language: en
