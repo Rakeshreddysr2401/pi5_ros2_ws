@@ -1,0 +1,28 @@
+# Connect the Bluetooth speaker at login and make it the default sink.
+#
+# A USER unit, not a system one: PipeWire and WirePlumber run in the user
+# session, so wpctl only works there.
+#
+#   cp src/langrobo_ros/systemd/langrobo-bt-audio.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now langrobo-bt-audio
+#
+# Not required for voice to work: tts_node/stt_node call the same connect logic
+# at startup (bt_audio.ensure), so launching the voice pair also brings the
+# speaker up. This unit just means the speaker is ready before that.
+
+[Unit]
+Description=LangRobo Bluetooth speaker (connect + default sink)
+After=bluetooth.target pipewire.service wireplumber.service
+Wants=pipewire.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=%h/ros2_ws/scripts/bt_speaker.sh connect
+# The speaker is often off at boot; failing is normal and must not mask the
+# unit as broken. Turning it on later reconnects it (trusted device), and a
+# voice launch connects it regardless.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=default.target

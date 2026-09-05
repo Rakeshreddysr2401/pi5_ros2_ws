@@ -5,6 +5,15 @@ pi5_tts_node:
     voice: af_heart
     speed: 1.0
     output_device: Blackwire
+    # ── Bluetooth speaker (Boat Stone etc.) ───────────────────────────────
+    # Pair once:  ./scripts/bt_speaker.sh scan   then   ./scripts/bt_speaker.sh pair <MAC>
+    # Then put the MAC here; the node connects it at startup and routes audio
+    # through PipeWire. Empty = wired audio only.
+    bt_mac: "D6:AA:BB:59:EF:B6"        # boAt Stone 650
+    # a2dp = speaker only, full quality (recommended — a wired mic stays).
+    # hfp  = the speaker's call mic too, 8-16kHz mono: worse recognition AND
+    #        worse playback. Needs pulseaudio-utils for the profile switch.
+    bt_profile: hfp   # Stone mic in use; a2dp would kill it
     threads: 4
     # local | sarvam | soniox — see PI5_VOICE.md. Local Kokoro measured RTF ~1.8
     # (slower than real time); both cloud options publish sub-second/streaming

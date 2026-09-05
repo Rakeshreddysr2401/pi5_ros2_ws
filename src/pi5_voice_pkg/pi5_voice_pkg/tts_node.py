@@ -14,9 +14,11 @@ streaming latency for TTS specifically — this is a latency motivation, not
 the Telugu-translation motivation that justified the STT providers.
 """
 
+import json
 import os
 import queue
 import threading
+import time
 import traceback
 
 import numpy as np
@@ -26,8 +28,12 @@ from dotenv import load_dotenv
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
 
+from . import bt_audio
 from .tts_providers import REGISTRY, ProviderUnavailable
 from .tts_providers.local_kokoro import LocalKokoroProvider
+
+# How many synthesised sentences may wait ahead of the speaker.
+PREFETCH_SENTENCES = 2
 
 SPEECH_EOU = "<|eou|>"  # must match langrobo_core/utils/speech_stream.py
 CHUNK_FRAMES_S = 0.1    # playback granularity for fast stop, in seconds of audio
@@ -51,6 +57,11 @@ class TTSNode(Node):
         # Only used by tts_provider=sarvam_translate (English text -> Telugu speech).
         self.declare_parameter('tts_translate_from', 'en')
         self.declare_parameter('tts_translate_to', 'te')
+        # Bluetooth speaker (e.g. a Boat Stone). Empty = wired audio only.
+        # a2dp = speaker only, full quality. hfp = the speaker's call mic too,
+        # 8-16kHz mono — worse for both legs, so it is opt-in.
+        self.declare_parameter('bt_mac', '')
+        self.declare_parameter('bt_profile', 'a2dp')
 
         model_path = self.get_parameter('model_path').value
         voices_path = self.get_parameter('voices_path').value
@@ -60,6 +71,24 @@ class TTSNode(Node):
         threads = int(self.get_parameter('threads').value)
         provider_name = self.get_parameter('tts_provider').value
         language = self.get_parameter('tts_language').value
+
+        # A Bluetooth speaker is a PipeWire node, not an ALSA card, so
+        # sounddevice cannot address it directly: connect it, make it the
+        # default sink, and play through the `pipewire` ALSA device. Idempotent
+        # — stt_node runs the same call and neither depends on the other's
+        # ordering. Failure just leaves the wired hint in place.
+        bt_mac = self.get_parameter('bt_mac').value
+        if bt_mac:
+            bt = bt_audio.ensure(bt_mac, self.get_parameter('bt_profile').value)
+            for note in bt['notes']:
+                self.get_logger().info(f'bluetooth: {note}')
+            if bt['sink']:
+                device_hint = 'pipewire'
+                self.get_logger().info(
+                    f"bluetooth sink {bt['sink']!r} is default — output via pipewire")
+            else:
+                self.get_logger().warning(
+                    f'bluetooth speaker unavailable; falling back to {device_hint!r}')
 
         self._out_device = self._find_device(device_hint)
         self.get_logger().info(f'output device: {self._out_device}')
@@ -82,11 +111,32 @@ class TTSNode(Node):
         self.get_logger().info(f'tts_provider = {self._provider.name}')
 
         self._speaking_pub = self.create_publisher(Bool, '/voice/tts_speaking', 10)
+        # Per-sentence synthesis cost + which provider paid it. agent_node turns
+        # these into LangSmith runs joined to the turn by trace_id, so the output
+        # leg of a turn (Kokoro RTF ~1.8 vs a sub-second cloud call, or a silent
+        # fallback to local) is visible next to the LLM that produced the text.
+        self._tts_meta_pub = self.create_publisher(String, '/voice/tts_meta', 10)
         self.create_subscription(String, '/voice/robot_speech', self._on_speech, 10)
         self.create_subscription(String, '/voice/tts_stop', self._on_stop, 10)
 
         self._q: queue.Queue[str] = queue.Queue()
+        # Synthesised audio waiting to be played. Bounded so synthesis stays a
+        # sentence or two ahead — enough to cover the gap, not so far that a
+        # barge-in has a backlog to throw away.
+        self._audio_q: queue.Queue = queue.Queue(maxsize=PREFETCH_SENTENCES)
         self._interrupt = threading.Event()
+        self._gen = 0
+        self._gen_lock = threading.Lock()
+        # Measured from the live output stream (PortAudio reports the device's
+        # own buffering), so a Bluetooth speaker widens it automatically instead
+        # of needing a hand-tuned constant.
+        self._output_latency_s = 0.0
+        # One stream per UTTERANCE, not per sentence. Opening a device costs
+        # real time on Bluetooth (the link renegotiates) and can click between
+        # sentences — which is audible precisely at the boundaries the prefetch
+        # pipeline just finished smoothing out.
+        self._stream = None
+        self._stream_sr = None
         # /voice/tts_speaking is edge-triggered from TWO threads (the worker and
         # the stop callback), so the flag is instance state behind a lock. It was
         # a local in _run(): a stop cleared the queue including the utterance's
@@ -94,8 +144,15 @@ class TTSNode(Node):
         # forever (stt_node.py drops every frame while tts_speaking is true).
         self._speaking = False
         self._speaking_lock = threading.Lock()
-        self._worker = threading.Thread(target=self._run, daemon=True)
-        self._worker.start()
+        # Once the cloud provider has failed inside an utterance, stay on the
+        # local voice until the utterance ends. Retrying per sentence made the
+        # robot change voice mid-reply and then change back, which sounds like
+        # a fault even though both halves worked.
+        self._forced_fallback = False
+        self._synth_thread = threading.Thread(target=self._synth_loop, daemon=True)
+        self._play_thread = threading.Thread(target=self._play_loop, daemon=True)
+        self._synth_thread.start()
+        self._play_thread.start()
 
     def _build_provider(self, name: str, params: dict):
         cls = REGISTRY.get(name)
@@ -125,12 +182,35 @@ class TTSNode(Node):
         self._q.put(msg.data)
 
     def _on_stop(self, msg: String):
+        """Abandon everything queued and playing, right now."""
+        self._bump_generation()
         self._interrupt.set()
-        with self._q.mutex:
-            self._q.queue.clear()
-        # The queue we just dropped may have held this utterance's <|eou|>, and
+        for q in (self._q, self._audio_q):
+            with q.mutex:
+                q.queue.clear()
+                q.not_full.notify_all()      # the synth thread may be blocked here
+        # The queues we just dropped may have held this utterance's <|eou|>, and
         # that marker is the only thing that unmutes the mic. Release it here.
+        self._close_stream()
+        self._forced_fallback = False
         self._set_speaking(False)
+
+    def _bump_generation(self) -> int:
+        """Invalidate audio belonging to the utterance being abandoned.
+
+        With synthesis running ahead of playback, clearing the queues is not
+        enough: a buffer synthesised before the stop may already be in the play
+        thread's hand. Every buffer carries the generation it was made in, and
+        anything stale is dropped rather than spoken.
+        """
+        with self._gen_lock:
+            self._gen += 1
+            return self._gen
+
+    @property
+    def _generation(self) -> int:
+        with self._gen_lock:
+            return self._gen
 
     def _set_speaking(self, on: bool) -> None:
         """Publish /voice/tts_speaking on edges only. Safe from any thread."""
@@ -140,52 +220,153 @@ class TTSNode(Node):
             self._speaking = on
         self._speaking_pub.publish(Bool(data=on))
 
-    def _run(self):
+    # ── Synthesis thread: always one sentence ahead of the speaker ─────────
+
+    def _synth_loop(self):
+        """Turn text into audio and hand it to the player.
+
+        Synthesis used to happen inline with playback, so every sentence
+        boundary was dead air the length of the next synthesis — measured 1470ms
+        on Sarvam and RTF ~1.8 on local Kokoro (a 3s sentence took 5.4s). Running
+        it here, one buffer ahead, hides that behind the audio already playing.
+        The queue is bounded: getting far ahead only costs memory and makes a
+        barge-in slower to take effect.
+        """
         while rclpy.ok():
             text = self._q.get()
             if text == SPEECH_EOU:
+                self._audio_q.put((self._generation, None, None))
+                continue
+            # A sentence arriving now belongs to a NEW utterance.
+            self._interrupt.clear()
+            gen = self._generation
+            try:
+                audio = self._synthesize(text)
+            except Exception:
+                # Belt and suspenders: an escaped exception must not kill this
+                # thread, or every later sentence is silently dropped forever.
+                self.get_logger().error(
+                    f'unhandled error synthesising {text!r}\n{traceback.format_exc()}')
+                continue
+            if audio is None or gen != self._generation:
+                continue                      # failed, or abandoned mid-synthesis
+            self._audio_q.put((gen, audio[0], audio[1]))
+
+    # ── Playback thread ───────────────────────────────────────────────────
+
+    def _play_loop(self):
+        while rclpy.ok():
+            gen, samples, sr = self._audio_q.get()
+            if gen != self._generation:
+                continue                      # stale: belongs to a stopped utterance
+            if samples is None:               # end-of-utterance marker
+                # Wait out the device buffer before declaring silence. write()
+                # returns when the last sample is HANDED OVER, not when it is
+                # heard; Bluetooth adds another 100-250ms on top. Releasing the
+                # mic too early made the robot transcribe its own tail and
+                # answer itself — a real feedback loop, observed 2026-09-05.
+                drain = self._output_latency_s
+                if drain > 0:
+                    time.sleep(drain)
+                self._close_stream()      # let the speaker idle between turns
+                self._forced_fallback = False
                 self._set_speaking(False)
                 continue
-            # Any sentence arriving now belongs to a NEW utterance — the stop
-            # already emptied the queue of the old one. Clear the abort flag
-            # instead of swallowing this sentence: the old code consumed it,
-            # so the reply after a stop word began at sentence two.
-            self._interrupt.clear()
             self._set_speaking(True)
             try:
-                self._speak(text)
+                self._play(samples, sr, gen)
             except Exception:
-                # Belt and suspenders on top of _speak's own try/excepts: an exception that
-                # somehow still escapes must not kill this thread — every future _run() call
-                # would silently do nothing forever. Found live 2026-09-04 (see _play's docstring).
-                self.get_logger().error(f'unhandled error speaking {text!r}\n{traceback.format_exc()}')
+                self.get_logger().error(f'unhandled playback error\n{traceback.format_exc()}')
 
-    def _speak(self, text: str):
+    def _synthesize(self, text: str):
+        """Text -> (samples, sr), or None if every provider failed."""
+        provider, fell_back = self._provider.name, False
+        t0 = time.monotonic()
+        if self._forced_fallback and self._provider is not self._fallback:
+            samples, sr = self._fallback.synthesize(text)
+            self._publish_tts_meta(self._fallback.name, True, t0, text, samples, sr, ok=True)
+            return samples, sr
         try:
             samples, sr = self._provider.synthesize(text)
         except ProviderUnavailable as e:
             self.get_logger().warning(f'{self._provider.name} failed ({e}); falling back to local')
+            fell_back = True
+            self._forced_fallback = True
+            provider = self._fallback.name
             try:
                 samples, sr = self._fallback.synthesize(text)
             except Exception:
                 # rclpy's logger has no .exception() (stdlib logging does) — format manually or
                 # this masks the real error behind an AttributeError. Found live 2026-09-04.
                 self.get_logger().error(f'local fallback synthesis also failed for: {text!r}\n{traceback.format_exc()}')
-                return
+                self._publish_tts_meta(provider, fell_back, t0, text, None, None, ok=False)
+                return None
         except Exception:
             self.get_logger().error(f'synthesis failed for: {text!r}\n{traceback.format_exc()}')
-            return
-        self._play(samples, sr)
+            self._publish_tts_meta(provider, fell_back, t0, text, None, None, ok=False)
+            return None
+        self._publish_tts_meta(provider, fell_back, t0, text, samples, sr, ok=True)
+        return samples, sr
 
-    def _play(self, samples: np.ndarray, sr: int):
+    def _publish_tts_meta(self, provider: str, fell_back: bool, t0: float, text: str,
+                          samples, sr, ok: bool) -> None:
+        """One JSON line per synthesised sentence — cost, not content.
+
+        Only the character count of the text goes out; what the robot said is
+        already on /voice/robot_speech for anyone who wants it.
+        """
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        audio_ms = int(len(samples) / sr * 1000) if ok and sr else 0
+        meta = {
+            'provider': provider,
+            'configured_provider': self._provider.name,
+            'fell_back': fell_back,
+            'ok': ok,
+            'latency_ms': latency_ms,
+            'audio_ms': audio_ms,
+            # >1 means synthesis is slower than real time — the speaker waits.
+            'rtf': round(latency_ms / audio_ms, 2) if audio_ms else None,
+            'chars': len(text),
+        }
+        try:
+            self._tts_meta_pub.publish(String(data=json.dumps(meta)))
+        except Exception:
+            self.get_logger().debug('tts_meta publish failed')
+
+    def _open_stream(self, sr: int):
+        """Reuse the open stream when the sample rate matches, else reopen."""
+        if self._stream is not None and self._stream_sr == sr:
+            return self._stream
+        self._close_stream()
+        self._stream = sd.OutputStream(samplerate=sr, channels=1, dtype='float32',
+                                       device=self._out_device)
+        self._stream.start()
+        self._stream_sr = sr
+        self._output_latency_s = float(getattr(self._stream, 'latency', 0.0) or 0.0)
+        return self._stream
+
+    def _close_stream(self):
+        stream, self._stream, self._stream_sr = self._stream, None, None
+        if stream is not None:
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:
+                self.get_logger().debug('closing output stream failed')
+
+    def _play(self, samples: np.ndarray, sr: int, gen: int = 0):
         chunk_frames = int(sr * CHUNK_FRAMES_S)
         try:
-            with sd.OutputStream(samplerate=sr, channels=1, dtype='float32', device=self._out_device) as stream:
-                for i in range(0, len(samples), chunk_frames):
-                    if self._interrupt.is_set():
-                        break
-                    stream.write(samples[i:i + chunk_frames])
+            stream = self._open_stream(sr)
+            for i in range(0, len(samples), chunk_frames):
+                if self._interrupt.is_set() or gen != self._generation:
+                    break
+                stream.write(samples[i:i + chunk_frames])
         except Exception:
+            # A Bluetooth speaker that sleeps or wanders out of range takes the
+            # stream with it. Drop it so the next sentence opens a fresh one
+            # rather than writing into a dead handle forever.
+            self._close_stream()
             self.get_logger().error(f'playback failed\n{traceback.format_exc()}')
 
 
