@@ -70,7 +70,9 @@ src/langrobo_core/langrobo_core/       pip package (editable install via require
 src/langrobo_ros/          ament_python package
 ├── langrobo_ros/agent_node.py   ROS2 entry point — params, subscriptions, worker loop
 ├── langrobo_ros/ros2_bridge.py  ALL ROS2 I/O (topics / services / actions)
+├── langrobo_ros/studio_voice_node.py  dev mode only: voice ↔ langgraph dev
 ├── launch/brain_launch.py       micro-ROS agent (optional) + agent_node
+├── launch/studio_voice_launch.py      dev mode: STT + TTS + the voice bridge
 ├── config/agent_params.yaml     LLM + robot ROS parameters
 └── systemd/                     langrobo-brain.service · langrobo-microros.service
 
@@ -84,13 +86,31 @@ The same graph is driven two ways — never simultaneously.
 | | `ros2 launch` / systemd | `langgraph dev` |
 |---|---|---|
 | Entry file | `langrobo_ros/agent_node.py` | `graph_studio.py` |
-| Input source | `/voice/user_input` (Jetson STT) | Studio browser UI |
+| Input source | `/voice/user_input` (STT) | Studio browser UI, **or** `/voice/user_input` via `studio_voice_node` |
 | Bridge | `ROS2Bridge` | `ROS2Bridge` if ROS2 sourced, else `StubBridge` |
-| State | in-node history list (bounded) | Studio in-memory checkpointer |
+| State | in-node history list (bounded) | server-side thread (checkpointer) |
 | LLM config | `agent_params.yaml` ROS params | `.env` `STUDIO_*` vars |
 
 `StubBridge` serves `STUDIO_TEST_IMAGE` (a JPEG path) as the camera frame so
 `look()` vision is testable off-robot.
+
+### Voice in dev mode
+
+`langgraph dev` serves the graph over HTTP and has no ROS side, so dev mode
+would lose both the mic and the speaker — agent_node owns the input queue and
+the reply sink, and the graph itself never speaks (no `speak()` tool).
+`studio_voice_node` (+ `services/studio.py`, pure zone) is that pair and
+nothing else: `/voice/user_input` in, `/voice/robot_speech` + `<|eou|>` out,
+carrying the turn over HTTP to `:2024`.
+
+It works in both directions — a spoken turn runs on the bridge's own thread
+(so it appears in the Studio UI), and a turn typed into the Studio box is
+picked up by a watcher and spoken. `join_stream` does not replay a run's token
+stream to a late joiner, so watched turns are spoken from their final `values`
+snapshot rather than token by token; driven turns still stream sentence by
+sentence. What dev mode does NOT get: `[SYSTEM]` turns, Telegram, the fast
+path, history trimming — all agent_node features, deliberately not duplicated.
+Runbook + arguments: OPERATIONS.md § Voice in dev mode (Studio).
 
 ## Thread model
 

@@ -31,9 +31,9 @@ src/
 │       ├── services/  config · llm(+cloud fallback) · memory(Qdrant) · health API · logging · metrics
 │       ├── utils/     history trimming · message projection · speech streaming · timing
 │       └── bridges/   StubBridge (run everything without ROS2)
-├── langrobo_ros/      ROS2 shim: agent_node + ROS2Bridge + launch + systemd units
+├── langrobo_ros/      ROS2 shim: agent_node + ROS2Bridge + studio_voice_node + launch + systemd
 └── robot_interfaces/  Custom ROS2 interfaces
-scripts/               run_brain.sh · run_microros.sh · dev.sh · install_systemd.sh · latency_replay.py
+scripts/               run_brain.sh · run_microros.sh · dev.sh · dev_voice.sh · install_systemd.sh · latency_replay.py
 graph_studio.py        LangGraph Studio entry point (langgraph dev)
 ```
 
@@ -76,6 +76,9 @@ ros2 launch langrobo_ros brain_launch.py
 
 # Dev — LangGraph Studio UI + micro-ROS (don't run alongside systemd units):
 ./scripts/dev.sh
+
+# Dev + voice — the same, plus STT/TTS: talk to the graph while stepping it:
+./scripts/dev_voice.sh
 ```
 
 Health check (see OPERATIONS.md for the full API):

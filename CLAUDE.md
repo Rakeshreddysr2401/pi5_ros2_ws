@@ -58,6 +58,7 @@ colcon build --symlink-install && sudo systemctl restart langrobo-brain
 systemctl status langrobo-brain langrobo-microros   # production (systemd)
 ros2 launch langrobo_ros brain_launch.py            # foreground all-in-one
 ./scripts/dev.sh                                    # LangGraph Studio :2024
+./scripts/dev_voice.sh                              # Studio :2024 + STT/TTS (talk to it in dev mode)
 
 # Observe
 journalctl -u langrobo-brain -f -o cat              # JSON logs (jq-able, trace_id per turn)
@@ -112,8 +113,10 @@ pip3 install --break-system-packages -r requirements.txt
   briefing (once-daily scheduler), watch (armed person-detection alerts →
   Telegram), telegram (channel: long-poll + sends),
   permissions (role→capability policy — enforced in tools, never only prompts),
-  health (FastAPI :8090), logging, metrics
+  health (FastAPI :8090), studio (LangGraph Server client — dev mode only),
+  logging, metrics
 - `langrobo_ros/` — agent_node (params, queues, worker loop, cache warmer),
+  studio_voice_node (dev-mode voice ↔ `langgraph dev`, see OPERATIONS.md),
   ros2_bridge (all topics/services/actions), launch, systemd units
 
 Adding an agent/tool: recipes at the bottom of ARCHITECTURE.md (registry +

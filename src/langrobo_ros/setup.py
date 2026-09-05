@@ -10,7 +10,8 @@ setup(
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/config', ['config/agent_params.yaml']),
-        ('share/' + package_name + '/launch', ['launch/brain_launch.py']),
+        ('share/' + package_name + '/launch', ['launch/brain_launch.py',
+                                                'launch/studio_voice_launch.py']),
         ('share/' + package_name + '/systemd', [
             'systemd/langrobo-brain.service',
             'systemd/langrobo-microros.service',
@@ -31,6 +32,7 @@ setup(
         'console_scripts': [
             'agent_node = langrobo_ros.agent_node:main',
             'wheel_odom_relay = langrobo_ros.wheel_odom_relay:main',
+            'studio_voice_node = langrobo_ros.studio_voice_node:main',
         ],
     },
 )

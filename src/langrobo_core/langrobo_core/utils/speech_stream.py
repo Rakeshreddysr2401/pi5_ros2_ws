@@ -147,3 +147,55 @@ class SpeechStreamHandler(BaseCallbackHandler):
             self.chunks_sent += 1
         except Exception:
             logger.exception("speech chunk publish failed")
+
+
+class SentenceEmitter:
+    """Sentence chunking for token sources that are NOT LangChain callbacks.
+
+    SpeechStreamHandler covers the in-process graph (agent_node hangs it off the
+    LLM run). Anything else that produces text incrementally — the LangGraph
+    Server SSE stream in dev mode, a future socket transport — feeds this
+    instead. Same boundary rules and the same utterance contract, so the Jetson
+    and pi5 tts_node cannot tell the two apart.
+
+    Usage: feed() per token, close() once at the end of the utterance.
+    """
+
+    def __init__(self, publish: Callable[[str], None]):
+        self._publish = publish
+        self._buf = ""
+        self.chunks_sent = 0
+
+    def feed(self, text: str) -> None:
+        if not text:
+            return
+        ready, self._buf = split_sentences(self._buf + text)
+        for sentence in ready:
+            self._send(sentence)
+
+    def flush(self) -> None:
+        """Publish whatever is buffered, without closing the utterance."""
+        rest, self._buf = self._buf.strip(), ""
+        if rest:
+            self._send(rest)
+
+    def close(self, force: bool = False) -> bool:
+        """Flush, then terminate the utterance with the EOU marker.
+
+        Returns True if a marker went out. Nothing is published for a turn that
+        produced no text at all (unless `force`), which matches agent_node:
+        a silent turn must not leave the mic muted, but it must not fake speech
+        either.
+        """
+        self.flush()
+        if self.chunks_sent or force:
+            self._publish(SPEECH_EOU)
+            return True
+        return False
+
+    def _send(self, text: str) -> None:
+        try:
+            self._publish(text)
+            self.chunks_sent += 1
+        except Exception:
+            logger.exception("speech chunk publish failed")

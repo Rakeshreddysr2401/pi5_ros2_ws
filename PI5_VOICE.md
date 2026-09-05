@@ -271,6 +271,20 @@ voice, wake aliases, stop words, VAD aggressiveness). Model weights live in
 `src/langrobo_ros/models/` — gitignored (too large), see that directory's
 `README.md` to refetch.
 
+**Against `langgraph dev` instead of the brain.** In dev mode the graph runs
+inside the `langgraph dev` server, which has no ROS side — `agent_node` is not
+there to answer, so this pair would transcribe into silence. Use the bridge
+launch instead; it starts these same two nodes plus `studio_voice_node`, which
+carries the utterance to the server on `:2024` and republishes the reply here:
+
+```bash
+./scripts/dev_voice.sh                            # or: everything at once, incl. the graph server
+ros2 launch langrobo_ros studio_voice_launch.py   # voice:=false if this pair is already up
+```
+
+Same `/voice/*` contract and the same STT/TTS nodes — only the brain end
+differs. Runbook: OPERATIONS.md → "Voice in dev mode (Studio)".
+
 Not yet wired into `fleet.sh` or systemd — currently a manual `ros2 launch`.
 Once the live-mic test passes, promoting this to a `fleet.sh rover --voice`
 flag (or its own systemd unit, mirroring `langrobo-brain`) is the natural

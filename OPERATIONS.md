@@ -12,9 +12,101 @@ Deploy, run, observe, and troubleshoot the Pi5 brain.
 | **Production** | `./scripts/install_systemd.sh` (once) | 24/7: auto-restart, boot persistence, JSON logs in journald |
 | Foreground | `ros2 launch langrobo_ros brain_launch.py` | attended testing (micro-ROS included) |
 | Dev / Studio | `./scripts/dev.sh` | LangGraph Studio UI + micro-ROS agent |
+| Dev + voice | `./scripts/dev_voice.sh` | all of the above **plus** STT/TTS — talk to the graph while stepping it |
 
 Never run two modes at once — both drive `/cmd_vel` and bind micro-ROS UDP 8888.
 Stop production first: `sudo systemctl stop langrobo-brain langrobo-microros`.
+
+### Voice in dev mode (Studio)
+
+`langgraph dev` serves the graph over HTTP and has no ROS side, so dev mode
+loses both the mic and the speaker — agent_node owns the input queue and the
+reply sink, not the graph. `studio_voice_node` is that missing pair, and
+nothing else: no graph, no bridge, no history.
+
+```bash
+./scripts/dev_voice.sh          # micro-ROS + langgraph dev + STT/TTS + bridge
+```
+
+It reuses a `langgraph dev` or micro-ROS agent that is already running rather
+than fighting it for the port, refuses to start while `langrobo-brain` is up
+(both own `/cmd_vel` and `/voice/user_input`), and Ctrl+C stops only what it
+started. `--no-voice` reduces it to `dev.sh`; `--no-micro` skips the ESP32 link;
+a bare number sets the micro-ROS UDP port. Background logs land in
+`/tmp/langrobo-dev/` (override with `LANGROBO_DEV_LOGS`).
+
+The two halves can still be run separately — `./scripts/dev.sh` in one terminal
+and `ros2 launch langrobo_ros studio_voice_launch.py` in another:
+
+```bash
+./scripts/dev.sh                                   # terminal 1 — graph on :2024
+ros2 launch langrobo_ros studio_voice_launch.py    # terminal 2 — voice pair + bridge
+```
+
+| Argument | Default | Use |
+|---|---|---|
+| `voice:=false` | `true` | the pi5 STT/TTS pair is already running |
+| `watch_ui:=false` | `true` | stop speaking turns typed into the Studio box |
+| `thread_id:=…` | new thread | pin to an existing conversation (id from the Studio URL) so typed and spoken turns share one history |
+| `thread_mode:=per_turn` | `persistent` | fresh conversation per utterance (A/B one prompt) |
+| `stream_speech:=false` | `true` | speak the whole reply at the end instead of streaming |
+| `studio_url:=…` | `http://127.0.0.1:2024` | non-default server |
+| `assistant_id:=…` | `agent` | the graph key in `langgraph.json` |
+
+Both directions reach the speaker:
+
+| You | Appears in Studio | Spoken |
+|---|---|---|
+| speak into the mic | ✅ the bridge's thread is a normal server thread | ✅ streamed sentence by sentence |
+| type in the Studio browser box | ✅ (it is the UI's own run) | ✅ once the run finishes |
+
+The asymmetry is the server's, not ours: `join_stream` does **not** replay a
+run's token stream to a late joiner (only `values` events arrive — measured
+against langgraph-sdk 0.4.2), so a watched turn is spoken from its final state
+snapshot rather than token by token. A watcher polls busy threads every
+`watch_poll_s`; a run that starts and finishes inside one interval is missed by
+design, and runs already in flight when the bridge starts are skipped — after a
+restart they belong to the previous session, not to anyone in the room. One speech lock keeps the two paths from interleaving mid-sentence.
+
+A spoken turn is never also spoken as a watched one, but note *how*: run ids
+are only known once a run's metadata event arrives, and the poll can beat it
+(seen live 2026-09-05 — the watcher joined a mic turn already in flight). So
+the guard is the THREAD, not the id: while the bridge is driving a turn, and
+for 3s after, every run on its own thread is its own by construction. A pinned
+thread is exempt outside that window, so a shared conversation still speaks
+turns typed in the UI.
+
+Four more knobs are node parameters rather than launch arguments — reach them
+with `ros2 run langrobo_ros studio_voice_node --ros-args -p <name>:=<value>`:
+`watch_poll_s` (0.5s), `speak_errors` (speak a short line when the server is
+down), `skip_nodes` (agents whose tokens never reach the speaker — default
+`supervisor`, which emits only grammar-forced handovers), and `turn_timeout_s`.
+
+Kept from production: the `/voice/*` wire protocol (sentence chunks closed by
+`<|eou|>`, via the shared `SentenceEmitter` — so tts_node cannot tell the two
+brains apart), replace-newest input queueing, barge-in (a newer utterance
+cancels the server run), and the sticky-agent rule (`supervisor` never
+persists).
+
+Dropped on purpose — these live in agent_node, and a second implementation
+would be a second thing to keep in sync:
+
+| Not in dev mode | Why |
+|---|---|
+| `[SYSTEM]` turns (reminders, watch, briefing, nav-done) | agent_node's ROS timers |
+| Telegram channel | agent_node's poller and reply sink |
+| fast path | the zero-LLM movement lane; dev mode exists to watch the graph |
+| history trimming | the server thread holds the conversation (checkpointer) |
+
+Movement still works: `graph_studio.py` attaches a real `ROS2Bridge` when ROS2
+is sourced, so tools publish `/cmd_vel` from **that** process.
+`studio_voice_node` only reads `/voice/user_input` and writes
+`/voice/robot_speech` — two processes, no overlap.
+
+Server down or a dropped turn → the node speaks one short offline line and
+keeps listening (hard rule 4); the real diagnosis is in the `langgraph dev`
+terminal. The client is transport-injected, so
+`src/langrobo_core/tests/test_studio.py` covers it with no server running.
 
 ### systemd units
 
