@@ -26,6 +26,7 @@ Design notes
 Transport is injectable (`client_factory`) so tests run without a server.
 """
 
+import collections
 import logging
 import os
 import threading
@@ -208,8 +209,11 @@ class StudioClient:
         self._turns = 0
         # Run ids this client started — the watcher skips them so a voice turn
         # is not spoken a second time by the watch path.
-        self._own_runs: set[str] = set()
-        self._seen_runs: set[str] = set()
+        # Bounded FIFOs, not sets: clearing wholesale at a size cap could
+        # re-yield a run that was still in flight at that moment, speaking the
+        # same reply twice. Oldest ids fall off the end instead.
+        self._own_runs: collections.OrderedDict[str, None] = collections.OrderedDict()
+        self._seen_runs: collections.OrderedDict[str, None] = collections.OrderedDict()
         # Run ids are only known once the run's metadata event arrives, so
         # `_own_runs` alone is a RACE: the watcher's poll can see our own run
         # first and join it (observed live 2026-09-05 — the watcher grabbed a
@@ -393,10 +397,15 @@ class StudioClient:
             return False
         return bool(self._driving) or (time.time() - self._drove_at) < self.OWN_THREAD_GRACE_S
 
+    MAX_REMEMBERED_RUNS = 500
+
     def _remember_seen(self, run_id: str) -> None:
-        if len(self._seen_runs) > 500:      # dev session, not a ledger
-            self._seen_runs.clear()
-        self._seen_runs.add(run_id)
+        self._remember(self._seen_runs, run_id)
+
+    def _remember(self, store, run_id: str) -> None:
+        store[run_id] = None
+        while len(store) > self.MAX_REMEMBERED_RUNS:
+            store.popitem(last=False)       # evict the oldest, never the lot
 
     # ── Shared event loop (driving and watching parse identically) ──────────
 
@@ -419,7 +428,7 @@ class StudioClient:
                 if isinstance(data, dict) and data.get("run_id"):
                     run_id = str(data["run_id"])
                     if own:
-                        self._own_runs.add(run_id)
+                        self._remember(self._own_runs, run_id)
                 continue
             if event.startswith("error"):
                 yield TurnError(self._error_text(data))

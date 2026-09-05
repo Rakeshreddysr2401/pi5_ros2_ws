@@ -31,8 +31,11 @@ langrobo-brain, which owns the same topics.
 """
 
 import threading
+import time
 
 import rclpy
+from geometry_msgs.msg import Twist
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
 
@@ -48,6 +51,7 @@ from langrobo_core.services.studio import (
     Values,
 )
 from langrobo_core.utils.speech_stream import SentenceEmitter
+from langrobo_core.utils.utterance import join_utterances, looks_incomplete
 
 # Spoken when the dev server is down or drops a turn. Short on purpose: the
 # user is standing there and the real diagnosis is on the terminal.
@@ -74,6 +78,16 @@ class StudioVoiceNode(Node):
         # stream_speech:=false on agent_node).
         self.declare_parameter("stream_speech",  True)
         self.declare_parameter("speak_errors",   True)
+        # Same continuation merge as agent_node: a pause longer than the VAD's
+        # end-silence must not cost the first half of the sentence. 0 disables.
+        self.declare_parameter("utterance_merge_window_s", 1.2)
+        # Safety. agent_node halts the wheels on every new utterance via the
+        # bridge; this node has no bridge (the langgraph dev process owns it),
+        # so barging in on "go to the kitchen" left the rover driving. Publish a
+        # zero Twist directly. Best-effort and rover-shaped: the sim body reads
+        # TwistStamped on its own topic, so set halt_topic or turn this off.
+        self.declare_parameter("halt_on_input", True)
+        self.declare_parameter("halt_topic",    "/cmd_vel")
         # Speak turns started elsewhere — the Studio browser box, another
         # client. Off = the speaker only ever answers the mic.
         self.declare_parameter("watch_ui",       True)
@@ -91,6 +105,7 @@ class StudioVoiceNode(Node):
         )
         self._stream_speech = self.get_parameter("stream_speech").value
         self._speak_errors  = self.get_parameter("speak_errors").value
+        self._merge_window  = float(self.get_parameter("utterance_merge_window_s").value)
         self._client = StudioClient(cfg)
         pinned = str(self.get_parameter("thread_id").value or "").strip()
         if pinned:
@@ -102,6 +117,7 @@ class StudioVoiceNode(Node):
         # Deliberately smaller — no system or Telegram queues in dev mode.
         self._queue_lock     = threading.Lock()
         self._user_pending: str | None = None
+        self._user_pending_at: float = 0.0
         self._input_event    = threading.Event()
         self._turn_interrupt = threading.Event()
         self._turn_active    = False
@@ -112,6 +128,9 @@ class StudioVoiceNode(Node):
 
         # ── Topics (the shared /voice contract — see PI5_VOICE.md) ────────
         self._speech_pub   = self.create_publisher(String, "/voice/robot_speech", 10)
+        self._halt_pub = (self.create_publisher(
+            Twist, self.get_parameter("halt_topic").value, 10)
+            if self.get_parameter("halt_on_input").value else None)
         self._pub_thinking = self.create_publisher(Bool, "/brain/thinking", 1)
         self.create_subscription(String, "/voice/user_input", self._on_user_input, 10)
         self.create_subscription(String, "/voice/tts_stop",   self._on_tts_stop, 10)
@@ -132,19 +151,34 @@ class StudioVoiceNode(Node):
         text = msg.data.strip()
         if not text:
             return
+        # New speech means the last instruction is superseded — stop moving
+        # before anything else, exactly as agent_node does.
+        self._halt_motion()
         with self._queue_lock:
-            if self._user_pending is not None:
-                self.get_logger().warning("Replacing an unanswered utterance")
-            self._user_pending = text
+            now = time.monotonic()
+            if (self._user_pending is not None and self._merge_window > 0
+                    and now - self._user_pending_at <= self._merge_window):
+                self.get_logger().info("Merging continued utterance")
+                self._user_pending = f"{self._user_pending} {text}"
+            else:
+                if self._user_pending is not None:
+                    self.get_logger().warning("Replacing an unanswered utterance")
+                self._user_pending = text
+            self._user_pending_at = now
             if self._turn_active:
                 self._turn_interrupt.set()
         self._input_event.set()
+
+    def _halt_motion(self) -> None:
+        if self._halt_pub is not None:
+            self._halt_pub.publish(Twist())
 
     def _on_tts_stop(self, msg: String) -> None:
         """Stop keyword during speech. Wake-word barge-in ("[wake:…]") is the
         Jetson/tts_node's business and must not abandon the turn here."""
         if msg.data.startswith("[wake:"):
             return
+        self._halt_motion()
         with self._queue_lock:
             if self._turn_active:
                 self._turn_interrupt.set()
@@ -161,6 +195,7 @@ class StudioVoiceNode(Node):
                 self._turn_interrupt.clear()
                 self._turn_active = text is not None
             if text:
+                text = self._await_continuation(text)
                 try:
                     with self._speech_lock:
                         self._run_turn(text)
@@ -172,6 +207,38 @@ class StudioVoiceNode(Node):
                     with self._queue_lock:
                         self._turn_active = False
                     self._pub_thinking.publish(Bool(data=False))
+
+    def _await_continuation(self, text: str) -> str:
+        """Hold an utterance that ends mid-thought, and merge what follows.
+
+        Merging in the callback is not enough: the worker drains the pending
+        slot within milliseconds, so by the time the second fragment lands
+        there is nothing left to merge with and it becomes its own turn (which
+        is how "I want you to" + "go to the kitchen" became two turns, the
+        first half answered on its own). The hold happens here instead, and
+        only for a transcript that reads as unfinished — a finished one
+        dispatches with no added latency at all.
+        """
+        if self._merge_window <= 0:
+            return text
+        deadline = time.monotonic() + self._merge_window
+        while looks_incomplete(text):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not self._input_event.wait(remaining):
+                break
+            with self._queue_lock:
+                more, self._user_pending = self._user_pending, None
+                self._input_event.clear()
+                # The continuation set the barge-in flag on its way in (the turn
+                # counts as active during the hold). It is a continuation, not
+                # an interruption — clear it or the merged turn aborts at once.
+                self._turn_interrupt.clear()
+            if not more:
+                break
+            text = join_utterances(text, more)
+            self.get_logger().info(f"Merged continued utterance: {text!r}")
+            deadline = time.monotonic() + self._merge_window
+        return text
 
     def _run_turn(self, text: str) -> None:
         self.get_logger().info(f"→ Studio: {text}")
@@ -294,7 +361,9 @@ def main(args=None):
     node = StudioVoiceNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
+        # SIGTERM from `ros2 launch` raises ExternalShutdownException, which
+        # printed a traceback and exited 1 — a clean stop looked like a crash.
         pass
     finally:
         node.destroy_node()

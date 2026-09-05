@@ -39,6 +39,7 @@ from langrobo_core.tools.reminders import get_store as get_reminder_store
 from langrobo_core.graph import build_graph
 from langrobo_core.utils import timing
 from langrobo_core.utils.history import trim_history
+from langrobo_core.utils.utterance import join_utterances, looks_incomplete
 from langrobo_core.utils.speech_stream import SpeechStreamHandler
 
 from .ros2_bridge import ROS2Bridge
@@ -62,6 +63,12 @@ class AgentNode(Node):
         self.declare_parameter("base_url",   "http://singireddys-mac-mini.local:8080/v1")
         self.declare_parameter("max_tokens", 3000)
         self.declare_parameter("history_turns", 20)
+        # A natural mid-thought pause outlasts the VAD's 600ms end-silence, so
+        # one sentence arrives as two utterances. Within this window a second
+        # utterance CONTINUES the first instead of replacing it — replacing
+        # silently discarded the first half ("I want you to" + "go to the
+        # kitchen" reached the graph as just "go to the kitchen"). 0 disables.
+        self.declare_parameter("utterance_merge_window_s", 1.2)
         self.declare_parameter("use_vision",  True)
         # Force the supervisor's mandatory handover via tool_choice (grammar-constrained
         # on llama.cpp). Set False if your llama.cpp build lacks --jinja tool support.
@@ -116,6 +123,7 @@ class AgentNode(Node):
         # History stores raw message objects (incl. captured image blocks),
         # not turn-pairs, so allow extra room for tool-call / image messages.
         self._max_history    = self.get_parameter("history_turns").value * 4
+        self._merge_window   = float(self.get_parameter("utterance_merge_window_s").value)
         self._use_vision     = self.get_parameter("use_vision").value
         llm_slot             = self.get_parameter("llm_slot").value
         local_agent_slot     = self.get_parameter("local_agent_slot").value
@@ -267,6 +275,7 @@ class AgentNode(Node):
         # _input_event:      wakes the worker when anything is pending
         self._queue_lock     = threading.Lock()
         self._user_pending:   str | None = None
+        self._user_pending_at: float = 0.0
         self._system_pending: list[str] = []
         self._telegram_pending: list = []
         self._input_event    = threading.Event()
@@ -420,9 +429,17 @@ class AgentNode(Node):
         self._bridge.cancel_navigation()
         self._bridge.request_motion_stop()
         with self._queue_lock:
-            if self._user_pending is not None:
-                self.get_logger().warning("User queue: replacing pending message with newer input")
-            self._user_pending = text
+            now = time.monotonic()
+            if (self._user_pending is not None and self._merge_window > 0
+                    and now - self._user_pending_at <= self._merge_window):
+                # Continuation of an utterance we have not answered yet.
+                self.get_logger().info("User queue: merging continued utterance")
+                self._user_pending = f"{self._user_pending} {text}"
+            else:
+                if self._user_pending is not None:
+                    self.get_logger().warning("User queue: replacing pending message with newer input")
+                self._user_pending = text
+            self._user_pending_at = now
             if self._turn_active and self._turn_channel == "voice":
                 # Barge-in: abandon the in-flight turn — the user has moved on.
                 # Telegram turns are never abandoned; this input queues behind.
@@ -608,7 +625,38 @@ class AgentNode(Node):
                     self._input_event.clear()
 
             if text:
+                if not is_system and telegram is None:
+                    text = self._await_continuation(text)
                 self._process(text, is_system, telegram=telegram)
+
+    def _await_continuation(self, text: str) -> str:
+        """Hold a voice utterance that ends mid-thought and merge what follows.
+
+        Only voice: a Telegram message arrives whole, and a [SYSTEM] turn is
+        machine-written. Merging in _on_user_input alone could not work — the
+        worker empties the pending slot within milliseconds — so the wait lives
+        here, and only for a transcript that reads unfinished (dangling
+        conjunction, preposition or filler). Finished speech pays nothing.
+        """
+        if self._merge_window <= 0:
+            return text
+        deadline = time.monotonic() + self._merge_window
+        while looks_incomplete(text):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not self._input_event.wait(remaining):
+                break
+            with self._queue_lock:
+                more, self._user_pending = self._user_pending, None
+                if not (self._system_pending or self._telegram_pending):
+                    self._input_event.clear()
+                # A continuation is not a barge-in.
+                self._turn_interrupt.clear()
+            if not more:
+                break
+            text = join_utterances(text, more)
+            self.get_logger().info(f"Merged continued utterance: {text!r}")
+            deadline = time.monotonic() + self._merge_window
+        return text
 
     # ── Telegram turn framing (worker thread) ─────────────────────────────
 

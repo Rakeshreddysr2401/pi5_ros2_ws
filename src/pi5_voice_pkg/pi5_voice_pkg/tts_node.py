@@ -87,6 +87,13 @@ class TTSNode(Node):
 
         self._q: queue.Queue[str] = queue.Queue()
         self._interrupt = threading.Event()
+        # /voice/tts_speaking is edge-triggered from TWO threads (the worker and
+        # the stop callback), so the flag is instance state behind a lock. It was
+        # a local in _run(): a stop cleared the queue including the utterance's
+        # <|eou|>, so the worker never published False and stt_node muted the mic
+        # forever (stt_node.py drops every frame while tts_speaking is true).
+        self._speaking = False
+        self._speaking_lock = threading.Lock()
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
 
@@ -102,6 +109,12 @@ class TTSNode(Node):
             return self._fallback
 
     def _find_device(self, hint: str):
+        # '' matches every name, so an unset hint used to take device 0 without
+        # warning — wrong speaker, no clue why.
+        hint = (hint or '').strip()
+        if not hint:
+            self.get_logger().info('no output_device hint — using the system default')
+            return None
         for i, d in enumerate(sd.query_devices()):
             if hint.lower() in d['name'].lower() and d['max_output_channels'] > 0:
                 return i
@@ -115,22 +128,30 @@ class TTSNode(Node):
         self._interrupt.set()
         with self._q.mutex:
             self._q.queue.clear()
+        # The queue we just dropped may have held this utterance's <|eou|>, and
+        # that marker is the only thing that unmutes the mic. Release it here.
+        self._set_speaking(False)
+
+    def _set_speaking(self, on: bool) -> None:
+        """Publish /voice/tts_speaking on edges only. Safe from any thread."""
+        with self._speaking_lock:
+            if self._speaking == on:
+                return
+            self._speaking = on
+        self._speaking_pub.publish(Bool(data=on))
 
     def _run(self):
-        speaking = False
         while rclpy.ok():
             text = self._q.get()
             if text == SPEECH_EOU:
-                if speaking:
-                    self._speaking_pub.publish(Bool(data=False))
-                    speaking = False
+                self._set_speaking(False)
                 continue
-            if self._interrupt.is_set():
-                self._interrupt.clear()
-                continue
-            if not speaking:
-                self._speaking_pub.publish(Bool(data=True))
-                speaking = True
+            # Any sentence arriving now belongs to a NEW utterance — the stop
+            # already emptied the queue of the old one. Clear the abort flag
+            # instead of swallowing this sentence: the old code consumed it,
+            # so the reply after a stop word began at sentence two.
+            self._interrupt.clear()
+            self._set_speaking(True)
             try:
                 self._speak(text)
             except Exception:

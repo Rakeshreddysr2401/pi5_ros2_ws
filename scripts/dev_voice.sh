@@ -61,7 +61,12 @@ PIDS=()
 cleanup() {
     echo ""
     echo "==> Stopping what this script started..."
-    for pid in "${PIDS[@]}"; do kill "$pid" 2>/dev/null || true; done
+    # setsid put each child in its own process group, so kill the GROUP:
+    # `langgraph dev` spawns a server child that holds :2024 and survives a
+    # plain kill of the parent, leaving the port taken after Ctrl+C.
+    for pid in "${PIDS[@]}"; do
+        kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+    done
     exit 0
 }
 trap cleanup INT TERM
@@ -74,7 +79,7 @@ if [ "$WANT_MICRO" = 1 ]; then
         echo "==> micro-ROS agent  : UDP $UDP_PORT (already running — reusing it)"
     else
         echo "==> micro-ROS agent  : UDP $UDP_PORT   (log: $LOG_DIR/microros.log)"
-        ros2 run micro_ros_agent micro_ros_agent udp4 --port "$UDP_PORT" \
+        setsid ros2 run micro_ros_agent micro_ros_agent udp4 --port "$UDP_PORT" \
             > "$LOG_DIR/microros.log" 2>&1 &
         PIDS+=($!)
     fi
@@ -85,7 +90,8 @@ if curl -sf -m 2 "$STUDIO_URL/ok" >/dev/null 2>&1; then
     echo "==> LangGraph Studio : $STUDIO_URL (already running — reusing it)"
 else
     echo "==> LangGraph Studio : $STUDIO_URL   (log: $LOG_DIR/langgraph.log)"
-    ( cd ~/ros2_ws && langgraph dev --no-browser ) > "$LOG_DIR/langgraph.log" 2>&1 &
+    setsid bash -c 'cd ~/ros2_ws && exec langgraph dev --no-browser' \
+        > "$LOG_DIR/langgraph.log" 2>&1 &
     PIDS+=($!)
 
     printf "    waiting for the graph server"
@@ -103,6 +109,13 @@ fi
 
 # ── Voice (STT + TTS + the bridge) ──────────────────────────────────────────
 if [ "$WANT_VOICE" = 0 ]; then
+    if [ ${#PIDS[@]} -eq 0 ]; then
+        # `wait` with no children returns immediately, so this used to exit at
+        # once while looking like it was supervising something.
+        echo "==> nothing new to start — micro-ROS and the graph server were"
+        echo "    already running. Leaving them alone."
+        exit 0
+    fi
     echo "==> voice disabled (--no-voice). Ctrl+C to stop."
     wait
     exit 0

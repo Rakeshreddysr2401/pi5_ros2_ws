@@ -70,6 +70,10 @@ class STTNode(Node):
         self.declare_parameter('model_dir', '')
         self.declare_parameter('threads', 4)
         self.declare_parameter('vad_aggressiveness', 2)
+        # Seconds between [diag] lines. These ran unconditionally at ~1s, which
+        # is ~86k INFO lines a day into journald on a robot meant to run 24/7.
+        # 0 turns them off.
+        self.declare_parameter('diag_log_period_s', 10.0)
         self.declare_parameter('wake_aliases', ['rakhi', 'chotu', 'hey pi'])
         self.declare_parameter('stop_words', ['stop'])
         self.declare_parameter('stt_provider', 'local')       # local | sarvam | soniox
@@ -81,6 +85,8 @@ class STTNode(Node):
         model_dir = self.get_parameter('model_dir').value
         threads = int(self.get_parameter('threads').value)
         self._vad = webrtcvad.Vad(int(self.get_parameter('vad_aggressiveness').value))
+        _diag_s = float(self.get_parameter('diag_log_period_s').value)
+        self._diag_every = int(_diag_s * 1000 / FRAME_MS) if _diag_s > 0 else 0
         self._aliases = [a.lower() for a in self.get_parameter('wake_aliases').value]
         self._stop_words = [w.lower() for w in self.get_parameter('stop_words').value]
         provider_name = self.get_parameter('stt_provider').value
@@ -150,6 +156,12 @@ class STTNode(Node):
             return self._fallback
 
     def _find_device(self, hint: str):
+        # '' matches every name, so an unset hint used to take device 0 without
+        # warning — wrong mic, no clue why.
+        hint = (hint or '').strip()
+        if not hint:
+            self.get_logger().info('no input_device hint — using the system default')
+            return None
         for i, d in enumerate(sd.query_devices()):
             if hint.lower() in d['name'].lower() and d['max_input_channels'] > 0:
                 return i
@@ -167,7 +179,7 @@ class STTNode(Node):
         # [diag 2026-09-04] ~1s heartbeat proving the callback fires and whether VAD ever
         # classifies voice. Remove once the VAD-silence issue is closed (see TODO.md).
         self._dbg_frames += 1
-        if self._dbg_frames % 33 == 0:
+        if self._diag_every and self._dbg_frames % self._diag_every == 0:
             self.get_logger().info(
                 f'[diag] frames={self._dbg_frames} voiced={voiced} in_speech={self._in_speech}')
 
@@ -199,6 +211,26 @@ class STTNode(Node):
         pcm = np.frombuffer(b''.join(frames), dtype=np.int16).astype(np.float32) / 32768.0
         self._queue.put(pcm)  # hand off — never block the audio callback (see module docstring)
 
+    # Words that turn a stop word into something else entirely.
+    _STOP_NEGATIONS = ('dont', "don't", 'do not', 'never', 'without', 'not')
+
+    def _is_stop_command(self, low: str) -> bool:
+        """True only for an utterance that IS a stop command.
+
+        Substring matching fired on 'don\'t stop' and 'stop by the shop later' —
+        a halt word must not be triggered by a sentence that merely contains it.
+        A real stop is short and made of stop words, wake aliases and filler.
+        """
+        if any(neg in low for neg in self._STOP_NEGATIONS):
+            return False
+        words = re.findall(r"[\w']+", low)
+        if not words or len(words) > 4:
+            return False
+        if not any(w in self._stop_words for w in words):
+            return False
+        filler = set(self._aliases) | {'please', 'now', 'just', 'hey', 'ok', 'okay'}
+        return all(w in self._stop_words or w in filler for w in words)
+
     def _worker_loop(self):
         while rclpy.ok():
             pcm = self._queue.get()
@@ -222,7 +254,7 @@ class STTNode(Node):
             return
 
         low = text.lower()
-        if any(re.search(rf'\b{re.escape(w)}\b', low) for w in self._stop_words):
+        if self._is_stop_command(low):
             self.get_logger().info(f'stop word heard: {text!r}')
             self._tts_stop_pub.publish(String(data='[stop]'))
             return
