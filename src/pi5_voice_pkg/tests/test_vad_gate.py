@@ -22,6 +22,16 @@ def test_room_noise_is_too_quiet():
     assert not r and "too quiet" in r.reason
 
 
+def test_measured_bluetooth_noise_floor_is_rejected():
+    """Regression: the default min_rms shipped at 0.012, below this file's own
+    measured Bluetooth-mic noise floor (~0.029) — every idle-room reading
+    passed "too quiet" and only voiced_ratio stood between ambient noise and
+    a hallucinated cloud transcript. Pin the actual measured floor, voiced
+    like real background noise, so this can't regress silently again."""
+    r = evaluate(frames=60, rms=0.029, voiced_frames=40, cfg=CFG)
+    assert not r and "too quiet" in r.reason
+
+
 def test_a_single_noise_burst_is_mostly_silence():
     """One door slam trips the VAD, then 2s of nothing — the shape of the
     segments that produced invented transcripts."""

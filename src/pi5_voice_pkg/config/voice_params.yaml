@@ -59,8 +59,11 @@ pi5_stt_node:
     # into sentences was answered as if spoken (observed 2026-09-05).
     require_wake: true
     stop_words: ["stop"]
-    # Noise gate before the cloud call — see vad_gate.py.
-    min_utterance_rms: 0.012
+    # Noise gate before the cloud call — see vad_gate.py. 0.05 clears the
+    # measured Bluetooth-mic noise floor (~0.029) with margin; the old 0.012
+    # shipped below that floor, so idle-room noise passed this check and only
+    # voiced_ratio stood between it and a hallucinated cloud transcript.
+    min_utterance_rms: 0.05
     min_voiced_ratio: 0.35
     # local | sarvam | soniox — see PI5_VOICE.md for the cost/latency comparison.
     # sarvam/soniox need SARVAM_API_KEY / SONIOX_API_KEY in ~/ros2_ws/.env (example.env

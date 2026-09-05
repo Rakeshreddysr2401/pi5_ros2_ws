@@ -25,8 +25,13 @@ class GateConfig:
     """Thresholds. Defaults are deliberately permissive: a dropped command is
     far worse than an occasional hallucination getting through."""
     min_frames: int = 10          # ~300ms at 30ms frames
-    min_rms: float = 0.012        # measured room noise floor sat near 0.029 on
-                                  # a Bluetooth mic, speech peaked around 0.67
+    # Measured room noise floor sat near 0.029 on a Bluetooth mic (bt_profile:
+    # hfp — the mic currently configured), speech peaked around 0.67. The
+    # threshold must clear the noise floor with margin or this gate does not
+    # do what it exists to do — 0.012 shipped below 0.029 (fixed 2026-09-05:
+    # every idle-room reading passed "too quiet" and only voiced_ratio stood
+    # between ambient Bluetooth-mic noise and another hallucinated transcript).
+    min_rms: float = 0.05
     min_voiced_ratio: float = 0.35
 
 
