@@ -249,10 +249,17 @@ class ROS2Bridge:
         return self._known_locations
 
     def get_current_pose(self) -> tuple | None:
-        """Robot pose in the map frame as (x, y, yaw_deg); None if TF has no fix."""
+        """Robot pose as (x, y, yaw_deg); None if TF has no fix.
+
+        Frame is "odom", not "map" — this robot (see rover repo README/TODO)
+        runs Nav2 single-session with no relocalisation; nothing publishes a
+        map frame here, so a "map" lookup always failed (this returned None
+        on every real call, silently, since whoever wrote it assumed a
+        different, fuller perception stack). Fixed 2026-09-06 alongside the
+        matching frame_id in _nav_worker below."""
         import rclpy.time
         try:
-            t = self._tf_buffer.lookup_transform("map", "base_link", rclpy.time.Time())
+            t = self._tf_buffer.lookup_transform("odom", "base_link", rclpy.time.Time())
         except Exception:
             return None
         q = t.transform.rotation
@@ -583,7 +590,11 @@ class ROS2Bridge:
 
             goal = NavigateToPose.Goal()
             goal.pose = PoseStamped()
-            goal.pose.header.frame_id = "map"
+            # "odom", not "map" (fixed 2026-09-06, matches get_current_pose
+            # above): this rover's Nav2 has no map frame — single-session,
+            # no relocalisation. A "map" goal here silently could never be
+            # transformed and every navigate_to_pose/approach_* call failed.
+            goal.pose.header.frame_id = "odom"
             # stamp left zero = "use latest TF": Nav2 re-transforms the
             # ORIGINAL stamp on every replan, so a now() stamp ages out of
             # the 10s TF cache mid-drive and aborts the goal (2026-07-16).
