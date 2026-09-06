@@ -25,6 +25,23 @@ from langrobo_core.utils.speech_stream import SPEECH_EOU
 
 class ROS2Bridge:
 
+    # The ONE frame this brain navigates and localises in.
+    #
+    # Every goal sent to Nav2, every pose read from TF, and every 3D detection
+    # accepted from the Jetson must agree on this. They did not: "map" was
+    # hardcoded in three separate places, written against a fuller perception
+    # stack that this rover does not have. This rover's Nav2 runs single-session
+    # in `odom` with no relocalisation (nav2.yaml: global_frame: odom, in the
+    # rover repo), so nothing ever publishes a map frame — get_current_pose()
+    # returned None on every call and every navigate_to_pose/approach_* goal
+    # was silently untransformable. Two of the three were fixed by hand on
+    # 2026-09-06; on_detections was missed and still dropped every detection.
+    #
+    # It is a single name now precisely so the three can never drift apart
+    # again. Set LANGROBO_NAV_FRAME=map on a rig that really does run AMCL or
+    # cuVSLAM map-relocalisation.
+    NAV_FRAME = os.environ.get("LANGROBO_NAV_FRAME", "odom")
+
     def __init__(self, node, known_locations: dict = None, robot_body: str = "rover"):
         self._node = node
         # Which body this brain drives cmd_vel to: the real ESP32 rover (plain
@@ -81,7 +98,7 @@ class ROS2Bridge:
         self._frame_stamp: float = 0.0   # time.monotonic() of last frame
 
         # ── 3D object detections (Jetson detections_3d node, D555 depth) ──────
-        # /vision/detections_3d JSON: {"frame":"map","objects":[{"label","x","y",
+        # /vision/detections_3d JSON: {"frame":"<NAV_FRAME>","objects":[{"label","x","y",
         # "z","conf"}, ...]}. Stamped on RECEIPT here, so the Pi5↔Jetson clock
         # drift (~1.5s, CLAUDE.md gotcha) never enters an age comparison.
         #
@@ -151,7 +168,7 @@ class ROS2Bridge:
         self._music_pub         = node.create_publisher(String, "/audio/music_cmd", 10)
         # Camera pan/tilt: raw servo angles for the ESP32 (0-180, 90=centre) +
         # a JSON state topic the Jetson TF broadcaster mirrors into the TF tree
-        # (map-frame detections stay correct while the head is turned).
+        # (NAV_FRAME detections stay correct while the head is turned).
         from std_msgs.msg import UInt16
         self._UInt16 = UInt16
         self._servo_pan_pub  = node.create_publisher(UInt16, "/servo_pan", 10)
@@ -198,15 +215,27 @@ class ROS2Bridge:
     def on_detections(self, msg) -> None:
         """Cache /vision/detections_3d (JSON String) per label.
 
-        Only map-frame detections are cached: an odom/camera-frame position fed
-        to Nav2 as a map goal would send the robot somewhere wrong — dropping
-        the message (and logging once) is safer than approximating."""
+        Only detections already expressed in NAV_FRAME are kept: a position in
+        some other frame, fed to Nav2 as if it were a goal, sends the robot
+        somewhere wrong. Dropping is safer than approximating.
+
+        This used to demand "map" specifically, which on this rover means it
+        dropped EVERYTHING — the rover publishes odom (see NAV_FRAME) — and did
+        so silently, so approach_object/where_is/scan_surroundings all behaved
+        as though the detector were switched off. The mismatch is now logged
+        (throttled) rather than swallowed, so the next frame disagreement
+        announces itself instead of presenting as "I've never seen a chair"."""
         try:
             data = json.loads(msg.data)
             objects = data.get("objects", [])
         except (ValueError, TypeError, AttributeError):
             return
-        if data.get("frame", "map") != "map":
+        frame = data.get("frame", self.NAV_FRAME)
+        if frame != self.NAV_FRAME:
+            self._node.get_logger().warning(
+                f"/vision/detections_3d is in {frame!r} but this brain navigates "
+                f"in {self.NAV_FRAME!r} — dropping. Fix the publisher, or set "
+                f"LANGROBO_NAV_FRAME.", throttle_duration_sec=30.0)
             return
         from langrobo_core.services import world_model
         world = world_model.get()
@@ -249,17 +278,11 @@ class ROS2Bridge:
         return self._known_locations
 
     def get_current_pose(self) -> tuple | None:
-        """Robot pose as (x, y, yaw_deg); None if TF has no fix.
-
-        Frame is "odom", not "map" — this robot (see rover repo README/TODO)
-        runs Nav2 single-session with no relocalisation; nothing publishes a
-        map frame here, so a "map" lookup always failed (this returned None
-        on every real call, silently, since whoever wrote it assumed a
-        different, fuller perception stack). Fixed 2026-09-06 alongside the
-        matching frame_id in _nav_worker below."""
+        """Robot pose as (x, y, yaw_deg) in NAV_FRAME; None if TF has no fix."""
         import rclpy.time
         try:
-            t = self._tf_buffer.lookup_transform("odom", "base_link", rclpy.time.Time())
+            t = self._tf_buffer.lookup_transform(
+                self.NAV_FRAME, "base_link", rclpy.time.Time())
         except Exception:
             return None
         q = t.transform.rotation
@@ -331,8 +354,9 @@ class ROS2Bridge:
             self._pixel_results[req_id] = data
 
     def ground_pixel(self, u: float, v: float, timeout: float = 4.0) -> dict:
-        """Ask the Jetson to turn a COLOR-image pixel into a map-frame Nav2
-        goal (deproject depth → map → pull back by the approach standoff).
+        """Ask the Jetson to turn a COLOR-image pixel into a NAV_FRAME Nav2
+        goal (deproject depth → NAV_FRAME → pull back by the approach standoff).
+        The Jetson's pixel_to_goal node publishes odom, matching NAV_FRAME.
         Returns the pixel_to_goal JSON result, or ok=False on timeout —
         which means the query never arrived (node down / link), NOT that
         grounding failed; grounding failures come back with a reason."""
@@ -590,11 +614,8 @@ class ROS2Bridge:
 
             goal = NavigateToPose.Goal()
             goal.pose = PoseStamped()
-            # "odom", not "map" (fixed 2026-09-06, matches get_current_pose
-            # above): this rover's Nav2 has no map frame — single-session,
-            # no relocalisation. A "map" goal here silently could never be
-            # transformed and every navigate_to_pose/approach_* call failed.
-            goal.pose.header.frame_id = "odom"
+            # One frame for goals, poses and detections alike — see NAV_FRAME.
+            goal.pose.header.frame_id = self.NAV_FRAME
             # stamp left zero = "use latest TF": Nav2 re-transforms the
             # ORIGINAL stamp on every replan, so a now() stamp ages out of
             # the 10s TF cache mid-drive and aborts the goal (2026-07-16).
@@ -608,7 +629,13 @@ class ROS2Bridge:
             goal_box:  list = [None]
 
             def _goal_response(future):
-                goal_box[0] = future.result()
+                # An exception here would propagate into rclpy's executor and
+                # leave goal_event unset — the caller then waits the full 10s
+                # and reports a timeout for what was really a rejection.
+                try:
+                    goal_box[0] = future.result()
+                except Exception:
+                    goal_box[0] = None
                 goal_event.set()
 
             send_future = client.send_goal_async(goal)
@@ -619,6 +646,14 @@ class ROS2Bridge:
                 return
 
             goal_handle = goal_box[0]
+            if goal_handle is None:
+                # future.result() raised inside the callback, so _goal_response
+                # set the event with an empty box. Without this the next line
+                # raised AttributeError and the user heard "Navigation error:
+                # 'NoneType' object has no attribute 'accepted'".
+                self._fire_nav_done(
+                    False, "Navigation failed — Nav2 never answered the goal request")
+                return
             if not goal_handle.accepted:
                 self._fire_nav_done(False, "Navigation goal rejected by Nav2")
                 return
@@ -627,7 +662,10 @@ class ROS2Bridge:
             result_box:  list = [None]
 
             def _result(future):
-                result_box[0] = future.result()
+                try:
+                    result_box[0] = future.result()
+                except Exception:
+                    result_box[0] = None
                 result_event.set()
 
             goal_handle.get_result_async().add_done_callback(_result)
@@ -642,6 +680,10 @@ class ROS2Bridge:
 
             result = result_box[0]
             dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"
+            if result is None:
+                self._fire_nav_done(
+                    False, f"Navigation to {dest} ended without a result from Nav2")
+                return
             from action_msgs.msg import GoalStatus
             if result.status == GoalStatus.STATUS_SUCCEEDED:
                 self._fire_nav_done(True, f"I've arrived at {dest}.")

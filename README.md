@@ -12,6 +12,7 @@ ESP32     ──────  4-wheel drive chassis (micro-ROS over WiFi UDP 888
 ```
 
 **Docs:** [HOW_IT_WORKS.md](HOW_IT_WORKS.md) — end-to-end walkthrough (start here) ·
+[INTEGRATION_GAPS.md](INTEGRATION_GAPS.md) — **what this brain asks of the rover that the rover does not answer** ·
 [ARCHITECTURE.md](ARCHITECTURE.md) — reference: layout, rules, contracts ·
 [OPERATIONS.md](OPERATIONS.md) — deploy, systemd, health API, troubleshooting ·
 [TELEGRAM.md](TELEGRAM.md) — chat with the robot from your phone: setup + usage ·

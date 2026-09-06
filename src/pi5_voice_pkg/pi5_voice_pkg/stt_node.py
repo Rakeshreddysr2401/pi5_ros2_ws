@@ -103,7 +103,15 @@ class STTNode(Node):
         # Noise gate between the VAD and the recogniser (see vad_gate.py). A
         # room mic hands the cloud plenty of non-speech, and it answers with
         # confident invented sentences rather than nothing.
-        self.declare_parameter('min_utterance_rms', 0.012)
+        # 0.05, not the 0.012 this shipped with: the Bluetooth mic's measured
+        # noise floor is ~0.029, so 0.012 passed every idle-room segment
+        # straight through to the cloud recogniser, which answers noise with a
+        # confident invented sentence. vad_gate.GateConfig's own default was
+        # corrected on 2026-09-05; this parameter default was not, and it
+        # OVERRIDES it — so anyone running the node without voice_params.yaml
+        # (run_stt.sh with a different params file, `ros2 run` by hand) still
+        # got the broken gate. Keep the two in step.
+        self.declare_parameter('min_utterance_rms', 0.05)
         self.declare_parameter('min_voiced_ratio', 0.35)
         # Hard stop on a single utterance. Without it a television, a fan or a
         # conversation in the room keeps the VAD in-speech indefinitely: the
@@ -332,7 +340,17 @@ class STTNode(Node):
                 if fired:
                     self._awake = True
                     self._awake_until = time.monotonic() + self._follow_up_s
-                    self._reset_capture()
+                    # Clear any half-captured segment, but KEEP the pre-roll
+                    # ring: _reset_capture() emptied it too, so the first
+                    # ~300ms after the wake word had no pre-pad and the start
+                    # of the very command we just woke up for was clipped
+                    # ("hey jarvis, go to the kitchen" → "to the kitchen").
+                    # The wake detector fires at the END of the wake word, so
+                    # the ring holds the run-in to the command, not the word.
+                    self._utterance = []
+                    self._in_speech = False
+                    self._silence_run = 0
+                    self._voiced_frames = 0
                     self.get_logger().info(f'wake word {self._wake_label!r} detected — listening')
                     self._debug_vad_pub.publish(String(data=f'wake: {self._wake_label} — listening'))
             except Exception:

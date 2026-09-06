@@ -137,6 +137,14 @@ class TTSNode(Node):
         # pipeline just finished smoothing out.
         self._stream = None
         self._stream_sr = None
+        # _on_stop runs on the ROS spin thread and closes the output stream;
+        # _play runs on the playback thread and writes to it. Closing a
+        # PortAudio stream out from under an in-flight write is a native-level
+        # race, not a Python one — it can hang or take the process down, and it
+        # is reachable by any barge-in ("stop") landing mid-sentence. The lock
+        # is held per 100ms CHUNK, never for a whole sentence, so a stop still
+        # takes effect within one chunk — the granularity _play already chose.
+        self._stream_lock = threading.RLock()
         # /voice/tts_speaking is edge-triggered from TWO threads (the worker and
         # the stop callback), so the flag is instance state behind a lock. It was
         # a local in _run(): a stop cleared the queue including the utterance's
@@ -335,33 +343,40 @@ class TTSNode(Node):
 
     def _open_stream(self, sr: int):
         """Reuse the open stream when the sample rate matches, else reopen."""
-        if self._stream is not None and self._stream_sr == sr:
+        with self._stream_lock:
+            if self._stream is not None and self._stream_sr == sr:
+                return self._stream
+            self._close_stream()
+            self._stream = sd.OutputStream(samplerate=sr, channels=1, dtype='float32',
+                                           device=self._out_device)
+            self._stream.start()
+            self._stream_sr = sr
+            self._output_latency_s = float(getattr(self._stream, 'latency', 0.0) or 0.0)
             return self._stream
-        self._close_stream()
-        self._stream = sd.OutputStream(samplerate=sr, channels=1, dtype='float32',
-                                       device=self._out_device)
-        self._stream.start()
-        self._stream_sr = sr
-        self._output_latency_s = float(getattr(self._stream, 'latency', 0.0) or 0.0)
-        return self._stream
 
     def _close_stream(self):
-        stream, self._stream, self._stream_sr = self._stream, None, None
-        if stream is not None:
-            try:
-                stream.stop()
-                stream.close()
-            except Exception:
-                self.get_logger().debug('closing output stream failed')
+        with self._stream_lock:
+            stream, self._stream, self._stream_sr = self._stream, None, None
+            if stream is not None:
+                try:
+                    stream.stop()
+                    stream.close()
+                except Exception:
+                    self.get_logger().debug('closing output stream failed')
 
     def _play(self, samples: np.ndarray, sr: int, gen: int = 0):
         chunk_frames = int(sr * CHUNK_FRAMES_S)
         try:
-            stream = self._open_stream(sr)
             for i in range(0, len(samples), chunk_frames):
                 if self._interrupt.is_set() or gen != self._generation:
                     break
-                stream.write(samples[i:i + chunk_frames])
+                # Re-open under the lock each chunk: a concurrent _on_stop may
+                # have closed the stream between chunks, and writing into a
+                # closed handle is exactly the race this guards.
+                with self._stream_lock:
+                    if self._interrupt.is_set() or gen != self._generation:
+                        break
+                    self._open_stream(sr).write(samples[i:i + chunk_frames])
         except Exception:
             # A Bluetooth speaker that sleeps or wanders out of range takes the
             # stream with it. Drop it so the next sentence opens a fresh one

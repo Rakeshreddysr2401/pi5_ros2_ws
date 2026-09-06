@@ -289,10 +289,17 @@ def _execute(intent: FastIntent, bridge, say, state: dict) -> None:
             say("Taking a look around.")
             say(scan_surroundings.invoke({}))
         else:
-            pan = {"left": 60.0, "right": -60.0}.get(d, 0.0)
+            # Sign follows point_camera's documented convention: pan is
+            # -90 = full LEFT .. +90 = full right. This mapping used to be
+            # inverted (left → +60), so one of the two was wrong whichever way
+            # the servo is finally mounted. Confirm the physical direction once
+            # the mount exists and fix it in ONE place — here and the tool
+            # docstring must agree.
+            pan = {"left": -60.0, "right": 60.0}.get(d, 0.0)
             tilt = {"up": 25.0, "down": -25.0}.get(d, 0.0)
-            say(f"Looking {d}.")
-            point_camera.invoke({"pan_deg": pan, "tilt_deg": tilt})
+            # Speak the tool's own answer: with no mount fitted it explains
+            # that, where a canned "Looking left." was simply untrue.
+            say(point_camera.invoke({"pan_deg": pan, "tilt_deg": tilt}))
 
     elif kind == "scan":
         say("Scanning the area — doing a full turn.")

@@ -1,7 +1,8 @@
 """Depth-camera object approach — "go near the chair", "come to me".
 
 Built on the D555 + Isaac ROS pipeline (JETSON_D555_SETUP.md): the Jetson
-publishes map-frame 3D object positions on /vision/detections_3d, and the
+publishes 3D object positions on /vision/detections_3d in the brain's
+navigation frame (ROS2Bridge.NAV_FRAME — `odom` on this rover), and the
 brain turns them into Nav2 goals — obstacle-aware, metric, person included
 (unlike the mono navigate_to_visible_object servo loop, which stays as the
 no-map fallback).
@@ -85,10 +86,20 @@ def _search(bridge, target: str) -> dict | None:
     Returns a fresh detection dict or None (not found / interrupted). Always
     re-centres the camera head before returning."""
     try:
-        for pan in _PAN_SWEEP_DEG:
+        # No servos fitted → no sweep. Three 1.6s dwells staring in the one
+        # direction the camera is bolted to is 4.8s of pure latency before the
+        # base rotation that was always going to do the real work.
+        for pan in (_PAN_SWEEP_DEG if _mv.PAN_TILT_ENABLED else ()):
             if bridge.motion_interrupted():
                 return None
             bridge.set_pan_tilt(pan, 0.0)
+            det = _dwell_for_detection(bridge, target, _PAN_DWELL_S)
+            if det is not None:
+                return det
+        if not _mv.PAN_TILT_ENABLED:
+            # Still give the detector one dwell at the current heading: the
+            # caller only reaches _search because nothing was fresh, and a
+            # detection may land while we were deciding.
             det = _dwell_for_detection(bridge, target, _PAN_DWELL_S)
             if det is not None:
                 return det
@@ -200,7 +211,7 @@ def approach_object(target: str,
 # ── VLM pixel-grounding approach (arbitrary described objects) ───────────────
 # For things YOLO has no class for ("surf excel packet", "the red mug"): the
 # VLM points at the object in the look frame (normalized coords), the Jetson
-# pixel_to_goal node deprojects that pixel with real depth into a map-frame
+# pixel_to_goal node deprojects that pixel with real depth into a NAV_FRAME
 # Nav2 goal (standoff already applied). Search = rotate the base in 90° steps,
 # one VLM check per orientation — each check is an LLM round-trip (~10-40 s),
 # so the sweep is bounded at a full circle.

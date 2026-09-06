@@ -1,4 +1,5 @@
 import math
+import os
 import time
 from typing import Annotated
 
@@ -7,13 +8,78 @@ from langgraph.prebuilt import InjectedState
 
 from . import _bridge
 
-# Fine-movement Twist parameters (direct /cmd_vel, bypasses Nav2)
-_LINEAR_VEL_MS  = 0.28   # m/s forward/backward command (translates to ~93% PWM)
-_PHYSICAL_VEL_MS = 0.60   # actual physical speed of the robot at 93% PWM (calibrated from active tests)
-_ANGULAR_VEL_RS = 2.8    # rad/s rotation command (translates to ~70% PWM)
-_STEADY_STATE_ANGULAR_VEL = 2.65  # rad/s physical speed at 70% PWM (calibrated from active tests)
-_TURN_STARTUP_DELAY       = 0.0   # seconds transient ramp-up offset
-_CMD_BUFFER     = 0.2    # extra sleep after each command (seconds)
+# ── Fine-movement Twist parameters (direct /cmd_vel, bypasses Nav2) ──────────
+#
+# UNITS. rover_firmware_v2.ino runs a closed-loop PI controller on each SIDE's
+# measured wheel velocity in SI m/s: it computes wL/wR = vx -/+ wz*0.34/2 and
+# PID-tracks them against the encoders. /cmd_vel is therefore genuinely SI — a command
+# of 0.20 m/s produces ~0.20 m/s, not "some PWM fraction".
+#
+# The constants here previously encoded the OPPOSITE assumption, inherited from
+# an older open-loop firmware: 0.28 m/s "= ~93% PWM" and a claimed physical
+# speed of 0.60 m/s. Against the closed-loop firmware that made every distance
+# wrong by the ratio of the two — move_robot("F:20") computed
+# 0.20/0.60 = 0.33 s of drive, which at the ACTUAL 0.28 m/s covers 9 cm, not
+# 20 cm. The rover repo measures the truth directly (OPERATIONS.md §2, the
+# teleop speed table): "forward / back | 0.20 m/s | 20 cm/s".
+#
+# TURN RATE — read this before changing it. The rover repo has measured this
+# chassis twice and the two numbers disagree, on purpose:
+#   * OPERATIONS.md §2  — a 2.0 rad/s pivot puts each wheel at 34 cm/s, which
+#     is OVER cuVSLAM's tracking limit: "expect jumps".
+#   * teleop_web.py     — at 2.0 rad/s (≈47% duty) the four tyres cannot break
+#     loose sideways at all, so a pivot command turns into a forward/backward
+#     CURVE. That is how an operator drove 10.7 m of "room loop" inside a 1.8 m
+#     box (2026-08-22). Teleop's fix was to raise its pivot to 5.0 rad/s, just
+#     under the 5.06 rad/s full authority, where both wheels reach opposite
+#     full duty and it pivots cleanly.
+# 2.8 rad/s sat in the worst band between the two: fast enough to disturb
+# cuVSLAM, too slow to actually pivot. The default now matches teleop's
+# proven-clean pivot, because a turn that silently curves is unbounded error
+# while a VO jump is at least visible in vo_z.
+#
+# EVERY value below is env-overridable so it can be re-calibrated on the robot
+# without a rebuild (logs/calibrate_rotation.py and `./rover compare` in the
+# rover repo produce the numbers).
+def _envf(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+# Commanded linear velocity, m/s. Keep at/below the rover's 0.22 m/s cap.
+_LINEAR_VEL_MS = _envf("LANGROBO_LINEAR_VEL_MS", 0.20)
+# Physical speed achieved at that command. Equal to the command because the
+# firmware closed-loop tracks it; re-measure with a tape if the PID is retuned.
+_PHYSICAL_VEL_MS = _envf("LANGROBO_PHYSICAL_VEL_MS", 0.20)
+# Commanded yaw rate, rad/s. 5.0 = teleop's clean pivot (see above).
+_ANGULAR_VEL_RS = _envf("LANGROBO_ANGULAR_VEL_RS", 5.0)
+# Yaw rate actually achieved at that command. Defaults to the command: the
+# firmware tracks WHEEL velocity exactly, and the wheel→yaw conversion is only
+# exact with no sideways scrub — which is precisely the regime a full-duty
+# pivot is chosen for. MEASURE IT (logs/calibrate_rotation.py) and set
+# LANGROBO_STEADY_ANGULAR_VEL if turns overshoot or undershoot.
+_STEADY_STATE_ANGULAR_VEL = _envf("LANGROBO_STEADY_ANGULAR_VEL", _ANGULAR_VEL_RS)
+_TURN_STARTUP_DELAY = _envf("LANGROBO_TURN_STARTUP_S", 0.0)  # ramp-up offset, s
+_CMD_BUFFER = 0.2    # extra sleep after each command (seconds)
+
+
+# ── Pan/tilt camera head — OFF by default, because it does not exist ────────
+#
+# set_pan_tilt() publishes /servo_pan and /servo_tilt. Nothing subscribes:
+# rover_firmware_v2.ino declares three subscriptions (/cmd_vel, /pid_gains,
+# /reset_odom) and no servos at all, and the micro-ROS entity caps are the
+# reason it is that short. So every head movement was a no-op that still cost
+# real time — ensure_head_centred() slept 0.8s and approach.py's search swept
+# three pan angles at 1.6s each, ~5.6s of dead air before every single
+# approach_object call, on hardware that cannot move.
+#
+# Set LANGROBO_PAN_TILT=1 once servos are wired and the firmware subscribes.
+# While it is off the pose-corruption problem the sweep guards against cannot
+# happen either — a head that never moves never skews the base pose.
+PAN_TILT_ENABLED = os.environ.get("LANGROBO_PAN_TILT", "0").strip().lower() not in (
+    "", "0", "false", "no", "off")
 
 
 # Camera-head recovery: vSLAM tracks the CAMERA and absorbs a head pan as
@@ -27,7 +93,10 @@ _RECENTER_SETTLE_S = 0.8
 
 def ensure_head_centred(bridge) -> None:
     """Re-centre the camera head (if panned/tilted) and wait for the base
-    pose to become trustworthy again. No-op when already centred."""
+    pose to become trustworthy again. No-op when already centred, and no-op
+    entirely when there is no pan/tilt hardware (see PAN_TILT_ENABLED)."""
+    if not PAN_TILT_ENABLED:
+        return
     pan, tilt = bridge.get_pan_tilt()
     if abs(pan) > 1.0 or abs(tilt) > 1.0:
         bridge.set_pan_tilt(0.0, 0.0)
@@ -300,6 +369,13 @@ def point_camera(pan_deg: float = 0.0, tilt_deg: float = 0.0) -> str:
     camera without moving the wheels. Drives the ESP32 pan/tilt servos
     (/servo_pan, /servo_tilt); if the mount isn't installed yet nothing moves —
     say so rather than claiming it worked."""
+    if not PAN_TILT_ENABLED:
+        # Say so instead of reporting a move that physically cannot happen —
+        # the docstring already promises this, but the code used to claim
+        # success regardless (see PAN_TILT_ENABLED for why nothing listens).
+        return ("I don't have a pan-tilt camera mount fitted, so I can't turn "
+                "my head. Tell the user, and offer to turn the whole robot "
+                "instead.")
     pan = max(_PAN_MIN_DEG, min(_PAN_MAX_DEG, pan_deg))
     tilt = max(_TILT_MIN_DEG, min(_TILT_MAX_DEG, tilt_deg))
     clamped = (pan != pan_deg) or (tilt != tilt_deg)

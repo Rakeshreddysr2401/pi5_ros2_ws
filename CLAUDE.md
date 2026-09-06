@@ -166,6 +166,13 @@ change both repos together or neither.
 
 ## Gotchas
 
+- **Read [INTEGRATION_GAPS.md](INTEGRATION_GAPS.md) before trusting any tool
+  that touches the world.** Several topics this brain publishes have no
+  listener on the real rover (`/vision/detections_3d`, `/vision/target*`,
+  `/servo_*`, `/audio/music_*`), so the tools built on them answer honestly
+  but uselessly. Frames, drive calibration and the voice gates are covered
+  there too. It is the cross-repo view neither repo's tests can produce.
+
 - Real-robot Nav2/SLAM software is DEPLOYED (Jetson `langrobo_perception`
   mode:=real — cuVSLAM + nvblox + Nav2, smoke-tested camera-less) and waits
   only for the D555 hardware; JETSON_D555_SETUP.md is the camera-day

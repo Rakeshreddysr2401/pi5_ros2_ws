@@ -2,7 +2,8 @@
 
 Why this exists
 ---------------
-The depth pipeline (Jetson `detections_3d`) streams map-frame object positions,
+The depth pipeline (Jetson `detections_3d`) streams object positions in the
+brain's navigation frame (ROS2Bridge.NAV_FRAME — `odom` on this rover),
 and the bridge used to cache them in a bare `dict[label] -> position` that
 lived only in RAM. Three consequences, all of them things the robot is
 explicitly supposed to do (New_Requirement.md goals 1-3):
@@ -112,7 +113,7 @@ class WorldModel:
 
     def observe(self, label: str, x: float, y: float, z: float = 0.0,
                 conf: float = 0.0) -> None:
-        """Record a map-frame sighting, merging into a nearby instance if there
+        """Record a NAV_FRAME sighting, merging into a nearby instance if there
         is one. Cheap enough to call at detector rate."""
         label = str(label).lower().strip()
         if not label:
