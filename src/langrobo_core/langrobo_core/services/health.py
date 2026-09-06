@@ -1,7 +1,7 @@
 """In-process health/status/metrics API — pure zone.
 
-Runs a small FastAPI app on a daemon thread inside the brain process (it must
-be in-process: the embedded Qdrant store and turn state are single-process).
+Runs a small FastAPI app on a daemon thread inside the brain process — it must
+be in-process, because the turn state it reports lives there.
 
 Endpoints:
   GET /health   — liveness: 200 {"ok": true} whenever the process is up.
@@ -24,8 +24,6 @@ import threading
 from typing import Callable
 
 from . import llm as llm_service
-from . import mcp as mcp_service
-from . import memory as memory_service
 from . import metrics
 from .config import HealthConfig
 
@@ -67,11 +65,8 @@ def start_health_api(cfg: HealthConfig,
 
     @app.get("/status", dependencies=[Depends(require_token)])
     def status() -> dict:
-        mem = memory_service.get()
         out = {
             "llm": llm_service.status(),
-            "memory": mem.status() if mem else {"available": False, "error": "not initialised"},
-            "mcp": mcp_service.status(),
             "metrics": metrics.snapshot(),
         }
         if extra_status:

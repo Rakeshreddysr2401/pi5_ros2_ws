@@ -12,20 +12,13 @@ from langrobo_core.tools import (
     CHAT_TOOLS,
     LOCAL_AGENT_TOOLS,
     NAVIGATE_TOOLS,
-    STATUS_TOOLS,
     SUPERVISOR_TOOLS,
-    SWIGGY_TOOLS,
-    INSTAMART_TOOLS,
-    DINEOUT_TOOLS,
-    TRACKER_TOOLS,
 )
 
 _bridge._instance = None
 _bridge.init(StubBridge())
 
-EXPECTED_AGENTS = {"supervisor", "chat", "local_agent", "navigate",
-                   "status", "swiggy", "instamart", "dineout", "tracker",
-                   "knowledge", "briefing"}
+EXPECTED_AGENTS = {"supervisor", "chat", "local_agent", "navigate"}
 
 
 def test_graph_builds_with_all_agents():
@@ -55,19 +48,42 @@ def test_handover_enum_matches_registry():
 
 
 def test_tool_sets_bind_and_have_handover():
-    for tools in (CHAT_TOOLS, LOCAL_AGENT_TOOLS, NAVIGATE_TOOLS, STATUS_TOOLS,
-                  SUPERVISOR_TOOLS, SWIGGY_TOOLS, INSTAMART_TOOLS,
-                  DINEOUT_TOOLS, TRACKER_TOOLS):
+    for tools in (CHAT_TOOLS, LOCAL_AGENT_TOOLS, NAVIGATE_TOOLS,
+                  SUPERVISOR_TOOLS):
         names = [t.name for t in tools]
         assert "handover" in names
         assert len(names) == len(set(names)), f"duplicate tool in {names}"
 
 
-def test_chat_has_memory_and_household_tools():
+def test_chat_owns_the_things_it_must_not_hand_over():
+    """chat's prompt promises it never hands over for these. If a tool leaves
+    the set, the prompt becomes a lie and the model routes into a dead end.
+
+    tavily_search is excluded on purpose: WEB_TOOLS is empty without
+    TAVILY_API_KEY (missing keys degrade, never crash — CLAUDE.md rule 4), so
+    asserting on it here would fail on any machine without the key."""
     names = [t.name for t in CHAT_TOOLS]
-    for expected in ("recall_memory", "remember", "forget", "update_list",
-                     "set_reminder", "get_current_time"):
+    for expected in ("get_current_time", "get_robot_status",
+                     "send_telegram_message", "send_telegram_photo"):
         assert expected in names
+
+
+def test_only_local_agent_can_see():
+    """look() is the single camera entry point. Two agents holding it would
+    both claim to see, and only one of them gets keep_images."""
+    from langrobo_core.registry import SPECS
+    holders = {name for name, spec in SPECS.items()
+               if any(t.name == "look" for t in spec.tools)}
+    assert holders == {"local_agent"}
+    assert SPECS["local_agent"].keep_images
+
+
+def test_every_agent_has_its_own_kv_slot():
+    """Two agents sharing a slot evict each other's prompt prefix on every
+    turn — ~18-50s of re-prefill, and invisible at runtime."""
+    from langrobo_core.registry import SLOTS
+    assert len(set(SLOTS.values())) == len(SLOTS), SLOTS
+    assert set(SLOTS) == EXPECTED_AGENTS
 
 
 def test_turn_entry_routing():
@@ -79,7 +95,7 @@ def test_turn_entry_routing():
     assert target("supervisor") == "supervisor"     # [SYSTEM] events
     assert target("chat") == "chat"                 # sticky
     assert target("local_agent") == "local_agent"   # sticky
-    assert target("navigate") == "chat"             # specialists not sticky
+    assert target("navigate") == "chat"             # navigate is not sticky
     assert target(None) == "chat"                   # fresh turn default
 
 
@@ -151,20 +167,19 @@ def test_speech_stream_sentence_split():
     assert rest == "I am fi"
 
 
-def test_chat_has_music_tools():
-    names = [t.name for t in CHAT_TOOLS]
-    for expected in ("play_music", "stop_music", "pause_music",
-                     "resume_music", "set_music_volume"):
-        assert expected in names
+def test_no_agent_binds_a_tool_for_hardware_that_is_not_there():
+    """Every tool set is shipped to the model on every turn, so a tool that
+    cannot work is prompt tokens plus a promise the robot then breaks.
 
-
-def test_music_tools_against_stub():
-    from langrobo_core.tools.music import music_context, play_music, stop_music
-    result = play_music.invoke({"query": "calm piano"})
-    assert "calm piano" in result
-    assert "NOW PLAYING" in music_context()
-    assert "stopped" in stop_music.invoke({}).lower()
-    assert music_context() == ""
+    These four were bound to agents for months while nothing on the rover
+    published the topics behind them — see INTEGRATION_GAPS.md §1."""
+    from langrobo_core.registry import SPECS
+    gone = {"play_music", "stop_music", "pause_music", "resume_music",
+            "set_music_volume", "watch_home", "approach_object",
+            "navigate_to_visible_object", "where_is", "recall_memory"}
+    for name, spec in SPECS.items():
+        bound = {t.name for t in spec.tools}
+        assert not (bound & gone), f"{name} still binds {bound & gone}"
 
 
 def test_agents_package_imports_before_the_graph():

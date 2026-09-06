@@ -3,7 +3,7 @@
 Architecture:
   START → turn_entry → supervisor → supervisor_tools
                                          ↓ (handover)
-                                   handle_handover → [chat|local_agent|navigate|status|swiggy|instamart|dineout|tracker|knowledge|briefing]
+                                   handle_handover → [chat | local_agent | navigate]
                                                             ↓
                                                       per-agent tools
                                                             ↓ (if handover)
@@ -26,9 +26,9 @@ from .turn_entry import turn_entry_node
 from .handover_resolver import handle_handover
 
 # Max times a single agent node may execute within one user turn. Legitimate
-# multi-step flows (navigate doing several moves, swiggy search→menu→cart→order)
-# stay well under this; a degenerate self-loop (e.g. an agent re-calling the same
-# tool because its real tools are unavailable) trips it and ends the turn cleanly.
+# multi-step flows (navigate doing several moves in a row) stay well under this;
+# a degenerate self-loop (an agent re-calling the same tool because the one it
+# wants is unavailable) trips it and ends the turn cleanly.
 _MAX_AGENT_RUNS_PER_TURN = 8
 
 

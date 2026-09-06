@@ -4,7 +4,7 @@ Two config sources, deliberately kept separate:
   - ROS parameters (agent_params.yaml)  → LLM provider/model/slots. Read by
     agent_node and passed into services.llm.configure(). Not this module's job.
   - Environment / .env                  → secrets and service settings (cloud
-    fallback, Qdrant, health API, tracing). This module's job.
+    fallback, health API, Telegram, tracing). This module's job.
 
 Rules:
   - Fail fast on *malformed* values (a bad port number is a deploy bug).
@@ -79,24 +79,6 @@ class FallbackLLM:
 
 
 @dataclass(frozen=True)
-class MemoryConfig:
-    """Episodic memory (Qdrant). Local embedded mode by default; set
-    QDRANT_URL (+ optional QDRANT_API_KEY) to use a server / Qdrant Cloud."""
-    enabled: bool
-    path: str                  # local embedded store (used when url is empty)
-    url: str = ""
-    api_key: str = ""
-    collection: str = "episodic"
-    # Reserved for roadmap P4 (visual household memory) — same store, own collection.
-    visual_collection: str = "visual"
-    # Durable facts distilled from episodes by services/consolidation.py.
-    facts_collection: str = "facts"
-    # Household knowledge base — ingested documents (services/knowledge.py).
-    knowledge_collection: str = "knowledge"
-    embed_model: str = "BAAI/bge-small-en-v1.5"   # fastembed ONNX, 384-dim
-
-
-@dataclass(frozen=True)
 class TelegramMember:
     chat_id: int
     name: str
@@ -167,52 +149,6 @@ def _parse_telegram_allowlist(raw: str) -> tuple:
 
 
 @dataclass(frozen=True)
-class WatchConfig:
-    """Home watch mode (services/watch.py): while armed, a person detected by
-    the Jetson target finder triggers a photo alert to owners' phones. Armed
-    state persists across restarts (an armed house stays armed)."""
-    enabled: bool = True
-    state_path: str = "~/.langrobo/watch.json"
-    cooldown_s: int = 60           # min seconds between alerts (one visitor ≠ 50 pings)
-    min_confidence: float = 0.5    # YOLO person confidence below this is ignored
-
-
-@dataclass(frozen=True)
-class WorldModelConfig:
-    """Where the robot has seen things (services/world_model.py). Persistent,
-    like locations.json — a restart must not make the robot forget the chair
-    it has been looking at all day."""
-    enabled: bool = True
-    state_path: str = "~/.langrobo/world_model.json"
-    merge_radius_m: float = 0.6    # closer than this = the same object seen again
-    max_instances: int = 8         # per label; least-recently-seen is evicted
-    save_interval_s: float = 30.0  # detections arrive at several Hz; this boots off SD
-
-
-@dataclass(frozen=True)
-class ConsolidationConfig:
-    """Nightly memory consolidation (services/consolidation.py): distill new
-    episodic turns into durable facts, locally. Runs only when the robot is
-    idle and the LOCAL model is up — never on the cloud fallback."""
-    enabled: bool = True
-    hour: int = 3                  # local hour of day the job becomes eligible
-    state_path: str = "~/.langrobo/consolidation.json"
-    min_episodes: int = 5          # skip the run below this many new episodes
-    max_episodes: int = 200        # cap one run's input (rest picked up next night)
-    batch_size: int = 25           # episodes per LLM call
-
-
-@dataclass(frozen=True)
-class BriefingConfig:
-    """Scheduled morning briefing (briefing agent via the [SYSTEM] producer).
-    Off unless LANGROBO_BRIEFING_HOUR is set — a robot that starts talking at
-    8am unasked must be opted into."""
-    enabled: bool = False
-    hour: int = 8
-    state_path: str = "~/.langrobo/briefing.json"
-
-
-@dataclass(frozen=True)
 class HealthConfig:
     """In-process health/status/metrics API (FastAPI)."""
     enabled: bool
@@ -224,13 +160,8 @@ class HealthConfig:
 @dataclass(frozen=True)
 class Settings:
     fallback: FallbackLLM = field(default_factory=lambda: FallbackLLM("", "", configured=False))
-    memory: MemoryConfig = field(default_factory=lambda: MemoryConfig(True, "~/.langrobo/qdrant"))
     health: HealthConfig = field(default_factory=lambda: HealthConfig(True, "0.0.0.0", 8090))
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
-    watch: WatchConfig = field(default_factory=WatchConfig)
-    world_model: WorldModelConfig = field(default_factory=WorldModelConfig)
-    consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
-    briefing: BriefingConfig = field(default_factory=BriefingConfig)
     log_json: bool = True
 
 
@@ -258,14 +189,6 @@ def load_settings() -> Settings:
     fallback = FallbackLLM(
         provider=fb_provider, model=fb_model, api_key=fb_key,
         base_url=fb_base_url, configured=fb_ready)
-
-    # ── Episodic memory ───────────────────────────────────────────────────
-    memory = MemoryConfig(
-        enabled=_bool_env("LANGROBO_MEMORY", True),
-        path=os.getenv("LANGROBO_MEMORY_PATH", "~/.langrobo/qdrant").strip(),
-        url=os.getenv("QDRANT_URL", "").strip(),
-        api_key=os.getenv("QDRANT_API_KEY", "").strip(),
-    )
 
     # ── Health API ────────────────────────────────────────────────────────
     token = os.getenv("LANGROBO_API_TOKEN", "").strip()
@@ -295,49 +218,15 @@ def load_settings() -> Settings:
         configured=bool(tg_token and tg_members),
         quiet=_parse_quiet_hours(os.getenv("LANGROBO_QUIET_HOURS", "").strip()))
 
-    # ── Home watch mode ───────────────────────────────────────────────────
-    watch = WatchConfig(
-        enabled=_bool_env("LANGROBO_WATCH", True),
-        cooldown_s=_int_env("LANGROBO_WATCH_COOLDOWN_S", 60, 5, 3600),
-        min_confidence=_float_env("LANGROBO_WATCH_MIN_CONF", 0.5, 0.0, 1.0),
-    )
-
-    # ── World model (where objects are) ───────────────────────────────────
-    world_model = WorldModelConfig(
-        enabled=_bool_env("LANGROBO_WORLD_MODEL", True),
-        state_path=os.getenv("LANGROBO_WORLD_MODEL_PATH",
-                             "~/.langrobo/world_model.json").strip(),
-        merge_radius_m=_float_env("LANGROBO_WORLD_MERGE_RADIUS_M", 0.6, 0.05, 5.0),
-    )
-
-    # ── Memory consolidation ──────────────────────────────────────────────
-    consolidation = ConsolidationConfig(
-        enabled=_bool_env("LANGROBO_CONSOLIDATION", True),
-        hour=_int_env("LANGROBO_CONSOLIDATION_HOUR", 3, 0, 23),
-    )
-
-    # ── Morning briefing (opt-in: enabled only when the hour is set) ──────
-    briefing = BriefingConfig(
-        enabled=bool(os.getenv("LANGROBO_BRIEFING_HOUR", "").strip()),
-        hour=_int_env("LANGROBO_BRIEFING_HOUR", 8, 0, 23),
-    )
-
     settings = Settings(
         fallback=fallback,
-        memory=memory,
         health=health,
         telegram=telegram,
-        watch=watch,
-        world_model=world_model,
-        consolidation=consolidation,
-        briefing=briefing,
         log_json=_bool_env("LANGROBO_LOG_JSON", True),
     )
     logger.info(
-        "Settings: fallback=%s memory=%s(%s) health=%s:%s(token=%s) telegram=%s",
+        "Settings: fallback=%s health=%s:%s(token=%s) telegram=%s",
         fallback.provider or "none",
-        "on" if memory.enabled else "off",
-        memory.url or memory.path,
         health.host, health.port, "set" if token else "NONE — localhost only",
         f"{len(tg_members)} members" if telegram.configured else "off",
     )

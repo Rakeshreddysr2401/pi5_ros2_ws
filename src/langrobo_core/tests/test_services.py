@@ -1,4 +1,4 @@
-"""Service-layer tests: config validation, LLM fallback policy, memory
+"""Service-layer tests: config validation, LLM fallback policy
 round-trip (skipped if qdrant/fastembed unavailable), metrics rendering."""
 
 import time
@@ -13,11 +13,10 @@ from langrobo_core.services import metrics
 
 def test_defaults_load_clean(monkeypatch):
     for var in ("LANGROBO_FALLBACK_PROVIDER", "LANGROBO_HEALTH_PORT",
-                "LANGROBO_API_TOKEN", "LANGROBO_MEMORY", "LANGROBO_HEALTH_HOST"):
+                "LANGROBO_API_TOKEN", "LANGROBO_HEALTH_HOST"):
         monkeypatch.delenv(var, raising=False)
     s = config_service.load_settings()
     assert not s.fallback.configured
-    assert s.memory.enabled
     assert s.health.host == "127.0.0.1"     # tokenless → localhost only
 
 
@@ -111,34 +110,4 @@ def test_metrics_prometheus_render():
     assert "langrobo_uptime_seconds" in text
 
 
-# ── episodic memory (needs qdrant-client + fastembed + downloaded model) ────
 
-def test_memory_round_trip(tmp_path):
-    pytest.importorskip("qdrant_client")
-    pytest.importorskip("fastembed")
-    from langrobo_core.services.config import MemoryConfig
-    from langrobo_core.services.memory import EpisodicMemory
-
-    mem = EpisodicMemory(MemoryConfig(enabled=True, path=str(tmp_path / "q")))
-    deadline = time.time() + 120   # model load (cached) is the slow part
-    while not mem.available() and not mem.status()["error"] and time.time() < deadline:
-        time.sleep(0.5)
-    if not mem.available():
-        pytest.skip(f"memory backend unavailable: {mem.status()['error']}")
-
-    mem.record_turn("I parked the car in the basement", "Noted.", agent="chat")
-    deadline = time.time() + 30
-    while mem.count() < 1 and time.time() < deadline:
-        time.sleep(0.5)
-    hits = mem.recall("where did I park", k=1)
-    assert hits and "basement" in hits[0]["user"]
-    assert "person" in hits[0]           # schema field present from day one
-
-
-def test_memory_disabled_is_inert():
-    from langrobo_core.services.config import MemoryConfig
-    from langrobo_core.services.memory import EpisodicMemory
-    mem = EpisodicMemory(MemoryConfig(enabled=False, path="/nonexistent"))
-    mem.record_turn("hello", "hi")       # must not raise
-    assert not mem.available()
-    assert mem.recall("anything") == []

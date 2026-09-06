@@ -2,14 +2,13 @@
 
 These exist because both failures below actually shipped:
 
-* `TRACKER_PROMPT` documented a `navigate_to` tool for months. No such tool is
-  bound to the tracker — every "your order arrived, go to the door" flow emitted
-  an invalid call and burned the loop guard. Prompts now render their tool block
-  from the bound tool set, and `test_no_ghost_tools` keeps any hand-written
-  mention honest.
-* Four agents (swiggy, instamart, dineout, tracker) carried NO reply-length rule
-  at all, so the model would happily read a restaurant menu into the
-  text-to-speech voice. The rule now lives once, in PERSONA/SPEECH_STYLE, and
+* An agent prompt documented a `navigate_to` tool for months. No such tool was
+  bound to that agent — every one of those flows emitted an invalid call and
+  burned the loop guard. Prompts now render their tool block from the bound
+  tool set, and `test_no_ghost_tools` keeps any hand-written mention honest.
+* Several agents carried NO reply-length rule at all, so the model would
+  happily read a long list into the text-to-speech voice. The rule now lives
+  once, in PERSONA/SPEECH_STYLE, and
   `test_every_speaking_agent_gets_the_speech_contract` keeps it there.
 """
 
@@ -48,7 +47,7 @@ def test_every_bound_tool_is_in_the_prompt(name):
 def test_no_ghost_tools(name):
     """No prompt may name a callable that is not bound to that agent.
 
-    Catches the tracker's `navigate_to` class of bug: any `something(` in the
+    Catches the `navigate_to` class of bug: any `something(` in the
     prompt that looks like a tool call must be a real tool, an agent name, or
     one of the few prose exceptions below.
     """

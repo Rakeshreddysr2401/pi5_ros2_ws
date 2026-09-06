@@ -33,7 +33,9 @@ def handover(
         next_agent: Agent to route to.
         reason: Why this handover is happening (e.g. "order_placed", "cannot_answer").
         chain: True -> next agent responds immediately in the same turn.
-               Use for swiggy -> tracker after placing an order.
+               Use when the next agent must ACT on this one's result (e.g.
+               local_agent identifies an object, then navigate drives to it).
+               False -> this agent has already answered; the turn ends here.
     """
     return json.dumps({"next_agent": next_agent, "reason": reason, "chain": chain})
 

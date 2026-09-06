@@ -1,8 +1,13 @@
 # LangRobo — Pi5 Robot Brain
 
 The **brain** of a distributed home assistant robot ("Rakhi"). The Pi5 runs all
-reasoning (LangGraph multi-agent supervisor + LLM) and bridges motor commands to
-the chassis; the Jetson handles perception and speech I/O.
+reasoning (a LangGraph supervisor + three agents) and bridges motor commands to
+the chassis; the Jetson handles perception.
+
+**Three agents, one KV cache slot each.** `chat` answers, `local_agent` sees,
+`navigate` moves — and a `supervisor` routes between them. Every agent is one
+`AgentSpec` in `registry.py`; the graph, the routing grammar and the llama.cpp
+slot map all derive from it.
 
 ```
 Mac Mini  ──────  llama.cpp — Gemma multimodal GGUF (OpenAI-compatible HTTP)
@@ -12,11 +17,10 @@ ESP32     ──────  4-wheel drive chassis (micro-ROS over WiFi UDP 888
 ```
 
 **Docs:** [HOW_IT_WORKS.md](HOW_IT_WORKS.md) — end-to-end walkthrough (start here) ·
-[INTEGRATION_GAPS.md](INTEGRATION_GAPS.md) — **what this brain asks of the rover that the rover does not answer** ·
-[ARCHITECTURE.md](ARCHITECTURE.md) — reference: layout, rules, contracts ·
+**[ARCHITECTURE_LLD.md](ARCHITECTURE_LLD.md) — the low-level design: every file, the turn lifecycle, where the latency goes** ·
+[INTEGRATION_GAPS.md](INTEGRATION_GAPS.md) — what this brain asks of the rover that the rover does not answer ·
 [OPERATIONS.md](OPERATIONS.md) — deploy, systemd, health API, troubleshooting ·
-[TELEGRAM.md](TELEGRAM.md) — chat with the robot from your phone: setup + usage ·
-[PRODUCT.md](PRODUCT.md) — product thesis + roadmap
+[TELEGRAM.md](TELEGRAM.md) — chat with the robot from your phone: setup + usage
 
 ---
 
@@ -26,15 +30,19 @@ ESP32     ──────  4-wheel drive chassis (micro-ROS over WiFi UDP 888
 src/
 ├── langrobo_core/     Pure-Python brain (pip package, ZERO ROS2 imports)
 │   └── langrobo_core/
-│       ├── graph/     StateGraph topology, routing, handover resolution
-│       ├── agents/    chat · local_agent(vision) · navigate · status · swiggy · tracker · supervisor
-│       ├── tools/     look() · movement · reminders · household · episodic recall · handover
-│       ├── services/  config · llm(+cloud fallback) · memory(Qdrant) · health API · logging · metrics
+│       ├── registry.py  ONE AgentSpec per agent — start here
+│       ├── prompts.py   every system prompt, in one file
+│       ├── fastpath.py  spoken movement command → wheels, no LLM
+│       ├── graph/     StateGraph topology, entry routing, handover resolution
+│       ├── agents/    factory (builds every responder from its spec) + supervisor
+│       ├── tools/     look() · movement · approach · telegram · web · handover
+│       ├── services/  config · llm(+cloud fallback) · telegram · permissions · health · logging · metrics
 │       ├── utils/     history trimming · message projection · speech streaming · timing
 │       └── bridges/   StubBridge (run everything without ROS2)
-├── langrobo_ros/      ROS2 shim: agent_node + ROS2Bridge + studio_voice_node + launch + systemd
+├── langrobo_ros/      ROS2 shim: agent_node + ROS2Bridge + launch + systemd
+├── pi5_voice_pkg/     CPU-only STT + TTS on the Pi 5 itself
 └── robot_interfaces/  Custom ROS2 interfaces
-scripts/               run_brain.sh · run_microros.sh · dev.sh · dev_voice.sh · install_systemd.sh · latency_replay.py
+scripts/               run_brain.sh · run_microros.sh · dev.sh · install_systemd.sh · latency_replay.py
 graph_studio.py        LangGraph Studio entry point (langgraph dev)
 ```
 
@@ -75,12 +83,15 @@ journalctl -u langrobo-brain -f -o cat       # follow JSON logs
 # Foreground (all-in-one):
 ros2 launch langrobo_ros brain_launch.py
 
-# Dev — LangGraph Studio UI + micro-ROS (don't run alongside systemd units):
+# Dev — LangGraph Studio UI + micro-ROS (don't run alongside systemd units).
+# Studio draws the graph, which is the fastest way to SEE the topology:
 ./scripts/dev.sh
 
-# Dev + voice — the same, plus STT/TTS: talk to the graph while stepping it:
-./scripts/dev_voice.sh
 ```
+
+The llama.cpp server needs **`--parallel 4`** — one KV-cache slot per agent.
+With fewer, agents share a slot and evict each other's cached prompt prefix;
+agent_node warns at boot when that happens. See ARCHITECTURE_LLD.md §4.1.
 
 Health check (see OPERATIONS.md for the full API):
 

@@ -6,7 +6,7 @@ by the tools in tools/telegram.py. Inbound: a getUpdates long-poll daemon
 events for agent_node's turn queue — long polling needs no public IP, so the
 Pi5 stays behind home NAT.
 
-Design constraints this file honors (same contract as services/memory.py):
+Design constraints this file honors:
   - Missing token / empty allowlist → service reports itself unconfigured,
     tools answer "not set up", polling never starts, nothing crashes.
   - Never wedge a turn: sends run with tight timeouts and a single attempt;
@@ -45,7 +45,6 @@ _DEFAULT_DEFERRED_PATH = "~/.langrobo/telegram_deferred.json"
 
 
 _PHOTO_MAX_BYTES = 2_000_000   # inbound photo cap — it enters the LLM context
-_DOC_MAX_BYTES = 10_000_000    # inbound document cap — chunked+embedded, never in-context
 _DOC_EXTENSIONS = (".pdf", ".txt", ".md")
 
 
@@ -265,10 +264,10 @@ class TelegramService:
         text = (msg.get("text") or msg.get("caption") or "").strip()
         photo = None
         if msg.get("document"):
-            # Knowledge ingest: .pdf/.txt/.md → household knowledge base.
-            # Handled on its own thread (embedding is slow); a caption becomes
-            # a normal turn AFTER ingest so the answer can already use the doc.
-            self._handle_document(chat_id, member, msg["document"], text, on_message)
+            # Document ingest went with the knowledge agent. Say so rather than
+            # swallowing the file silently.
+            self.send_message(chat_id, "I can't read documents any more — "
+                                       "text and photos only.")
             return
         if msg.get("photo"):
             photo = self._fetch_photo(msg["photo"])
@@ -280,60 +279,12 @@ class TelegramService:
         if not text and photo is None:
             # Voice notes / stickers — answer honestly rather than silently
             # swallowing the message.
-            self.send_message(chat_id, "I can read text, photos, and "
-                                       ".pdf/.txt/.md documents for now.")
+            self.send_message(chat_id, "I can read text and photos for now.")
             return
         metrics.inc("telegram_inbound_total")
         on_message(TelegramInbound(chat_id=chat_id, name=member.name,
                                    role=member.role, text=text[:_TEXT_LIMIT],
                                    photo=photo))
-
-    def _handle_document(self, chat_id: int, member, doc: dict, caption: str,
-                         on_message) -> None:
-        """One inbound document → household knowledge base. Runs the slow part
-        (download + chunk + embed) on a daemon thread, then confirms in chat;
-        a caption question becomes a turn only after the doc is searchable."""
-        from . import permissions
-        from . import knowledge as knowledge_service
-
-        name = (doc.get("file_name") or "document").strip()
-        if not permissions.has_capability(member.role, permissions.CAP_KNOWLEDGE):
-            logger.info("AUDIT knowledge sender=%s outcome=denied", member.name)
-            self.send_message(chat_id, "Sorry — only household members can add "
-                                       "documents to my knowledge.")
-            return
-        if not name.lower().endswith(_DOC_EXTENSIONS):
-            self.send_message(chat_id, f"I can only learn .pdf, .txt or .md "
-                                       f"files for now — '{name}' isn't one.")
-            return
-        if (doc.get("file_size") or 0) > _DOC_MAX_BYTES:
-            self.send_message(chat_id, f"'{name}' is too large — please keep "
-                                       f"documents under 10 MB.")
-            return
-
-        def _ingest() -> None:
-            data = self._fetch_file(doc.get("file_id"), _DOC_MAX_BYTES)
-            if data is None:
-                self.send_message(chat_id, f"I couldn't download '{name}' — "
-                                           f"could you send it again?")
-                return
-            chunks, err = knowledge_service.ingest_file(name, data)
-            logger.info("AUDIT knowledge sender=%s file=%s outcome=%s",
-                        member.name, name, err or f"{chunks} chunks")
-            if err:
-                self.send_message(chat_id, f"I couldn't learn '{name}': {err}")
-                return
-            self.send_message(chat_id, f"Learned '{name}' — {chunks} section(s). "
-                                       f"Ask me about it anytime.")
-            if caption:
-                # Their question, now answerable from the fresh document.
-                on_message(TelegramInbound(chat_id=chat_id, name=member.name,
-                                           role=member.role,
-                                           text=caption[:_TEXT_LIMIT]))
-
-        metrics.inc("telegram_documents_received_total")
-        threading.Thread(target=_ingest, daemon=True,
-                         name="knowledge_ingest").start()
 
     def _fetch_file(self, file_id: str | None, max_bytes: int) -> bytes | None:
         """Download one file by id via getFile (poller/ingest thread)."""
@@ -472,7 +423,7 @@ class TelegramService:
         return None
 
 
-# Module-level singleton — same pattern as services.memory: the entry point
+# Module-level singleton — the entry point
 # calls init() once; tools and agent_node share the instance.
 _instance: TelegramService | None = None
 

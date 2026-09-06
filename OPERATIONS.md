@@ -7,158 +7,21 @@ Deploy, run, observe, and troubleshoot the Pi5 brain.
 
 ## Run modes
 
-| Mode | Command | Use |
+| mode | command | what runs |
 |---|---|---|
-| **Production** | `./scripts/install_systemd.sh` (once) | 24/7: auto-restart, boot persistence, JSON logs in journald |
-| Foreground | `ros2 launch langrobo_ros brain_launch.py` | attended testing (micro-ROS included) |
-| Dev / Studio | `./scripts/dev.sh` | LangGraph Studio UI + micro-ROS agent |
-| Dev + voice | `./scripts/dev_voice.sh` | all of the above **plus** STT/TTS — talk to the graph while stepping it |
+| Production | `systemctl start langrobo-brain langrobo-microros` | the brain + micro-ROS agent, 24/7, auto-restart, JSON logs |
+| Foreground | `ros2 launch langrobo_ros brain_launch.py` | the same, in your terminal |
+| Dev (Studio) | `./scripts/dev.sh` | micro-ROS + `langgraph dev` on :2024 — **draws the graph**, and lets you step a turn node by node |
+| Voice | `ros2 launch pi5_voice_pkg voice_launch.py` | CPU-only STT + TTS on the Pi 5 (see PI5_VOICE.md) |
 
-Never run two modes at once — both drive `/cmd_vel` and bind micro-ROS UDP 8888.
-Stop production first: `sudo systemctl stop langrobo-brain langrobo-microros`.
+**Never run two brains at once** — both drive `/cmd_vel` and micro-ROS UDP 8888.
 
-### Voice in dev mode (Studio)
-
-`langgraph dev` serves the graph over HTTP and has no ROS side, so dev mode
-loses both the mic and the speaker — agent_node owns the input queue and the
-reply sink, not the graph. `studio_voice_node` is that missing pair, and
-nothing else: no graph, no bridge, no history.
-
-```bash
-./scripts/dev_voice.sh          # micro-ROS + langgraph dev + STT/TTS + bridge
-```
-
-It reuses a `langgraph dev` or micro-ROS agent that is already running rather
-than fighting it for the port, refuses to start while `langrobo-brain` is up
-(both own `/cmd_vel` and `/voice/user_input`), and Ctrl+C stops only what it
-started. `--no-voice` reduces it to `dev.sh`; `--no-micro` skips the ESP32 link;
-a bare number sets the micro-ROS UDP port. Background logs land in
-`/tmp/langrobo-dev/` (override with `LANGROBO_DEV_LOGS`).
-
-The two halves can still be run separately — `./scripts/dev.sh` in one terminal
-and `ros2 launch langrobo_ros studio_voice_launch.py` in another:
-
-```bash
-./scripts/dev.sh                                   # terminal 1 — graph on :2024
-ros2 launch langrobo_ros studio_voice_launch.py    # terminal 2 — voice pair + bridge
-```
-
-| Argument | Default | Use |
-|---|---|---|
-| `voice:=false` | `true` | the pi5 STT/TTS pair is already running |
-| `watch_ui:=false` | `true` | stop speaking turns typed into the Studio box |
-| `thread_id:=…` | new thread | pin to an existing conversation (id from the Studio URL) so typed and spoken turns share one history |
-| `thread_mode:=per_turn` | `persistent` | fresh conversation per utterance (A/B one prompt) |
-| `stream_speech:=false` | `true` | speak the whole reply at the end instead of streaming |
-| `studio_url:=…` | `http://127.0.0.1:2024` | non-default server |
-| `assistant_id:=…` | `agent` | the graph key in `langgraph.json` |
-
-Both directions reach the speaker:
-
-| You | Appears in Studio | Spoken |
-|---|---|---|
-| speak into the mic | ✅ the bridge's thread is a normal server thread | ✅ streamed sentence by sentence |
-| type in the Studio browser box | ✅ (it is the UI's own run) | ✅ once the run finishes |
-
-The asymmetry is the server's, not ours: `join_stream` does **not** replay a
-run's token stream to a late joiner (only `values` events arrive — measured
-against langgraph-sdk 0.4.2), so a watched turn is spoken from its final state
-snapshot rather than token by token. A watcher polls busy threads every
-`watch_poll_s`; a run that starts and finishes inside one interval is missed by
-design, and runs already in flight when the bridge starts are skipped — after a
-restart they belong to the previous session, not to anyone in the room. One speech lock keeps the two paths from interleaving mid-sentence.
-
-A spoken turn is never also spoken as a watched one, but note *how*: run ids
-are only known once a run's metadata event arrives, and the poll can beat it
-(seen live 2026-09-05 — the watcher joined a mic turn already in flight). So
-the guard is the THREAD, not the id: while the bridge is driving a turn, and
-for 3s after, every run on its own thread is its own by construction. A pinned
-thread is exempt outside that window, so a shared conversation still speaks
-turns typed in the UI.
-
-Four more knobs are node parameters rather than launch arguments — reach them
-with `ros2 run langrobo_ros studio_voice_node --ros-args -p <name>:=<value>`:
-`watch_poll_s` (0.5s), `speak_errors` (speak a short line when the server is
-down), `skip_nodes` (agents whose tokens never reach the speaker — default
-`supervisor`, which emits only grammar-forced handovers), and `turn_timeout_s`.
-
-Kept from production: the `/voice/*` wire protocol (sentence chunks closed by
-`<|eou|>`, via the shared `SentenceEmitter` — so tts_node cannot tell the two
-brains apart), replace-newest input queueing, barge-in (a newer utterance
-cancels the server run), and the sticky-agent rule (`supervisor` never
-persists).
-
-Dropped on purpose — these live in agent_node, and a second implementation
-would be a second thing to keep in sync:
-
-| Not in dev mode | Why |
-|---|---|
-| `[SYSTEM]` turns (reminders, watch, briefing, nav-done) | agent_node's ROS timers |
-| Telegram channel | agent_node's poller and reply sink |
-| fast path | the zero-LLM movement lane; dev mode exists to watch the graph |
-| history trimming | the server thread holds the conversation (checkpointer) |
-
-Movement still works: `graph_studio.py` attaches a real `ROS2Bridge` when ROS2
-is sourced, so tools publish `/cmd_vel` from **that** process.
-`studio_voice_node` only reads `/voice/user_input` and writes
-`/voice/robot_speech` — two processes, no overlap.
-
-Server down or a dropped turn → the node speaks one short offline line and
-keeps listening (hard rule 4); the real diagnosis is in the `langgraph dev`
-terminal. The client is transport-injected, so
-`src/langrobo_core/tests/test_studio.py` covers it with no server running.
-
-### systemd units
-
-```
-langrobo-microros.service   micro-ROS agent (ESP32 bridge), Restart=always
-langrobo-brain.service      agent_node via scripts/run_brain.sh, Restart=always
-```
-
-The brain unit has a drop-in `/etc/systemd/system/langrobo-brain.service.d/10-avahi-ordering.conf`
-(repo copy: `src/langrobo_ros/systemd/langrobo-brain.service.d/`) adding
-`After=/Wants=avahi-daemon.service` — without it the brain starts before mDNS
-is ready and the first slot probe to `singireddys-mac-mini.local` fails with
-"Name or service not known" (harmless but noisy; added 2026-07-19).
-
-```bash
-systemctl status langrobo-brain langrobo-microros
-journalctl -u langrobo-brain -f -o cat            # follow structured JSON logs
-journalctl -u langrobo-brain -o cat | jq 'select(.level=="ERROR")'
-journalctl -u langrobo-brain -o cat | jq 'select(.trace_id=="<id>")'   # one turn end-to-end
-sudo systemctl restart langrobo-brain             # brain only; micro-ROS untouched
-```
-
-After editing a unit file in `src/langrobo_ros/systemd/`, the INSTALLED copy
-must be refreshed too (bitten 2026-07-10 — the repo file was updated, the
-installed one wasn't, and `fleet.sh sim` silently couldn't switch bodies):
-
-```bash
-sudo cp src/langrobo_ros/systemd/langrobo-brain.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl restart langrobo-brain
-```
-
-### Robot body switch (rover vs sim)
-
-The brain drives cmd_vel to ONE body at a time, chosen by the `robot_body`
-ROS param (default `rover`): the real ESP32 rover gets plain `Twist` on
-`/cmd_vel`; the Gazebo sim (`rover_sim`) gets `TwistStamped` on
-`/mecanum_drive_controller/cmd_vel`. The switch is plumbed
-`fleet.sh {sim|rover}` → `~/.langrobo/brain.env` (`ROBOT_BODY=…`) →
-systemd `EnvironmentFile` → `run_brain.sh` → launch arg → param, and
-`fleet.sh` restarts the brain only when the body actually changes.
-Verify: `curl -s localhost:8090/status | jq .runtime.robot_body`.
-
-### Adaptive KV-slot map
-
-The slot map in `agent_params.yaml` assumes a 5-slot llama.cpp server
-(`--parallel 5`). At startup the brain probes the server's real slot count
-(`GET /props`) and folds out-of-range pins onto shared slots, least-frequent
-agents first (navigate → specialist slot → chat's slot), keeping chat,
-local_agent and supervisor on private slots for as long as the server allows.
-A 4-slot server just means navigate shares slot 2 again. Probe unreachable →
-the configured map is kept. Boot log line: "LLM server reports N parallel
-slots" (or per-agent fold warnings).
+The llama.cpp server on the Mac Mini must be started with **`--jinja --parallel 4`**:
+one KV-cache slot per agent (supervisor, chat, local_agent, navigate). With
+fewer slots the agents share and evict each other's cached prompt prefix, which
+costs ~18-50s of re-prefill per turn. agent_node probes the server at boot and
+logs `KV slot map (one per agent): {...}` — or a warning naming the shortfall.
+See ARCHITECTURE_LLD.md §4.1.
 
 ## Health API
 
@@ -186,94 +49,23 @@ not here.
 | `LANGROBO_API_TOKEN` | Bearer token for /status + /metrics (empty → localhost only) |
 | `LANGROBO_HEALTH_PORT` / `_HOST` | Health API bind (default 8090) |
 | `LANGROBO_FALLBACK_PROVIDER/MODEL/API_KEY_ENV/BASE_URL` | Cloud LLM fallback — arms when key exists |
-| `LANGROBO_MEMORY` | `false` disables episodic memory |
-| `LANGROBO_MEMORY_PATH` | Embedded Qdrant path (default `~/.langrobo/qdrant`) |
-| `QDRANT_URL` + `QDRANT_API_KEY` | Switch memory to a Qdrant server / Cloud |
 | `LANGROBO_TRACING` | LangSmith opt-in; without it tracing vars are scrubbed (kills stale-key 403 spam) |
 | `LANGROBO_LOG_JSON` | `false` → human-readable log lines |
 | `OPENAI/ANTHROPIC/GOOGLE_API_KEY` | Cloud provider keys (referenced by name) |
-| `SWIGGY_ACCESS_TOKEN` | Legacy Swiggy token override — prefer `scripts/swiggy_login.py` → `~/.langrobo/mcp_tokens.json` (no token anywhere → food/instamart/dineout off, no spam) |
-| `LANGROBO_MCP_TOKENS` | MCP token file path override (default `~/.langrobo/mcp_tokens.json`) |
-| `SWIGGY_FOOD_MCP_URL` / `SWIGGY_INSTAMART_MCP_URL` / `SWIGGY_DINEOUT_MCP_URL` | MCP endpoint overrides (default `https://mcp.swiggy.com/{food,im,dineout}`) |
 | `TAVILY_API_KEY` | Web search in chat (absent → feature off) |
 | `LANGROBO_TELEGRAM_TOKEN` | Bot token from @BotFather (absent → channel off) |
 | `LANGROBO_TELEGRAM_ALLOWLIST` | `chat_id:Name:role,…` — roles `owner`/`family`/`guest`; channel stays off while empty (bot never talks to strangers) |
-| `LANGROBO_QUIET_HOURS` | `HH:MM-HH:MM` — proactive pings queue in this window; replies always send (watch alerts bypass it) |
-| `LANGROBO_WATCH` | `false` disables home watch mode entirely |
-| `LANGROBO_WATCH_COOLDOWN_S` | Min seconds between watch alerts (default 60) |
-| `LANGROBO_WATCH_MIN_CONF` | Person-detection confidence floor (default 0.5) |
-| `LANGROBO_WORLD_MODEL` | `false` makes the object map memory-only (forgotten on restart) |
-| `LANGROBO_WORLD_MODEL_PATH` | Where seen-object positions persist (default `~/.langrobo/world_model.json`) |
-| `LANGROBO_WORLD_MERGE_RADIUS_M` | Two sightings closer than this are the same object (default 0.6) |
-| `LANGROBO_CONSOLIDATION` | `false` disables nightly memory consolidation |
-| `LANGROBO_CONSOLIDATION_HOUR` | Local hour the nightly run becomes eligible (default 3) |
-| `LANGROBO_BRIEFING_HOUR` | Set (e.g. `8`) to enable the daily spoken morning briefing — unset = off |
+| `LANGROBO_QUIET_HOURS` | `HH:MM-HH:MM` — proactive pings queue in this window; replies to a person always send |
 | `STUDIO_PROVIDER/MODEL/BASE_URL/MAX_TOKENS` | `langgraph dev` only |
+| `LANGROBO_NAV_FRAME` | Frame for goals, TF pose reads and detections (default `odom` — this rover has no map frame) |
+| `LANGROBO_STANDOFF_M` | How far short of an object the robot parks (default 0.45). The Jetson's `pixel_to_goal.py` reads the SAME variable — export it on both machines or the two halves disagree |
+| `LANGROBO_PAN_TILT` | `1` once pan/tilt servos are actually fitted (default off — the ESP32 has no servo subscriptions) |
+| `LANGROBO_LINEAR_VEL_MS` / `_PHYSICAL_VEL_MS` / `_ANGULAR_VEL_RS` / `_STEADY_ANGULAR_VEL` | Drive calibration, tunable without a rebuild — see INTEGRATION_GAPS.md §3 |
 
-Robot state files: `~/.langrobo/` — `household.json`, `reminders.json`,
-`errands.json`, `qdrant/`, `telegram_offset`, `telegram_deferred.json`,
-`watch.json` (armed state), `consolidation.json` (nightly-run cursor),
-`briefing.json` (last briefing day), `mcp_tokens.json` (Swiggy MCP login, 0600).
-Back this directory up; delete a file to reset that memory.
-
-## Swiggy login / re-login
-
-Swiggy's MCP servers (food, instamart, dineout) use OAuth 2.1 PKCE: phone +
-OTP in a browser, access token good for ~5 days, no refresh flow. Login:
-
-```bash
-python3 scripts/swiggy_login.py --verify        # desktop with a browser
-# headless Pi5: from your laptop first `ssh -L 8976:localhost:8976 <robot>`,
-# then on the Pi:
-python3 scripts/swiggy_login.py --no-browser    # open the printed URL on the laptop
-```
-
-`--verify` lists the tool counts on all three MCP servers with the fresh
-token. The token lands in `~/.langrobo/mcp_tokens.json`; a running brain picks
-it up automatically on the next Swiggy/Instamart/Dineout/tracker turn (header
-hot-reload) — only a brain that NEVER had a token needs one restart. When the
-token expires mid-flight the three agents degrade to a spoken "temporarily
-unavailable" and the owners get exactly one Telegram nudge to re-run the
-script. Check `curl -s localhost:8090/status | jq .mcp` for per-provider tool
-counts and token days-left.
-
-## Household knowledge base (documents)
-
-Send the robot a `.pdf`/`.txt`/`.md` on Telegram (owner/family) — it chunks,
-embeds and stores it locally ("Learned 'manual.pdf' — 12 sections"), then the
-**knowledge agent** answers questions from it ("what does error E4 mean?").
-Re-sending a file replaces its old version. Bulk ingest:
-`python3 scripts/ingest_docs.py <files|dir>` — but the embedded Qdrant is
-single-process, so stop the brain first (the script detects this and says so).
-"what documents do you have?" lists them.
-
-## Morning briefing
-
-Opt-in: set `LANGROBO_BRIEFING_HOUR=8` in `.env`. Once a day at/after that
-hour the robot speaks a short summary (today's reminders, weather if Tavily
-is configured, list highlights). On demand any time: "give me my briefing".
-State: `jq .runtime.briefing` on `/status`.
-
-## Home watch mode
-
-Arm by voice ("Rakhi, watch the house") or Telegram ("watch the house");
-disarm with "stop watching" / "I'm back". While armed the Jetson target
-finder hunts `person`; a confident detection sends a photo to every
-**owner-role** Telegram member (cooldown between alerts) and the robot
-announces it aloud. The photo send is deterministic — it works even when the
-LLM is down. Armed state survives restarts. Only owner/family may arm or
-disarm (guests must not switch the alarm off). Check `curl -s
-localhost:8090/status | jq .runtime.watch`.
-
-## Memory consolidation (self-learning)
-
-Once a day at/after `LANGROBO_CONSOLIDATION_HOUR`, while the robot is idle
-and the Mac Mini is reachable, new episodic turns are distilled into short
-household facts (`facts` Qdrant collection) by the LOCAL model — never the
-cloud. `recall_memory` surfaces them alongside episodes. The run aborts the
-moment real input arrives and resumes later; re-processing is harmless
-(facts deduplicate by embedding similarity). Check `curl -s
-localhost:8090/status | jq .runtime.consolidation`.
+Robot state files: `~/.langrobo/` — `locations.json` (spots saved with
+`save_location`), `telegram_offset` (exactly-once inbound across restarts),
+`telegram_deferred.json` (quiet-hours queue). Back this directory up; delete a
+file to reset that memory.
 
 ## Telegram channel
 
@@ -349,16 +141,18 @@ debugging.
                --parallel 4 --jinja
 ```
 
-- `--parallel 4` — all four slots are pinned by the brain (0 chat / 1 vision /
-  2 specialists+consolidation / 3 supervisor — see agent_params.yaml slot map).
+- `--parallel 4` — one KV slot per agent, pinned by the brain: 0 supervisor,
+  1 chat, 2 local_agent, 3 navigate. The map is `registry.SLOTS`, declared
+  beside the agents; agent_node probes this server's real slot count at boot
+  and warns if it is smaller. See ARCHITECTURE_LLD.md §4.1.
 - `--jinja` — required for grammar-forced handover + streamed tool calls.
 - Prompt cache + context checkpoints give cross-restart KV reuse; slot pinning
   is insurance on top.
 - **Reach it by mDNS name only, never a pinned IP** — DHCP moved the Mac
   (.7 → .3, observed 2026-07-19); `singireddys-mac-mini.local` kept resolving.
 - **Outage signature** (2026-07-19, 16:26–17:28): every LLM call fails with
-  `APIConnectionError`, journal shows "Primary LLM marked down for 60s" each
-  consolidation cycle, while the network itself is fine. Cause = the Mac asleep
+  `APIConnectionError` and the journal shows "Primary LLM marked down for 60s",
+  while the network itself is fine. Cause = the Mac asleep
   or llama-server not running. Brain self-recovers when the server returns —
   no restart needed. Durable fix pending on the Mac: `sudo pmset -a sleep 0`
   + run llama-server as a LaunchAgent.
@@ -368,12 +162,11 @@ debugging.
 | Symptom | Likely cause → fix |
 |---|---|
 | Spoken "my brain server is offline" | Mac Mini down/unreachable → check server, or arm `LANGROBO_FALLBACK_*` |
-| Every turn slow (~20s before speech) | KV cache cold: slot scatter (server without `--parallel`/pins), clock in a prompt, or mid-history mutation — see ARCHITECTURE.md KV-cache discipline |
+| Every turn slow (~20s before speech) | KV cache cold: the server started without `--parallel 4` (agents share slots and evict each other — the boot log says so), a clock in a prompt, or a mid-history mutation. See ARCHITECTURE_LLD.md §4 |
 | "I cannot see right now" | Jetson camera node down or frame >10s stale — check `/camera/color/image_raw/compressed`. On the orin-nav stack that topic is a 2 Hz republish from `detections_3d` — it goes dark whenever YOLO is paused (nav safety procedure) or the `vision` layer isn't up |
-| Vision turn slow (~60s end-to-end) | Measured 2026-07-19: router call ~43s + vision call ~16s on the Mac, sequential. Known cost of graph routing — text-only nav turns already bypass it via fastpath; a vision fastpath is the open optimization |
+| Vision turn slow (~60s end-to-end) | Measured 2026-07-19: router call ~43s + vision call ~16s on the Mac, sequential. `local_agent` is sticky, so the FOLLOW-UP question about the same scene skips the router; the first one still pays it |
 | Tool calls flaky / early stops | GGUF chat template mislabels control tokens → suspect the quant; try `strict_tool_calls:=false` |
-| Food/grocery/dineout "temporarily unavailable" | No Swiggy token or it expired (~5 days) — run `scripts/swiggy_login.py` (see "Swiggy login" above); `/status .mcp` shows which provider is down |
-| Memory unavailable in /status | first boot downloads the embed model (~130MB) — check network, see journal |
+| "I couldn't measure its distance" | `pixel_to_goal.py` isn't running on the Jetson (`./rover vlm`), or depth had a hole at that pixel — the reason string says which |
 | ESP32 not moving | `langrobo-microros` unit down, or ESP32 not on WiFi → `systemctl status langrobo-microros`, then power-cycle ESP32 |
 | DDS discovery fails Pi5↔Jetson | `ROS_DOMAIN_ID` mismatch, or a stray `ROS_DISCOVERY_SERVER` in the environment. **Prod is plain multicast since 2026-07-16** (the D555 is a raw DDS participant that discovery-server clients cannot see) — every prod script unsets `ROS_DISCOVERY_SERVER`; `langrobo-discovery` remains only for `dev.sh`/`langgraph dev` (127.0.0.1:11811). A client accidentally pointed at it goes silently invisible to the Jetson |
 

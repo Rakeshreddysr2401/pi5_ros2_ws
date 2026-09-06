@@ -11,7 +11,7 @@ Usage on Pi5:
     langgraph dev                        # run from repo root
 
 Usage on dev machine (no ROS2):
-    langgraph dev                        # chat + memory tools work; robot tools log
+    langgraph dev                        # chat works; robot tools just log
 """
 
 import atexit
@@ -25,9 +25,7 @@ load_dotenv()  # reads .env from cwd (repo root) before any langrobo imports
 
 from langrobo_core.services import config as config_service
 from langrobo_core.services import llm as llm_module
-from langrobo_core.services import memory as memory_service
 from langrobo_core.services import telegram as telegram_service
-from langrobo_core.services import watch as watch_service
 from langrobo_core.tools import _bridge as bridge_module
 
 logger = logging.getLogger(__name__)
@@ -65,14 +63,15 @@ _max_tokens = int(os.getenv("STUDIO_MAX_TOKENS", "3000"))
 _key_env = _PROVIDER_KEY_MAP.get(_provider, "OPENAI_API_KEY")
 _api_key = os.getenv(_key_env, "none") if _key_env else "none"
 
-llm_module.configure(_provider, _model, _base_url, _api_key, _max_tokens)
+# One KV slot per agent, straight from the registry — the same map agent_node
+# uses, so a graph stepped in Studio has the same cache behaviour as the robot.
+from langrobo_core import registry
+llm_module.configure(_provider, _model, _base_url, _api_key, _max_tokens,
+                     {n: {"slot": s} for n, s in registry.SLOTS.items()})
 llm_module.configure_fallback(_settings.fallback)
-memory_service.init(_settings.memory)
 telegram_service.init(_settings.telegram)
-watch_service.init(_settings.watch)
-# Consolidation is not started here — it's the robot process's nightly job
-# (agent_node timer); Studio can exercise it via services.consolidation directly.
-logger.info("Studio LLM: provider=%s model=%s", _provider, _model)
+logger.info("Studio LLM: provider=%s model=%s slots=%s",
+            _provider, _model, registry.SLOTS)
 
 # ── Bridge: real ROS2 or stub ─────────────────────────────────────────────────
 

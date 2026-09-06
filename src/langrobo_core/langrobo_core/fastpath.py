@@ -240,7 +240,8 @@ def try_handle(text: str, say_fn=None, state: dict | None = None) -> str | None:
 
 
 def _execute(intent: FastIntent, bridge, say, state: dict) -> None:
-    from .tools.approach import approach_object, list_saved_locations, scan_surroundings
+    from .tools.approach import (approach_described_object,
+                                list_saved_locations, scan_surroundings)
     from .tools.movement import move_robot, navigate_to_pose, point_camera, save_location
 
     kind, a = intent.kind, intent.args
@@ -273,8 +274,13 @@ def _execute(intent: FastIntent, bridge, say, state: dict) -> None:
     elif kind == "approach":
         target = a["target"]
         say("Coming to you." if target == "person" else f"Looking for the {target}.")
-        result = approach_object.invoke(
-            {"target": target, "state": dict(state)})
+        # approach_object (YOLO detections + world model) was removed — nothing
+        # on this rover ever published /vision/detections_3d. The described
+        # -object path does the same job through the VLM, and is the only one
+        # that works. It is slower (a VLM round-trip per look), which is why
+        # the ack above is spoken BEFORE the call rather than after it.
+        result = approach_described_object.invoke(
+            {"description": target, "state": dict(state)})
         say(result)
 
     elif kind == "save":

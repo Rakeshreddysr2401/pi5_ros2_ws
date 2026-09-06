@@ -1,18 +1,23 @@
 """StubBridge — no-op replacement for langrobo_ros.ros2_bridge.ROS2Bridge.
 
-Used by graph_studio.py (LangGraph Studio) and the smoke tests so the whole
-graph runs on any machine without ROS2.  Every public method from ROS2Bridge
-is implemented here as a no-op that logs the call.
+Used by graph_studio.py (LangGraph Studio) and the tests so the whole graph
+runs on any machine without ROS2. Every public method from ROS2Bridge is
+implemented here as a no-op that logs the call.
 
-Tools that import ROS2 message types inside their body (movement.py, system.py)
-will raise ImportError when ROS2 packages are absent — LangGraph catches that
-as a ToolMessage error and the LLM can respond gracefully.
+Keep this class in step with ROS2Bridge's public surface. A method missing
+here is not a test-only problem: Studio and every off-robot run hit it as an
+AttributeError raised inside a tool, which the model then reports to the user
+as a robot fault. `ground_pixel` was missing exactly that way, which meant
+approach_described_object — the rover's only working object-approach path —
+could not be exercised off-robot at all.
+
+Tools that import ROS2 message types inside their body (movement.py) raise
+ImportError when ROS2 packages are absent — LangGraph catches that as a
+ToolMessage error and the LLM responds gracefully.
 """
 
 import logging
-import math
 import os
-import threading
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +26,6 @@ class StubBridge:
 
     def __init__(self, known_locations: dict = None):
         self._known_locations = known_locations or {}
-        self._active_order_id: str | None = None
-        self._order_lock = threading.Lock()
         self._nav_done_callback = None
         self._system_turn_callback = None
         self.system_turns: list[str] = []   # tests inspect what was enqueued
@@ -39,18 +42,15 @@ class StubBridge:
         if self._system_turn_callback:
             self._system_turn_callback(text)
 
-    # ── Topics ────────────────────────────────────────────────────────────
+    # ── Camera ────────────────────────────────────────────────────────────
 
     def on_image(self, frame_bytes: bytes) -> None:
         pass
 
-    def on_target_result(self, msg) -> None:
-        pass
-
     def get_frame(self, max_age_s: float | None = None) -> bytes | None:
         """No live camera in Studio. For testing local_agent's look() + vision,
-        set STUDIO_TEST_IMAGE to a JPEG/PNG path and that frame is served instead.
-        """
+        set STUDIO_TEST_IMAGE to a JPEG/PNG path and that frame is served
+        instead."""
         path = os.getenv("STUDIO_TEST_IMAGE", "").strip()
         if not path:
             return None
@@ -65,27 +65,30 @@ class StubBridge:
         # The STUDIO_TEST_IMAGE frame (if any) is always "fresh".
         return 0.0 if self.get_frame() is not None else None
 
+    # ── Pose and locations ────────────────────────────────────────────────
+
     def get_current_pose(self):
         # Settable so tests can reach the no-localisation branch: the real
-        # bridge returns None when TF has no map->base_link fix, and tools are
-        # required to stay honest about that rather than invent a direction.
+        # bridge returns None when TF has no odom->base_link fix, and tools
+        # are required to stay honest about that rather than invent a position.
         return getattr(self, "pose", (0.0, 0.0, 0.0))
 
     def add_known_location(self, name, x, y, yaw_deg):
-        self._known_locations = getattr(self, "_known_locations", {})
         self._known_locations[name] = (x, y, yaw_deg)
 
     def get_known_locations(self) -> dict:
         return self._known_locations
 
-    def set_vision_target(self, target: str) -> None:
-        logger.info("[STUB] set_vision_target: %s", target)
+    # ── VLM pixel grounding (Jetson pixel_to_goal) ────────────────────────
 
-    def get_target_result(self, max_age_s: float | None = None) -> dict | None:
-        # No Jetson target_node in Studio — report "no detection" so the
-        # approach loop holds still and exits instead of hanging.
-        logger.info("[STUB] get_target_result -> None")
-        return None
+    def ground_pixel(self, u: float, v: float, timeout: float = 4.0) -> dict:
+        """No Jetson in Studio, so there is no depth to ground a pixel against.
+
+        Returns the same shape the real bridge returns when the Jetson is
+        silent, so the calling tool takes its honest "the depth service isn't
+        answering" branch instead of raising."""
+        logger.info("[STUB] ground_pixel(%.0f, %.0f) -> no_reply_from_jetson", u, v)
+        return {"ok": False, "reason": "no_reply_from_jetson"}
 
     # ── Camera pan/tilt ───────────────────────────────────────────────────
 
@@ -95,45 +98,6 @@ class StubBridge:
 
     def get_pan_tilt(self) -> tuple:
         return getattr(self, "_pan_tilt", (0.0, 0.0))
-
-    # ── Music ─────────────────────────────────────────────────────────────
-
-    def music_command(self, cmd: dict) -> None:
-        logger.info("[STUB] music_command: %s", cmd)
-        # Simulate the Jetson music_node confirming playback so play_music's
-        # confirmation wait doesn't block Studio turns for 10s. cmd_t echoes
-        # the command's `t` — the token play_music matches on.
-        import time
-        if cmd.get("action") == "play":
-            self._music_state = {"playing": True, "paused": False,
-                                 "title": f"[stub] {cmd.get('query', '')}",
-                                 "volume": 70, "stamp": time.time(),
-                                 "cmd_t": cmd.get("t")}
-        elif cmd.get("action") == "stop":
-            self._music_state = {"playing": False, "paused": False,
-                                 "title": "", "volume": 70, "stamp": time.time()}
-        elif cmd.get("action") in ("pause", "resume"):
-            if getattr(self, "_music_state", None):
-                self._music_state["paused"] = cmd["action"] == "pause"
-                self._music_state["stamp"] = time.time()
-        self._music_state_seq = getattr(self, "_music_state_seq", 0) + 1
-
-    def get_music_state(self, max_playing_age_s: float | None = None) -> dict | None:
-        return getattr(self, "_music_state", None)
-
-    def get_music_state_seq(self) -> int:
-        return getattr(self, "_music_state_seq", 0)
-
-    # ── Active order ──────────────────────────────────────────────────────
-
-    def set_active_order(self, order_id: str | None) -> None:
-        with self._order_lock:
-            self._active_order_id = order_id
-        logger.info("[STUB] set_active_order(%s)", order_id)
-
-    def get_active_order(self) -> str | None:
-        with self._order_lock:
-            return self._active_order_id
 
     # ── Speech ────────────────────────────────────────────────────────────
 
@@ -146,7 +110,14 @@ class StubBridge:
     def publish_speech_end(self) -> None:
         logger.info("[STUB] end of utterance")
 
+    def publish_timing(self, event: dict) -> None:
+        pass
+
     # ── Publishers ────────────────────────────────────────────────────────
+
+    @property
+    def robot_body(self) -> str:
+        return "stub"
 
     def publish_twist(self, twist) -> None:
         lx = getattr(getattr(twist, "linear",  None), "x", 0.0)

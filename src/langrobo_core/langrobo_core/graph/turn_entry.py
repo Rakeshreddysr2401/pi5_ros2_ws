@@ -12,9 +12,9 @@ Which agents are sticky is declared per-agent in registry.py (`sticky=True`),
 not listed here. They are the agents that answer in plain text (no mandatory
 hand-back to supervisor) AND can re-route a topic change themselves: `chat`
 carries the full routing table, and `local_agent` owns visual follow-ups
-("what colour is it?") with an out-of-scope catch-all. Specialists like
-navigate/swiggy/status hand back to supervisor by design, so they are
-intentionally NOT sticky — the turn after them starts at chat.
+("what colour is it?") with an out-of-scope catch-all. `navigate` hands back
+to the supervisor by design, so it is intentionally NOT sticky — the turn
+after it starts at chat.
 
 agent_node passes the previous turn's active_agent in as the incoming state, and
 forces "supervisor" for [SYSTEM] events so those always get a fresh route.

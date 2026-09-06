@@ -18,18 +18,10 @@ CAP_CHAT = "chat"      # converse, ask questions
 CAP_RELAY = "relay"    # send/relay messages to household members
 CAP_PHOTO = "photo"    # receive camera photos (it's a camera inside the home)
 CAP_MOVE = "move"      # drive the robot
-CAP_ORDER = "order"    # place food orders (spends money)
-CAP_REMIND = "remind"  # set/cancel reminders
-CAP_WATCH = "watch"    # arm/disarm home watch (disarm is the sensitive half —
-                       # a guest must not be able to switch the alarm off)
-CAP_ANNOUNCE = "announce"  # speak a message aloud INTO the home from Telegram —
-                           # a guest must not use the robot as a megaphone
-CAP_KNOWLEDGE = "knowledge"  # ingest documents into the household knowledge
-                             # base — what's in it shapes future answers
 
 ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
-    "owner":  frozenset({CAP_CHAT, CAP_RELAY, CAP_PHOTO, CAP_MOVE, CAP_ORDER, CAP_REMIND, CAP_WATCH, CAP_ANNOUNCE, CAP_KNOWLEDGE}),
-    "family": frozenset({CAP_CHAT, CAP_RELAY, CAP_REMIND, CAP_WATCH, CAP_ANNOUNCE, CAP_KNOWLEDGE}),
+    "owner":  frozenset({CAP_CHAT, CAP_RELAY, CAP_PHOTO, CAP_MOVE}),
+    "family": frozenset({CAP_CHAT, CAP_RELAY}),
     "guest":  frozenset({CAP_CHAT}),
 }
 

@@ -9,28 +9,26 @@ description = "Pure-Python brain of the LangRobo home robot (LangGraph superviso
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 dependencies = [
-    # Pinned to the working stack (see repo requirements.txt for the rationale
-    # behind the langchain-mcp-adapters pin).
     "langgraph>=1.2,<2",
     "langchain-core>=1,<2",
-    "langchain-openai",
-    "langchain-anthropic",
-    "langchain-google-genai",
-    "langchain-ollama",
-    "langchain-community",
-    "langchain-mcp-adapters>=0.3,<0.4",
+    "langchain-openai",     # also serves provider="llamacpp" (custom base_url)
+    "langchain-community",  # tavily web search wrapper
     "python-dotenv",
     "typing-extensions",
     # Services layer
     "httpx>=0.27",          # telegram channel (also a transitive dep of the LLM SDKs)
-    "qdrant-client>=1.12",
-    "fastembed>=0.4",
-    "pypdf>=4",             # knowledge ingest: PDF text extraction (degrades without)
-    "fastapi>=0.110",
+    "fastapi>=0.110",       # health/status/metrics API
     "uvicorn>=0.29",
+    "pillow",               # approach.py reads the look frame's real dimensions
 ]
 
+# Alternative LLM providers. The robot runs on llama.cpp (Mac Mini); these are
+# only needed if you point it somewhere else, so they are not paid for by
+# default on a Pi 5 that will never import them.
 [project.optional-dependencies]
+anthropic = ["langchain-anthropic"]
+gemini = ["langchain-google-genai"]
+ollama = ["langchain-ollama"]
 dev = ["pytest"]
 
 [tool.setuptools.packages.find]

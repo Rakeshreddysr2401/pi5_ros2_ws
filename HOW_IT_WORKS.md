@@ -32,27 +32,29 @@ All of this was verified live on 2026-07-03 (18 turns, zero errors).
       a malformed one **crashes now** (systemd restarts; fix .env) rather than
       misbehaving at 2am.
    3. Installs JSON logging (every line gets the current turn's `trace_id`).
-   4. Reads ROS params (`agent_params.yaml`): provider, model, KV slot map, locations.
+   4. Reads ROS params (`agent_params.yaml`): provider, model, locations. The
+      **KV slot map is not a param** — it comes from `registry.SLOTS`, and
+      agent_node probes llama.cpp's real slot count to check it fits.
    5. Creates **ROS2Bridge** (the only ROS I/O object) and injects it into
       `langrobo_core.tools._bridge` — from now on every tool can reach the robot.
    6. Configures the LLM factory (`services/llm.py`) + arms the cloud fallback
       if `LANGROBO_FALLBACK_*` keys exist.
-   7. Starts **episodic memory** (`services/memory.py`): opens the embedded
-      Qdrant store at `~/.langrobo/qdrant`, loads the fastembed model on a
-      background writer thread — the brain never waits for it.
-   8. Builds the LangGraph graph (once).
-   9. Subscribes: `/voice/user_input`, `/voice/tts_stop`,
-      `/camera/color/image_raw/compressed`, `/vision/target_result`.
+   7. Starts the **Telegram** long-poll thread (no-op without a token +
+      allowlist). Messages sent while the brain was down arrive now.
+   8. Builds the LangGraph graph (once) — four nodes, from `registry.SPECS`.
+   9. Subscribes: `/voice/user_input`, `/voice/tts_stop`, `/voice/{stt,tts}_meta`,
+      `/camera/color/image_raw/compressed`.
    10. Starts the **health API** (FastAPI, port 8090) on a daemon thread.
    11. Starts the worker thread, says **"I'm ready"** through TTS, and
        background-prefills chat's llama.cpp slot so the first real turn is fast.
 
 After boot the process has these threads:
 ```
-ROS spin (main)     → fills caches (camera frame, YOLO result), queues inputs, runs timers
+ROS spin (main)     → caches the camera frame, queues inputs. Must never block.
 worker (daemon)     → the ONLY thread that runs the graph/LLM
-memory writer       → embeds + upserts conversation turns (off the turn path)
+telegram poller     → long-polls getUpdates → worker queue
 health API          → serves /health /status /metrics
+nav worker          → transient; one Nav2 goal each
 cache warmer        → transient; prefills LLM slots while idle
 ```
 
@@ -133,21 +135,23 @@ a laptop sitting on what looks like a bed."
 
 ## 4. A proactive turn (the robot speaks first)
 
-"Set a timer for one minute" → chat calls
-`set_reminder(text="Your 1 minute timer is done", in_minutes=1)` → stored in
-`~/.langrobo/reminders.json` (survives restarts).
+"Go to the kitchen" returns immediately — Nav2 drives in the background and
+the turn ends. A minute later the robot speaks without being spoken to:
 
-Sixty seconds later:
-1. A ROS timer (every 5s) polls the reminder store; the due reminder pops.
-2. agent_node injects `[SYSTEM] Reminder due — announce to the user now: …`
-   into the **system queue** (FIFO, never dropped, processed between user turns).
+1. `ROS2Bridge._nav_worker` (its own thread, one per goal) gets the action
+   result from Nav2.
+2. It calls the registered `_on_nav_done` callback, which injects
+   `[SYSTEM] Navigation succeeded: I've arrived at 'kitchen'.` into the
+   **system queue** (FIFO, never dropped, processed between user turns).
+   If the goal came from Telegram, the injected text also carries a routing
+   instruction so the report lands in that chat instead of the speaker.
 3. System turns always enter at the **supervisor**, whose only ability is a
    grammar-forced `handover()` — it routes to chat.
-4. chat's reply streams to TTS: the robot announces **"Your 1 minute timer is
-   done!"** with nobody having spoken to it.
+4. chat's reply streams to TTS: **"I've arrived at the kitchen."**
 
-Delivery polling (when a Swiggy order is active) and navigation-complete
-events use the same producer pattern; future face-seen greetings will too.
+**This is the pattern for every proactive behaviour.** A producer calls
+`bridge.enqueue_system_turn(...)`; everything downstream already works. Don't
+invent a second mechanism.
 
 ---
 
@@ -208,11 +212,12 @@ honestly reports map navigation isn't available until SLAM lands.
 |---|---|
 | Mac Mini unreachable | `safe_invoke` retries once → marks primary down 60s → uses cloud fallback if `LANGROBO_FALLBACK_*` armed, else **speaks** "My brain server is offline…". Primary re-probed after cooldown. |
 | Camera feed dead | `look()` refuses frames >10s old → robot says it cannot see right now. |
-| Swiggy/Tavily key absent | Feature is off; agent says so; zero boot spam. |
-| Memory backend broken | Memory reports unavailable in /status; everything else runs. |
+| Tavily key absent | Web search is off; chat says it cannot look that up; zero boot spam. |
+| Telegram token/allowlist absent | The channel stays off. The bot never talks to strangers. |
+| Jetson depth grounding silent | `approach_described_object` says the depth service isn't answering — distinct from "grounding failed", which comes back with a reason. |
 | Agent routing loops | Structural guards: max 3 handover visits + max 8 node runs per turn, self-handover nudged once — then a plain spoken fallback, no more LLM calls. |
 | Graph exception | Caught in `_process` → "I'm having trouble right now" spoken, `turn_errors_total` bumped, next turn unaffected. |
-| Process crashes | systemd restarts it in ≤10s; reminders/memory/lists reload from disk. |
+| Process crashes | systemd restarts it in ≤10s; saved locations reload from disk. |
 | Pi reboots | Both units auto-start; "I'm ready" announces recovery. |
 
 ---
@@ -223,12 +228,12 @@ The Mac Mini caches the LLM's processed prompt (KV cache) per slot. A warm
 turn only pays for the *new* tokens; a cold one re-processes ~2k+ tokens
 (~20s on the 12B). Everything below protects warmth:
 
-- **Slot map**: chat=0, local_agent(images)=1, specialists(navigate/status/
-  swiggy/tracker/knowledge/briefing/consolidation)=2, supervisor=3 —
-  different prompts never evict each other. Supervisor got its own slot on
-  2026-07-06: it fires on every `[SYSTEM]` turn, and sharing slot 2 meant it
-  and whichever specialist was cached kept evicting each other (~18-50s
-  full-history re-prefills).
+- **One slot per agent**: supervisor=0, chat=1, local_agent=2, navigate=3.
+  Four agents, four caches, nothing ever evicts anything. The map is declared
+  beside the agents in `registry.py`; start llama.cpp with `--parallel 4`.
+  This matters because it was measured: when the supervisor shared a slot with
+  another agent (2026-07-06), each call evicted the other's prefix and cost
+  18-50s of full-history re-prefill on the next turn.
 - **Append-only history**: the per-agent projection never mutates or drops
   mid-history messages; trims happen only at turn boundaries, and the
   **cache warmer** re-prefills in the background right after each trim.
@@ -244,15 +249,15 @@ E4B would roughly meet the ≤2s first-audio budget).
 
 | Path | Contents |
 |---|---|
-| `~/.langrobo/household.json` | lists + facts (in-prompt memory) |
-| `~/.langrobo/reminders.json` | pending reminders/timers |
-| `~/.langrobo/qdrant/` | episodic memory vectors (embedded Qdrant) |
+| `~/.langrobo/locations.json` | spots saved with `save_location` |
+| `~/.langrobo/telegram_offset` | inbound cursor — exactly-once across restarts |
+| `~/.langrobo/telegram_deferred.json` | messages queued during quiet hours |
 | `~/ros2_ws/.env` | keys + service settings (validated at boot) |
 | `/etc/systemd/system/langrobo-*.service` | the two service units |
 | journald | all logs (JSON, per-turn trace_id) |
 
-Back up `~/.langrobo/` to preserve the robot's memory; delete a file to reset
-that memory tier.
+Back up `~/.langrobo/` to preserve what the robot has been told; delete a file
+to reset that piece.
 
 ---
 

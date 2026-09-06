@@ -5,8 +5,8 @@ perception in rover mode (cuVSLAM/nvblox/Nav2/YOLO, `orin-nav-stack`); voice (ST
 locally on the Pi5 instead, so voice works concurrently with driving — see PI5_VOICE.md; Mac Mini serves the LLM
 (llama.cpp, `singireddys-mac-mini.local:8080`); ESP32 drives the wheels.
 Read HOW_IT_WORKS.md for the end-to-end walkthrough (boot, turn lifecycle,
-failure paths); ARCHITECTURE.md before touching graph/agent code;
-OPERATIONS.md for run/deploy/troubleshooting; PRODUCT.md for the roadmap; PI5_VOICE.md for the local STT/TTS pair; the Jetson `orin-nav-stack/SYSTEM_INTEGRATION.md` for the cross-machine ROS contract.
+failure paths); ARCHITECTURE_LLD.md before touching graph/agent code;
+OPERATIONS.md for run/deploy/troubleshooting; PI5_VOICE.md for the local STT/TTS pair; the Jetson `orin-nav-stack/SYSTEM_INTEGRATION.md` for the cross-machine ROS contract.
 
 ## Fleet start — one command brings up the whole robot
 
@@ -57,8 +57,7 @@ colcon build --symlink-install && sudo systemctl restart langrobo-brain
 # Run modes (NEVER two at once — both drive /cmd_vel + UDP 8888)
 systemctl status langrobo-brain langrobo-microros   # production (systemd)
 ros2 launch langrobo_ros brain_launch.py            # foreground all-in-one
-./scripts/dev.sh                                    # LangGraph Studio :2024
-./scripts/dev_voice.sh                              # Studio :2024 + STT/TTS (talk to it in dev mode)
+./scripts/dev.sh                                    # LangGraph Studio :2024 (draws the graph)
 
 # Observe
 journalctl -u langrobo-brain -f -o cat              # JSON logs (jq-able, trace_id per turn)
@@ -74,7 +73,13 @@ pip3 install --break-system-packages -r requirements.txt
 1. **`src/langrobo_core` must never import rclpy** (pure zone — pip package).
    Only `src/langrobo_ros` (agent_node.py, ros2_bridge.py) touches ROS2. Tools
    that need ROS message types import them lazily *inside* the function body.
-2. **KV-cache discipline** (violations cost ~20s/turn on the 12B model):
+2. **One llama.cpp KV slot per agent.** Slots are declared in `registry.py`
+   (`AgentSpec.slot`), NOT as ROS params. Start the server with
+   `--parallel 4`: each agent's ~1-2k token prompt prefix then stays resident
+   in its own cache. Two agents on one slot evict each other every turn
+   (~18-50s of re-prefill). agent_node probes the server's real slot count at
+   boot, wraps with modulo, and warns loudly if it had to.
+3. **KV-cache discipline** (violations cost ~20s/turn on the 12B model):
    - Never put a clock/timestamp in a system prompt (date only; clock is the
      `get_current_time` tool).
    - Message projection must stay append-only (`utils/message_utils.py`
@@ -82,58 +87,54 @@ pip3 install --break-system-packages -r requirements.txt
    - History trims only at HumanMessage boundaries (`utils/history.py`).
    - Don't auto-inject retrieved memory into system prompts — recall is
      tool-driven (`recall_memory`) on purpose.
-3. **No `speak()` tool** — an agent's reply text IS the speech (streamed
+4. **No `speak()` tool** — an agent's reply text IS the speech (streamed
    sentence-by-sentence, utterance closed with `<|eou|>`). The wire protocol
    with the Jetson (`/voice/*`, `<|eou|>`) must match tts_node — change both
    repos together or neither.
-4. **Missing keys degrade, never crash**: no Swiggy token → agent says
-   unavailable; no Tavily key → no web search; Mac Mini down → cloud fallback
-   or spoken offline message. Keep this property when adding features.
-5. New proactive behaviour = a producer injecting `[SYSTEM]` turns into
-   agent_node's system queue (see reminder poll) — don't invent new mechanisms.
+5. **Missing keys degrade, never crash**: no Tavily key → no web search and
+   chat says it can't look that up; no Telegram allowlist → the channel stays
+   off; Mac Mini down → cloud fallback or a spoken offline message. Keep this
+   property when adding features.
+6. New proactive behaviour = a producer injecting `[SYSTEM]` turns into
+   agent_node's system queue (the Nav2 arrival report is the worked
+   example) — don't invent new mechanisms.
 
-## Layout (detail in ARCHITECTURE.md)
+## Layout (full detail in ARCHITECTURE_LLD.md)
 
-- `langrobo_core/graph/` — topology (build.py, derived entirely from
-  registry.py), handover resolution + loop guards
-- `langrobo_core/fastpath.py` — deterministic movement lane: exact spoken
-  movement commands ("stop", "come here", "go near the chair", "forward 30")
-  execute tools directly with ZERO LLM calls (agent_node hook, `fast_path`
-  param, default on); anything ambiguous falls through to the graph
-- `langrobo_core/prompts.py` — EVERY system prompt (agents + background jobs).
-  `SPEECH_STYLE` (inside PERSONA) is the ONE spoken-output contract — reply
-  length, no-markdown, how numbers are read — don't restate it per agent.
+**Three agents and a router.** Each responder owns one modality: `chat` (text
+in/out, the default responder), `local_agent` (images — the only agent with
+`look()`), `navigate` (motion — the only agent that moves wheels), plus
+`supervisor`, which routes and never emits text.
+
+- `langrobo_core/registry.py` — **ONE `AgentSpec` per agent, and nothing about
+  an agent lives anywhere else**: routing copy, prompt, tool set, KV slot,
+  sticky/keep_images. Adding an agent = a name in `agent_ids.py` + a spec here;
+  the graph, handover grammar, supervisor routing table, sticky set and slot
+  map all derive from it. Two import-time asserts catch drift.
+- `langrobo_core/prompts.py` — EVERY system prompt. `SPEECH_STYLE` (inside
+  PERSONA) is the ONE spoken-output contract — don't restate it per agent.
   Tool lists are NOT hand-written: prompts carry a `{tools}` placeholder that
-  `render_tools()` fills from the bound tool set. Dynamic blocks (household,
-  now-playing, date) append at the END via the spec's `context` callable
-- `langrobo_core/registry.py` — ONE `AgentSpec` per agent (routing copy, prompt,
-  tool set, sticky/keep_images/mcp flags). Adding an agent = a name in
-  `agent_ids.py` + a spec here; graph, handover grammar and supervisor routing
-  table all derive from it
-- `langrobo_core/agents/` — `factory.py` builds every agent node from its spec;
+  `render_tools()` fills from the bound tool set.
+- `langrobo_core/fastpath.py` — deterministic movement lane: exact spoken
+  commands ("stop", "forward 30", "go to the kitchen") execute tools directly
+  with ZERO LLM calls. Anything ambiguous falls through to the graph.
+- `langrobo_core/graph/` — topology (build.py, derived entirely from
+  registry.py), entry routing (sticky vs supervisor), handover + loop guards
+- `langrobo_core/agents/` — `factory.py` builds every responder from its spec;
   `supervisor.py` is the only hand-written node (forced tool_choice)
 - `langrobo_core/tools/` — @tool functions; per-agent sets in `__init__.py`;
-  robot I/O via `_bridge.get()`
-- `langrobo_core/services/` — config (validated .env), llm (slots + fallback),
-  mcp (remote MCP provider registry: Swiggy food/instamart/dineout + token
-  lifecycle — future MCPs are one ProviderSpec + the add-an-agent recipe),
-  memory (embedded Qdrant + fastembed), world_model (WHERE things are —
-  persistent map-frame object positions, multi-instance, feeds where_is +
-  approach_object), consolidation (nightly episodic→facts,
-  local model only), knowledge (document ingest for the knowledge agent),
-  briefing (once-daily scheduler), watch (armed person-detection alerts →
-  Telegram), telegram (channel: long-poll + sends),
-  permissions (role→capability policy — enforced in tools, never only prompts),
-  health (FastAPI :8090), studio (LangGraph Server client — dev mode only),
-  logging, metrics
+  robot I/O via `_bridge.get()`. Keep the sets SHORT: every tool is shipped as
+  a schema on every turn to that agent, forever.
+- `langrobo_core/services/` — state that outlives a turn: config (validated
+  .env), llm (slots + cloud fallback), telegram (long-poll + sends),
+  permissions (role→capability, enforced in tools not prompts), health
+  (FastAPI :8090), logging, metrics
+- `langrobo_core/bridges/stub.py` — the no-ROS bridge. **Must mirror
+  ROS2Bridge's public surface**; a missing method surfaces as an
+  AttributeError inside a tool, which the model reports as a robot fault.
 - `langrobo_ros/` — agent_node (params, queues, worker loop, cache warmer),
-  studio_voice_node (dev-mode voice ↔ `langgraph dev`, see OPERATIONS.md),
-  ros2_bridge (all topics/services/actions), launch, systemd units
-
-Adding an agent/tool: recipes at the bottom of ARCHITECTURE.md. `agent_ids.py`
-+ `registry.py` are the only files to touch; `registry.py` asserts they agree at
-import, and `tests/test_prompt_contract.py` fails if a prompt and its tool set
-drift.
+  ros2_bridge (all topics/services/actions; `NAV_FRAME` defined once here),
+  launch, systemd units
 
 ## Config split
 
@@ -141,10 +142,8 @@ drift.
   locations (ROS params)
 - `.env` (validated fail-fast at startup) — keys + LANGROBO_* service settings;
   full table in OPERATIONS.md; template in example.env
-- Robot state lives in `~/.langrobo/` (household.json, reminders.json,
-  world_model.json (seen objects — survives restarts, like locations.json),
-  errands.json, qdrant/, telegram_offset, telegram_deferred.json, watch.json,
-  consolidation.json)
+- Robot state lives in `~/.langrobo/` (locations.json, telegram_offset,
+  telegram_deferred.json)
 
 ## Working on the Jetson from here
 
@@ -182,10 +181,7 @@ change both repos together or neither.
   `/servo_pan`+`/servo_tilt` (ESP32, GPIO 18/19) and mirrors angles on
   `/camera/pan_tilt_state` for the Jetson TF broadcaster.
 - `strict_tool_calls` + streaming need the llama.cpp server started with
-  `--jinja --parallel 5` (chat/local_agent/specialist/supervisor/navigate slots).
-- Smoke tests import `services/mcp.py` (via `tools/__init__`) which probes the
-  network only when a Swiggy token exists (SWIGGY_ACCESS_TOKEN env or
-  `~/.langrobo/mcp_tokens.json` — login via `scripts/swiggy_login.py`).
+  `--jinja --parallel 4` (one slot per agent: supervisor/chat/local_agent/navigate).
 - Pi5↔Jetson clocks drift ~1.5s (chrony peering pending) — latency_replay
   flags negative deltas.
 

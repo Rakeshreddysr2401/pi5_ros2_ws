@@ -1,6 +1,6 @@
 """Web search tool (Tavily).
 
-Loaded once at import time, mirroring services/mcp.py: if TAVILY_API_KEY is not set
+Loaded once at import time: if TAVILY_API_KEY is not set
 (e.g. on the Pi5 without a key) the tool is simply disabled and WEB_TOOLS is empty,
 so binding it is a no-op. The chat prompt advertises this as "tavily_search (if
 available)" — that wording matches this optional wiring.

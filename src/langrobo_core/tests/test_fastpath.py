@@ -153,18 +153,25 @@ def test_try_handle_speaks_and_returns_text():
     assert fastpath.try_handle("what's the weather like") is None
 
 
-def test_try_handle_approach_with_detection():
+def test_try_handle_approach_runs_the_vlm_lane(monkeypatch):
+    """"come here" reaches approach_described_object — the lane that works on
+    this rover. The old world-model lane went with /vision/detections_3d."""
     from langrobo_core.bridges import StubBridge
     from langrobo_core.tools import _bridge
+    from langrobo_core.tools import approach as ap
     from langrobo_core import fastpath
-
-    from langrobo_core.services import world_model
-    from langrobo_core.services.world_model import WorldModel
 
     _bridge._instance = None
     _bridge.init(StubBridge())
-    world_model.reset(WorldModel(path=None))
-    world_model.get().observe("person", 2.0, 0.0, 0.4, 0.9)
+    monkeypatch.setattr(ap, "_fresh_frame", lambda b, settle_s=2.5: b"jpeg")
+    monkeypatch.setattr(ap, "_vlm_locate", lambda frame, desc: (10.0, 10.0))
+    monkeypatch.setattr(_bridge.get(), "ground_pixel",
+                        lambda u, v, timeout=4.0: {
+                            "ok": True, "depth_m": 2.0,
+                            "goal": {"x": 1.5, "y": 0.0, "yaw": 0.0}})
 
     spoken = fastpath.try_handle("come here")
-    assert spoken and "on my way" in spoken.lower()
+    # The ack is spoken BEFORE the slow VLM call, which is the whole point of
+    # the fast path — the user hears something immediately.
+    assert spoken and "coming to you" in spoken.lower()
+    assert "on my way" in spoken.lower()

@@ -1,12 +1,16 @@
 """send_telegram_message() / send_telegram_photo() — reach household members'
 phones. Pure zone.
 
+This is how you talk to the robot today: the Pi 5 has no microphone or speaker
+attached (see the rover repo's FLEET_STATUS.md), so Telegram is the working
+channel and voice is the one waiting on hardware.
+
 Capability-gated (services/permissions.py): the sender's identity rides on the
 turn state (channel / sender_name / sender_role — set per-turn by agent_node
-for Telegram turns in Phase B). Voice turns carry no identity yet and run as
-the owner. Checks live HERE, in the tool, not in prompts.
+for Telegram turns). Voice turns carry no identity yet and run as the owner.
+Checks live HERE, in the tool, not in prompts — a prompt is a suggestion.
 
-Audit: every attempt logs sender → recipient, capability, and outcome — never
+Audit: every attempt logs sender → recipient, capability and outcome — never
 the message text (it's the household's private chatter).
 """
 
@@ -54,68 +58,28 @@ def _gate(state: dict, capability: str, recipient: str):
 
 @tool
 def send_telegram_message(recipient: str, message: str,
-                          state: Annotated[dict, InjectedState],
-                          report_back: bool = False) -> str:
+                          state: Annotated[dict, InjectedState]) -> str:
     """Send a text message to a household member's phone via Telegram.
 
     Use for relaying ("tell Mom I'll be late" → recipient="Mom") or notifying
     someone who isn't in the room. Write `message` as the robot speaking on the
     sender's behalf, e.g. "Rakesh says he'll be late today." Keep it short and
-    natural — it lands as a phone message.
-
-    Set report_back=True when the user wants to hear the answer ("ask Mom …",
-    "tell her X and let me know what she says") — the recipient's reply will
-    then come back to you marked as the answer to this errand, even hours
-    later, so you can pass it on."""
-    from .errands import get_store as get_errand_store
-    from . import _relay_confirm
+    natural — it lands as a phone message."""
     sender, _ = _sender(state)
     svc, member, refusal = _gate(state, permissions.CAP_RELAY, recipient)
     if refusal:
         return refusal
-    # D10 enforcement: a bare "tell X …" must not silently pick the phone —
-    # the gate refuses until the user names the channel or answers the ask.
-    # report_back relays are exempt: collecting the recipient's ANSWER needs
-    # the phone by construction, so there is no channel choice to make.
-    if not report_back:
-        refusal = _relay_confirm.check(
-            state, "telegram",
-            ask_hint=f"send it to {member.name} on Telegram, or say it out loud?")
-        if refusal:
-            _audit(sender, permissions.CAP_RELAY, member.name, "needs_channel_confirm")
-            return refusal
-    def _record_errand():
-        via = state.get("channel") or "voice"
-        # A [SYSTEM]-scheduled relay (reminder fire, errand forward) was asked
-        # by the person at home: when the reply arrives it must take the
-        # asked_via="voice" path (spoken announcement) — "system" would fall
-        # into the telegram-forward branch and try to send_telegram_message
-        # to "the user", who is not a resolvable member.
-        if via == "system":
-            via = "voice"
-        asked_by = state.get("sender_name") or "the user"
-        get_errand_store().add(asked_via=via, asked_by=asked_by,
-                               sent_to=member.name, gist=message)
-
     if state.get("channel") == "system" and svc.quiet_now():
-        # Proactive pings ([SYSTEM] turns: reminders, deliveries) respect quiet
-        # hours; a person's direct request always goes through. A report_back
-        # relay still records its errand here — the message WILL be delivered
-        # by the post-quiet-hours flush, and the reply must not be orphaned.
+        # Proactive pings ([SYSTEM] turns: nav arrival) respect quiet hours; a
+        # person's direct request always goes through.
         svc.defer(member.chat_id, message)
         _audit(sender, permissions.CAP_RELAY, member.name, "deferred")
-        if report_back:
-            _record_errand()
         return (f"It's quiet hours — the message to {member.name} was queued "
                 f"and will be delivered once quiet hours end.")
     err = svc.send_message(member.chat_id, message)
     _audit(sender, permissions.CAP_RELAY, member.name, "error" if err else "sent")
     if err:
         return f"{err} Tell the user the message to {member.name} did not go through."
-    if report_back:
-        _record_errand()
-        return (f"Message delivered to {member.name} on Telegram. Their reply "
-                f"will be routed back to you as the answer to this errand.")
     return f"Message delivered to {member.name} on Telegram."
 
 
@@ -127,7 +91,7 @@ def send_telegram_photo(recipient: str, caption: str,
 
     Use when someone asks for a photo of what the robot sees ("send me a pic of
     the room"). The photo is taken fresh from the robot's current position —
-    the robot cannot go somewhere else first yet. `caption` is a short line
+    the robot cannot go somewhere else first. `caption` is a short line
     describing the shot; pass "" for none."""
     sender, _ = _sender(state)
     svc, member, refusal = _gate(state, permissions.CAP_PHOTO, recipient)

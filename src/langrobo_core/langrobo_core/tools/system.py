@@ -1,5 +1,6 @@
+"""Robot introspection — the clock and the hardware state. Pure zone."""
+
 from datetime import datetime
-from typing import Optional
 
 from langchain_core.tools import tool
 
@@ -8,55 +9,37 @@ from . import _bridge
 
 @tool
 def get_current_time() -> str:
-    """Current local clock time (and date). Call when the user asks the time
-    or something depends on the exact time of day.
+    """Get the current date and time.
 
-    The clock is deliberately NOT in your prompt: a per-minute timestamp there
-    would invalidate the llama.cpp prompt-prefix cache every minute and cost
-    ~20s of re-prefill per turn on the 12B model."""
-    return datetime.now().strftime("%A %B %d, %Y, %I:%M %p").replace(" 0", " ")
-
-
-@tool
-def set_active_order(order_id: Optional[str]) -> str:
-    """Store or clear the active Swiggy order ID for background delivery polling.
-
-    Call with the order_id string after placing an order so the robot monitors
-    delivery status every 2 minutes. Call with None once the order is delivered
-    to stop polling."""
-    _bridge.get().set_active_order(order_id)
-    if order_id:
-        return f"Now monitoring order {order_id} for delivery"
-    return "Order monitoring cleared"
+    This is a TOOL rather than a line in the system prompt on purpose: a clock
+    baked into the prompt changes every minute, which changes the cached prefix,
+    which re-prefills ~2k tokens on every minute tick (~20s on the 12B model).
+    See prompts.py's header."""
+    now = datetime.now()
+    return now.strftime("%A, %B %d, %Y at %I:%M %p").replace(" 0", " ")
 
 
 @tool
 def get_robot_status() -> str:
-    """Get the robot's current operational status: battery level, active task,
-    and hardware state.
+    """Get the robot's current hardware state — whether the camera feed is
+    alive and which body the robot is driving. Use for "how are you doing?",
+    "are you okay?", "is your camera working?".
 
-    Calls the /robot/get_status ROS2 service.  Falls back to a basic message
-    if the service is not available (e.g. ESP32 not yet connected)."""
-    try:
-        from std_srvs.srv import Trigger
-        resp = _bridge.get().call_service(
-            "/robot/get_status", Trigger, Trigger.Request(), timeout=3.0
-        )
-        return resp.message if resp.success else "Status service returned failure"
-    except TimeoutError:
-        return "Status: operational — status service not available (ESP32 not connected yet)"
-    except Exception as e:
-        return f"Status: operational — could not reach status service ({e})"
+    Deliberately reports only what this machine can actually observe. There is
+    no battery reading: nothing on the rover publishes one (the ESP32 firmware
+    has three subscriptions and none of them are power). The old version called
+    a /robot/get_status service that no node provides, so it timed out on every
+    call and answered "operational" regardless — which is worse than silence."""
+    bridge = _bridge.get()
+    parts = []
 
+    age = bridge.frame_age()
+    if age is None:
+        parts.append("my camera hasn't sent a frame at all")
+    elif age > 10.0:
+        parts.append(f"my camera feed is stale ({age:.0f} seconds old)")
+    else:
+        parts.append("my camera feed is live")
 
-@tool
-def ros2_publish(topic: str, data: str) -> str:
-    """Publish a string message to any ROS2 topic.
-
-    Use for hardware not covered by the other tools.
-
-    Known topics:
-      /arm/joint_goal — joint angles, e.g. '{\"j1\": 90}'
-      /gripper/cmd    — 'open' or 'close'"""
-    _bridge.get().publish_to_topic(topic, data)
-    return f"Published '{data}' → {topic}"
+    parts.append(f"I'm driving the {bridge.robot_body} body")
+    return "Status: " + ", ".join(parts) + "."

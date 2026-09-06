@@ -12,17 +12,14 @@ codebase should hard-code an agent name.
 
 # Routing targets, in the order the supervisor sees them. `supervisor` is not
 # here: it routes, it is not a destination the registry describes.
+#
+# THREE responders, on purpose. Each one owns a distinct input modality:
+# text-in/text-out (chat), image-in (local_agent), motion-out (navigate).
+# That is also why each gets its own llama.cpp KV slot — see registry.py.
 AGENT_IDS: tuple[str, ...] = (
     "chat",
     "local_agent",
     "navigate",
-    "status",
-    "swiggy",
-    "instamart",
-    "dineout",
-    "tracker",
-    "knowledge",
-    "briefing",
 )
 
 # Every name Command(goto=...) and handover(next_agent=...) may legally target.

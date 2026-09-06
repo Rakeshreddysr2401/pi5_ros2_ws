@@ -35,11 +35,16 @@ class ROS2Bridge:
     # rover repo), so nothing ever publishes a map frame — get_current_pose()
     # returned None on every call and every navigate_to_pose/approach_* goal
     # was silently untransformable. Two of the three were fixed by hand on
-    # 2026-09-06; on_detections was missed and still dropped every detection.
+    # 2026-09-06; a third — the detections handler — was missed entirely and
+    # silently dropped every detection it was ever given.
     #
-    # It is a single name now precisely so the three can never drift apart
-    # again. Set LANGROBO_NAV_FRAME=map on a rig that really does run AMCL or
-    # cuVSLAM map-relocalisation.
+    # It is a single name now precisely so they can never drift apart again.
+    # Set LANGROBO_NAV_FRAME=map on a rig that really does run AMCL or cuVSLAM
+    # map-relocalisation.
+    #
+    # Anything publishing object positions for this brain to navigate to must
+    # express them in THIS frame — see INTEGRATION_GAPS.md §1 for the
+    # /vision/detections_3d contract.
     NAV_FRAME = os.environ.get("LANGROBO_NAV_FRAME", "odom")
 
     def __init__(self, node, known_locations: dict = None, robot_body: str = "rover"):
@@ -96,17 +101,6 @@ class ROS2Bridge:
         # ── Latest camera frame (bytes, JPEG-encoded) ─────────────────────────
         self._latest_frame: bytes | None = None
         self._frame_stamp: float = 0.0   # time.monotonic() of last frame
-
-        # ── 3D object detections (Jetson detections_3d node, D555 depth) ──────
-        # /vision/detections_3d JSON: {"frame":"<NAV_FRAME>","objects":[{"label","x","y",
-        # "z","conf"}, ...]}. Stamped on RECEIPT here, so the Pi5↔Jetson clock
-        # drift (~1.5s, CLAUDE.md gotcha) never enters an age comparison.
-        #
-        # The positions themselves live in services/world_model.py (persistent,
-        # multi-instance) — the bridge only feeds it. Reads go straight to that
-        # service, not through here: this class is the live robot-I/O seam
-        # (topics, poses, actions), and durable state belongs to a service, the
-        # way memory/watch/telegram already do.
 
         # Commanded pan/tilt (open-loop; servos settle in ~0.3s). Kept so tools
         # can re-centre and report the current aim without a state topic.
@@ -212,48 +206,6 @@ class ROS2Bridge:
         with self._speech_lock:
             self._is_speaking = msg.data
 
-    def on_detections(self, msg) -> None:
-        """Cache /vision/detections_3d (JSON String) per label.
-
-        Only detections already expressed in NAV_FRAME are kept: a position in
-        some other frame, fed to Nav2 as if it were a goal, sends the robot
-        somewhere wrong. Dropping is safer than approximating.
-
-        This used to demand "map" specifically, which on this rover means it
-        dropped EVERYTHING — the rover publishes odom (see NAV_FRAME) — and did
-        so silently, so approach_object/where_is/scan_surroundings all behaved
-        as though the detector were switched off. The mismatch is now logged
-        (throttled) rather than swallowed, so the next frame disagreement
-        announces itself instead of presenting as "I've never seen a chair"."""
-        try:
-            data = json.loads(msg.data)
-            objects = data.get("objects", [])
-        except (ValueError, TypeError, AttributeError):
-            return
-        frame = data.get("frame", self.NAV_FRAME)
-        if frame != self.NAV_FRAME:
-            self._node.get_logger().warning(
-                f"/vision/detections_3d is in {frame!r} but this brain navigates "
-                f"in {self.NAV_FRAME!r} — dropping. Fix the publisher, or set "
-                f"LANGROBO_NAV_FRAME.", throttle_duration_sec=30.0)
-            return
-        from langrobo_core.services import world_model
-        world = world_model.get()
-        for obj in objects:
-            label = str(obj.get("label", "")).lower().strip()
-            if not label:
-                continue
-            try:
-                world.observe(
-                    label,
-                    float(obj.get("x", 0.0)),
-                    float(obj.get("y", 0.0)),
-                    float(obj.get("z", 0.0)),
-                    float(obj.get("conf", 0.0)),
-                )
-            except (TypeError, ValueError):
-                continue          # one malformed object must not drop the batch
-
     # ── Cached reads (worker thread) ──────────────────────────────────────
 
     def get_frame(self, max_age_s: float | None = None) -> bytes | None:
@@ -297,8 +249,6 @@ class ROS2Bridge:
         os.makedirs(os.path.dirname(self._locations_file), exist_ok=True)
         with open(self._locations_file, "w") as f:
             json.dump({k: list(v) for k, v in self._saved_locations.items()}, f, indent=2)
-
-    # ── 3D detections (Jetson detections_3d node — D555 depth pipeline) ───
 
     # ── Camera pan/tilt (ESP32 dual servo + Jetson TF mirror) ─────────────
 

@@ -1,11 +1,13 @@
 # LangRobo Pi5 brain — Python dependencies.
 # Install:  pip3 install --break-system-packages -r requirements.txt
 # The brain itself (graph, agents, tools, services) is the editable package
-# below; its own dependencies (langgraph/langchain stack, qdrant-client,
-# fastembed, fastapi, uvicorn) are declared in src/langrobo_core/pyproject.toml.
+# below; its own dependencies (the langgraph/langchain stack, httpx, fastapi,
+# uvicorn, pillow) are declared in src/langrobo_core/pyproject.toml.
 -e ./src/langrobo_core
 
 # LangGraph Studio dev server (langgraph dev) — dev tool, not a core dependency.
+# Worth having: it draws the graph, which is the fastest way to see the
+# supervisor -> agent -> tools -> handover topology as a picture.
 langgraph-sdk>=0.4
 langgraph-cli[inmem]>=0.4
 
