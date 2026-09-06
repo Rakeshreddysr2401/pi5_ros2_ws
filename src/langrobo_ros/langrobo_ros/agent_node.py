@@ -188,8 +188,9 @@ class AgentNode(Node):
         self._history_lock = threading.Lock()
         # Background KV-cache warmer (boot + after history trims) — at most one.
         self._warm_thread: threading.Thread | None = None
-        # The supervisor runs on every non-sticky turn, on its own slot with
-        # its own prompt — so it is warmed independently of chat's.
+        # The supervisor runs ONLY on [SYSTEM] turns (see _process: user turns
+        # enter at chat or a sticky agent), on its own slot with its own
+        # prompt — so it is warmed independently of chat's.
         self._sup_warm_thread: threading.Thread | None = None
 
         # Sticky routing: the agent left active at the end of the previous turn.
