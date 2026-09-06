@@ -32,9 +32,14 @@ and the tests call `_bridge.init(StubBridge())`. That single seam is why 136
 tests run with no robot, no LLM server and no API keys.
 
 The cost of the rule: `StubBridge` must implement every public method
-`ROS2Bridge` has. A missing one is not a test problem — it surfaces as an
-`AttributeError` inside a tool, which the model then reports to the user as a
-robot fault. (`ground_pixel` was missing exactly that way.)
+`ROS2Bridge` has, and no more. A missing one is not a test problem — it
+surfaces as an `AttributeError` inside a tool, which the model then reports to
+the user as a robot fault (`ground_pixel` was missing exactly that way). A
+method the stub has and the real bridge lacks is the mirror image: a tool that
+passes every test and breaks on the robot.
+
+`tests/test_bridge_parity.py` checks both directions by parsing the two files'
+ASTs — no import, so it runs with no ROS2 installed.
 
 ---
 
@@ -238,6 +243,11 @@ spoken: a markdown list is read aloud bullet characters and all. That is why
 | `ros2_bridge.py` | every topic, service and action. `NAV_FRAME` is defined here, once. |
 | `wheel_odom_relay.py` | ESP32 `/wheel_state` → `nav_msgs/Odometry`. |
 
+There is deliberately no custom-interface package. Every topic here is a
+`std_msgs`/`geometry_msgs`/`sensor_msgs` type or JSON in a `String`, which is
+what lets the Jetson side (a frozen container that cannot be rebuilt) speak
+the same contract.
+
 ### `pi5_voice_pkg/` — voice
 
 | file | what it is |
@@ -285,7 +295,9 @@ message.
   `look()` and `send_telegram_photo` admit blindness.
 - `get_current_pose()` returns `None` when TF has no fix, so movement tools
   say they cannot localise rather than driving on a guess.
-- `point_camera` reports that no mount is fitted instead of a successful move.
+- `point_camera` is not bound at all without servos (`LANGROBO_PAN_TILT`), and
+  reports that no mount is fitted if you call it anyway. An always-refusing
+  tool still costs prompt tokens every turn and still tempts the model.
 - `ground_pixel`'s timeout means *the query never arrived*, which the tool
   reports differently from *grounding failed*.
 

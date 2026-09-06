@@ -83,7 +83,8 @@ PAN_TILT_ENABLED = os.environ.get("LANGROBO_PAN_TILT", "0").strip().lower() not 
 
 
 # Camera-head recovery: vSLAM tracks the CAMERA and absorbs a head pan as
-# apparent base rotation (rigid-extrinsic design — JETSON_D555_SETUP.md §3),
+# apparent base rotation (the camera is rigidly mounted, so vSLAM cannot tell
+# a panned head from a turned robot),
 # so while the head is off-centre the robot's own map pose reads rotated.
 # Anything that reads get_current_pose or sends a map goal must go through
 # ensure_head_centred first: re-centre the servos, then give the servo travel
@@ -197,13 +198,16 @@ def get_last_nav_requester() -> dict | None:
 @tool
 def navigate_to_pose(location: str,
                      state: Annotated[dict, InjectedState]) -> str:
-    """Send the robot to a named location using Jetson Nav2 map-based navigation.
+    """Send the robot to a saved named location. Nav2 plans the route and
+    avoids obstacles on the way.
 
-    Nav2 handles obstacle avoidance, path planning, and localisation automatically.
-    Use for room-to-room or area navigation: 'kitchen', 'bedroom', 'entrance', etc.
+    Use for places the robot already knows: 'kitchen', 'bedroom', 'entrance',
+    or anything saved with save_location. Call list_saved_locations if you are
+    not sure a name exists. For something the user describes rather than names
+    ("the red bottle"), use approach_described_object instead.
 
-    Returns immediately — the robot moves in the background. A system message will
-    arrive when navigation completes or fails."""
+    Returns immediately — the robot drives in the background. A system message
+    arrives when it gets there, or fails."""
     bridge = _bridge.get()
     ensure_head_centred(bridge)   # a panned head skews Nav2's start pose
 
@@ -246,113 +250,13 @@ def save_location(name: str) -> str:
             f"'{key}'. Say the word and I can navigate back to it anytime.")
 
 
-# ── Visual-servoing approach ("go near the cup") ──────────────────────────────
-# Uses the Jetson target_node (YOLOv8n) contract:
-#   publish COCO class on /vision/target  →  read /vision/target_result JSON
-#       {target, found, bearing_x[-1..1], rel_size, conf, stamp}
-# We steer with /cmd_vel: turn toward bearing_x, drive forward until rel_size is
-# big enough ("close"). Mono camera → no obstacle avoidance, no metric distance.
-_APPROACH_STOP_REL_SIZE = 0.45   # arrived when the target box fills ~half the frame
-_APPROACH_BEARING_DEADBAND = 0.15  # |bearing_x| below this = "centred enough" to drive
-_APPROACH_TIMEOUT_S = 30.0       # hard cap on the whole approach
-_APPROACH_TURN_GAIN = 1.6        # bearing_x → angular.z scale (clamped to _ANGULAR_VEL_RS)
-_APPROACH_SCAN_GIVEUP_DEG = 400.0  # rotate up to ~full circle looking for the target
-# target_node publishes at 5 Hz; a result older than this means the detector,
-# camera, or Jetson link is gone — never steer (least of all drive forward) on it.
-_APPROACH_RESULT_MAX_AGE_S = 1.5
-# How long to hold still with NO fresh detection before giving up (covers both
-# detector startup and a feed that died mid-approach).
-_APPROACH_NO_RESULT_GIVEUP_S = 6.0
+# The mono visual-servoing approach (navigate_to_visible_object) lived here.
+# It drove the wheels off the Jetson target_node's /vision/target_result, which
+# nothing on this rover publishes, so it could only ever hold still for 6s and
+# report a dead camera. approach_described_object in tools/approach.py replaces
+# it with the VLM + real depth, and unlike the servo loop it goes through Nav2,
+# so it avoids obstacles instead of driving straight at the target.
 
-
-@tool
-def navigate_to_visible_object(target: str) -> str:
-    """Drive up to a visible object using the camera (no map needed).
-
-    Visual servoing via the Jetson YOLOv8n target finder: the robot turns toward
-    the named object and drives forward until it is close. Use for:
-    "go near the cup", "approach the bottle", "go to that chair".
-
-    `target` must be a common object class (cup, bottle, chair, laptop, tv,
-    book, …). Do NOT use it for people — person following/approach is not
-    available until the depth camera lands (say so honestly). For named rooms
-    use navigate_to_pose() instead.
-
-    This blocks while approaching (up to ~30 s) and returns when it arrives, loses
-    the object, or times out. No obstacle avoidance — it drives straight at the
-    target, so only use it with a clear path."""
-    from geometry_msgs.msg import Twist
-
-    bridge = _bridge.get()
-    target = target.lower().strip()
-
-    bridge.clear_motion_stop()                  # deliberate move — start with a clean slate
-    bridge.set_vision_target(target)            # tell Jetson target_node to start hunting
-    try:
-        start = prev = time.time()
-        scanned_deg = 0.0
-        last_pub = 0.0
-        no_result_since: float | None = None
-
-        while True:
-            now = time.time()
-            # Real elapsed time since the previous iteration — the loop wakes
-            # every ~5ms, so integrating a fixed per-iteration tick would count
-            # rotation ~10x too fast and trip the scan give-up after ~40°.
-            dt, prev = now - prev, now
-            elapsed = now - start
-            if bridge.motion_interrupted():
-                return f"Stopped approaching the {target}."
-            if elapsed > _APPROACH_TIMEOUT_S:
-                return f"Approach timed out after {int(_APPROACH_TIMEOUT_S)}s before reaching the {target}."
-
-            # Fresh detections only: a stale cached result (detector/camera/link
-            # down) must not keep steering the wheels — especially not forward.
-            result = bridge.get_target_result(max_age_s=_APPROACH_RESULT_MAX_AGE_S)
-            twist = Twist()
-
-            if result is None:
-                # No fresh detection — hold still (zero twist) rather than move
-                # blind; give up honestly if the feed stays silent.
-                if no_result_since is None:
-                    no_result_since = now
-                if now - no_result_since > _APPROACH_NO_RESULT_GIVEUP_S:
-                    return (f"I stopped — I'm not getting anything from my camera, "
-                            f"so I can't safely approach the {target}.")
-            elif not result.get("found"):
-                # Target not in frame — rotate in place to search.
-                no_result_since = None
-                twist.angular.z = _ANGULAR_VEL_RS
-                scanned_deg += math.degrees(_STEADY_STATE_ANGULAR_VEL) * dt
-                if scanned_deg > _APPROACH_SCAN_GIVEUP_DEG:
-                    return f"I scanned all the way around but couldn't find the {target}."
-            else:
-                no_result_since = None
-                scanned_deg = 0.0               # found it — reset the search sweep
-                rel_size = float(result.get("rel_size", 0.0))
-                bearing_x = float(result.get("bearing_x", 0.0))
-
-                if rel_size >= _APPROACH_STOP_REL_SIZE:
-                    return f"I've reached the {target}."
-                elif abs(bearing_x) > _APPROACH_BEARING_DEADBAND:
-                    # Turn toward it. bearing_x>0 = right → angular.z negative (CCW+).
-                    az = max(-_ANGULAR_VEL_RS, min(_ANGULAR_VEL_RS, -bearing_x * _APPROACH_TURN_GAIN * _ANGULAR_VEL_RS))
-                    twist.angular.z = az
-                else:
-                    twist.linear.x = _LINEAR_VEL_MS   # centred → drive forward
-
-            if now - last_pub >= 0.05:
-                bridge.publish_twist(twist)
-                last_pub = now
-            time.sleep(0.005)
-    finally:
-        bridge.publish_twist(Twist())           # always stop the wheels
-        bridge.set_vision_target("")            # idle the Jetson target_node
-
-
-# Depth-based approach lives in tools/approach.py (approach_object,
-# scan_surroundings) — the D555 + Isaac ROS pipeline turns detections into
-# Nav2 goals; navigate_to_visible_object above stays the no-map mono fallback.
 
 _PAN_MIN_DEG, _PAN_MAX_DEG = -90.0, 90.0
 _TILT_MIN_DEG, _TILT_MAX_DEG = -30.0, 30.0

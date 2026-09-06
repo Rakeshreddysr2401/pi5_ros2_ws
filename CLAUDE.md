@@ -19,7 +19,7 @@ OPERATIONS.md for run/deploy/troubleshooting; PI5_VOICE.md for the local STT/TTS
   `robot_body` to `sim` (cmd_vel becomes TwistStamped on /mecanum_drive_controller/cmd_vel).
 - **`rover`** — the REAL body: starts this Pi5's micro-ROS agent (ESP32 wheels) and the
   Jetson's `isaac_ros` perception role in REAL mode (D555 + cuVSLAM localization +
-  nvblox + Nav2 + YOLO detections_3d — see JETSON_D555_SETUP.md). Voice is OFF on the
+  nvblox + Nav2, plus the phase-4 VLM bridge). Voice is OFF on the
   Jetson in this mode (perception owns the 8GB Orin; cuVSLAM RUNS on Orin (standalone pyCuVSLAM cu12 wheel) —
   cuVSLAM is the localizer): talk to the robot via Telegram, start voice manually
   with `fleet_role.sh voice start` (won't fit alongside perception — see PI5_VOICE.md),
@@ -86,7 +86,8 @@ pip3 install --break-system-packages -r requirements.txt
      docstring); never drop/reorder mid-history messages.
    - History trims only at HumanMessage boundaries (`utils/history.py`).
    - Don't auto-inject retrieved memory into system prompts — recall is
-     tool-driven (`recall_memory`) on purpose.
+     tool-driven on purpose (there is no episodic-memory tool in this cut —
+     see ARCHITECTURE_LLD.md §8 if you add one back).
 4. **No `speak()` tool** — an agent's reply text IS the speech (streamed
    sentence-by-sentence, utterance closed with `<|eou|>`). The wire protocol
    with the Jetson (`/voice/*`, `<|eou|>`) must match tts_node — change both
@@ -165,21 +166,28 @@ change both repos together or neither.
 
 ## Gotchas
 
-- **Read [INTEGRATION_GAPS.md](INTEGRATION_GAPS.md) before trusting any tool
-  that touches the world.** Several topics this brain publishes have no
-  listener on the real rover (`/vision/detections_3d`, `/vision/target*`,
-  `/servo_*`, `/audio/music_*`), so the tools built on them answer honestly
-  but uselessly. Frames, drive calibration and the voice gates are covered
-  there too. It is the cross-repo view neither repo's tests can produce.
+- **Read [INTEGRATION_GAPS.md](INTEGRATION_GAPS.md) before building anything
+  that touches the world.** It is the cross-repo view neither repo's own tests
+  can produce: which topics have publishers, the drive calibration, the frame
+  rule, and the voice gates.
 
-- Real-robot Nav2/SLAM software is DEPLOYED (Jetson `langrobo_perception`
-  mode:=real — cuVSLAM + nvblox + Nav2, smoke-tested camera-less) and waits
-  only for the D555 hardware; JETSON_D555_SETUP.md is the camera-day
-  checklist + acceptance tests. Without the camera, `navigate_to_pose`/
-  `approach_object` still report honestly after a 10s wait. New depth contract: Jetson publishes map-frame objects on
-  `/vision/detections_3d` (JSON); brain drives the camera head via
-  `/servo_pan`+`/servo_tilt` (ESP32, GPIO 18/19) and mirrors angles on
-  `/camera/pan_tilt_state` for the Jetson TF broadcaster.
+- **The rover is real and driving.** The D555 is mounted and streaming;
+  cuVSLAM + nvblox + Nav2 run on the Jetson and have driven autonomous goals
+  to within 4-5 cm. Bring it up with `./rover nav && ./rover vlm` in the
+  perception repo.
+- **Everything is `odom`, never `map`.** That Nav2 runs single-session with no
+  relocalisation, so no node publishes a map frame at all. Goals, TF pose
+  reads and any object positions must agree on `ROS2Bridge.NAV_FRAME`
+  (default `odom`, one constant, `LANGROBO_NAV_FRAME` to override). A `map`
+  goal is not an error — it is silently untransformable, which is how every
+  `navigate_to_pose` call failed for months.
+- **Four topics this brain used to speak have no listener on the rover** and
+  the tools built on them were removed rather than left looking functional:
+  `/vision/detections_3d` (object positions — the contract to restore it is in
+  INTEGRATION_GAPS.md §1), `/vision/target*` (YOLO servo loop), `/servo_pan` +
+  `/servo_tilt` (no mount, and the ESP32 firmware has three subscriptions and
+  none are servos), `/audio/music_*`. Check for a publisher before building on
+  a topic here.
 - `strict_tool_calls` + streaming need the llama.cpp server started with
   `--jinja --parallel 4` (one slot per agent: supervisor/chat/local_agent/navigate).
 - Pi5↔Jetson clocks drift ~1.5s (chrony peering pending) — latency_replay

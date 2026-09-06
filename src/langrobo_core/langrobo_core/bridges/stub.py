@@ -124,14 +124,6 @@ class StubBridge:
         az = getattr(getattr(twist, "angular", None), "z", 0.0)
         logger.info("[STUB] publish_twist: linear.x=%.2f angular.z=%.2f", lx, az)
 
-    def publish_to_topic(self, topic: str, data: str) -> None:
-        logger.info("[STUB] publish_to_topic(%s): %s", topic, data)
-
-    # ── Services ──────────────────────────────────────────────────────────
-
-    def call_service(self, name: str, srv_type, request_msg, timeout: float = 5.0):
-        raise TimeoutError(f"[STUB] Service '{name}' unavailable (ROS2 not running)")
-
     # ── Actions (Nav2) ────────────────────────────────────────────────────
 
     def register_nav_done_callback(self, cb) -> None:

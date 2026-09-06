@@ -17,6 +17,7 @@ Usage on dev machine (no ROS2):
 import atexit
 import logging
 import os
+import pathlib
 import threading
 
 from dotenv import load_dotenv
@@ -36,14 +37,28 @@ logger = logging.getLogger(__name__)
 config_service.sanitize_tracing_env()
 _settings = config_service.load_settings()
 
-# ── Known map locations (same defaults as agent_params.yaml) ─────────────────
+# ── Known map locations ──────────────────────────────────────────────────────
+# READ from agent_params.yaml rather than copied out of it. A hand-kept copy of
+# another file's values drifts silently: Studio would then navigate to a
+# "kitchen" the robot has never heard of, and nothing would say so.
 
-_DEFAULT_LOCATIONS = {
-    "kitchen":     (2.5,  1.0,   0.0),
-    "living_room": (0.0,  3.0,  90.0),
-    "bedroom":     (-2.0, 2.0, 180.0),
-    "entrance":    (0.0,  0.0,   0.0),
-}
+def _load_locations() -> dict:
+    params = (pathlib.Path(__file__).parent
+              / "src/langrobo_ros/config/agent_params.yaml")
+    try:
+        import yaml
+        raw = yaml.safe_load(params.read_text())["agent_node"]["ros__parameters"]
+    except Exception as e:
+        # pyyaml is a ROS dependency and may be absent on a bare laptop. Studio
+        # still runs; navigate_to_pose just reports it knows no saved places,
+        # which is the honest answer rather than an invented map.
+        logger.warning("Could not read %s (%s) — no preset locations", params, e)
+        return {}
+    return {k.split(".", 1)[1]: tuple(v)
+            for k, v in raw.items() if k.startswith("locations.")}
+
+
+_DEFAULT_LOCATIONS = _load_locations()
 
 # ── LLM config from environment ───────────────────────────────────────────────
 

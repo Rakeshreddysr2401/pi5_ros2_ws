@@ -13,12 +13,20 @@ tool — see CLAUDE.md rule 3.
 from .look import look
 from .approach import (approach_described_object, list_saved_locations,
                        scan_surroundings)
-from .movement import (move_robot, navigate_to_pose, point_camera,
-                       save_location)
+from .movement import (PAN_TILT_ENABLED, move_robot, navigate_to_pose,
+                       point_camera, save_location)
 from .system import get_current_time, get_robot_status
 from .handover import handover
 from .telegram import TELEGRAM_TOOLS
 from .web import WEB_TOOLS
+
+# Bound only when there are servos to drive. The ESP32 firmware has three
+# subscriptions and none of them are servos (see movement.PAN_TILT_ENABLED), so
+# on this robot the tool can only ever refuse — and an always-refusing tool is
+# still shipped as a schema on every turn and still tempts the model into
+# calling it. Set LANGROBO_PAN_TILT=1 once a mount exists and it reappears for
+# both agents at once.
+HEAD_TOOLS = [point_camera] if PAN_TILT_ENABLED else []
 
 # ── Per-agent tool sets ─────────────────────────────────────────────────────
 
@@ -29,12 +37,12 @@ CHAT_TOOLS = [get_current_time, get_robot_status, handover] + WEB_TOOLS + TELEGR
 # local_agent — the only multimodal agent. look() puts the current camera
 # frame into the conversation as an image; keep_images in its AgentSpec is
 # what lets it still see that image on follow-up turns.
-LOCAL_AGENT_TOOLS = [look, point_camera, handover] + TELEGRAM_TOOLS
+LOCAL_AGENT_TOOLS = [look, handover] + HEAD_TOOLS + TELEGRAM_TOOLS
 
 # navigate — everything that moves the wheels.
 NAVIGATE_TOOLS = [move_robot, navigate_to_pose, approach_described_object,
                   scan_surroundings, save_location, list_saved_locations,
-                  point_camera, handover] + TELEGRAM_TOOLS
+                  handover] + HEAD_TOOLS + TELEGRAM_TOOLS
 
 # supervisor — routes and nothing else. One tool, forced via tool_choice.
 SUPERVISOR_TOOLS = [handover]

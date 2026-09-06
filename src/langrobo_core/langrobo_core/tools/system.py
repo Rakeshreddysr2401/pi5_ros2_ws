@@ -7,14 +7,16 @@ from langchain_core.tools import tool
 from . import _bridge
 
 
+# A tool rather than a line in the system prompt, on purpose: a clock baked
+# into a prompt changes every minute, which changes the cached prefix, which
+# re-prefills ~2k tokens on every minute tick (~20s on the 12B model). See
+# prompts.py's header. That reasoning lives HERE, in a comment — a tool's
+# docstring is prompt text, shipped to the model on every single turn, so it
+# gets the instruction and nothing else.
 @tool
 def get_current_time() -> str:
-    """Get the current date and time.
-
-    This is a TOOL rather than a line in the system prompt on purpose: a clock
-    baked into the prompt changes every minute, which changes the cached prefix,
-    which re-prefills ~2k tokens on every minute tick (~20s on the 12B model).
-    See prompts.py's header."""
+    """Get the current date and time. Call it whenever the answer depends on
+    the clock — the prompt carries today's date but never the time."""
     now = datetime.now()
     return now.strftime("%A, %B %d, %Y at %I:%M %p").replace(" 0", " ")
 

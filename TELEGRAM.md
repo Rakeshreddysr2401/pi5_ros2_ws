@@ -40,14 +40,15 @@ strangers, even though its username is publicly searchable.
 
 | Capability | owner | family | guest |
 |---|---|---|---|
-| Chat, questions, reminders | ✅ | ✅ | ✅ (chat only) |
+| Chat, questions, web search | ✅ | ✅ | ✅ |
 | Relay messages ("tell Rakesh…") | ✅ | ✅ | ❌ |
-| Announce aloud in the house | ✅ | ✅ | ❌ |
-| Arm/disarm home watch | ✅ | ✅ | ❌ |
-| Add documents to the knowledge base | ✅ | ✅ | ❌ |
 | Request camera photos | ✅ | ❌ | ❌ |
 | Move the robot | ✅ | ❌ | ❌ |
-| Place food orders | ✅ | ❌ | ❌ |
+
+The four capabilities are the whole set — `services/permissions.py` is 40
+lines and is the only place they are defined. Announce-aloud, home watch,
+document ingest and food ordering were capabilities of agents this build no
+longer has.
 
 Checks are enforced inside the tools (`langrobo_core/services/permissions.py`),
 not just prompts — a refusal offers to ask the owner instead. Voice has no
@@ -56,30 +57,21 @@ is logged: `journalctl -u langrobo-brain -o cat | grep "AUDIT telegram"`.
 
 ## What you can do
 
-- **Chat from anywhere** — "is anyone home?", "what's on the shopping list?"
-  Same memory and household knowledge as voice.
+- **Chat from anywhere** — "is anyone home?", "what's the weather?" Same
+  agents, same tools as voice.
 - **Get a photo** — "send me a pic of the room" (owner only; taken from where
-  the robot currently stands — room-to-room arrives with phase-2 navigation).
+  the robot currently stands — ask it to drive somewhere first if you want a
+  different view).
 - **Send a photo** — attach a picture (+ optional caption question); the
   multimodal model actually sees it.
 - **Relay by voice** — say "Rakhi, tell Mom I'll be late" → lands on Mom's
   phone as a Telegram message.
-- **Speak into the house** — text "announce that dinner is ready" and the
-  robot says it out loud at home, then confirms to you. A bare "tell Mom X"
-  gets one question back first (her phone, or aloud?). During quiet hours it
-  refuses and offers alternatives — announces anyway only if you insist.
-- **Watch the house** — text "watch the house" / "stop watching" (see
-  OPERATIONS.md, Home watch mode). Person seen while armed → photo alert.
-- **Teach it documents** — send a `.pdf`/`.txt`/`.md` file (appliance manual,
-  notes) → "Learned 'manual.pdf' — 12 sections". Then ask about it from
-  anywhere ("what does error E4 mean on the washer?"). Attach a caption
-  question and it answers right after learning. Re-send a file to update it.
-- **Middleman** — "ask Mom when she's back **and let me know**": her eventual
-  reply is routed back — spoken aloud if you asked aloud, texted if you
-  texted. Open errands live in `~/.langrobo/errands.json` and expire after 24h.
-- **Proactive pings** — reminders and delivery events can reach your phone;
-  during quiet hours they queue and send in the morning (direct replies are
-  never held).
+- **Drive it** — "go to the kitchen", "go to the red bottle" (owner only).
+  The reply comes back immediately; **arrival is reported to your chat later**,
+  because the brain remembers which channel asked for the drive.
+- **Proactive pings** — navigation arrival and failure reach your phone the
+  same way; during quiet hours they queue and send afterwards (direct replies
+  to you are never held).
 
 ## Limits & troubleshooting
 

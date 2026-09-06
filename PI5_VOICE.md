@@ -39,7 +39,8 @@ is CUDA-accelerated and faster).
 | Mic/speaker | **boAt Stone 650 Bluetooth speaker, HFP profile** (call-quality mic at 8-16kHz narrowband, chosen so one device covers both legs — see `bt_audio.py` below). A wired USB headset (originally a Plantronics Blackwire) is the fallback path if `bt_mac` is unset |
 | Confidence filter | drop segments where `no_speech_prob > 0.6 AND avg_logprob < -1.0` — the exact fix VOICE_QUALITY.md validated on the Jetson |
 
-Wire protocol (must match `speech_stream.py` / the Jetson's tts_node exactly):
+Wire protocol (must match `langrobo_core/utils/speech_stream.py` exactly —
+the brain is the other end of it):
 
 | Topic | Type | Direction |
 |---|---|---|

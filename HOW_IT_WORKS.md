@@ -12,7 +12,7 @@ All of this was verified live on 2026-07-03 (18 turns, zero errors).
 | Machine | Runs | Talks over |
 |---|---|---|
 | **Pi5** (this repo) | `langrobo-brain` (agent_node) + `langrobo-microros` (ESP32 bridge), both systemd; plus `pi5_voice_pkg` (CPU-only stt_node/tts_node — PI5_VOICE.md) | ROS2 DDS on Ethernet LAN |
-| **Jetson Orin** | Rover mode = perception: cuVSLAM + nvblox + Nav2 + YOLO detections_3d (`orin-nav-stack`). Voice role (`stt_node`/`tts_node`/`target_node`, separate `speech_vision` repo) is OFF on the Orin in rover mode — voice moved to the Pi5 instead (PI5_VOICE.md) | ROS2 DDS |
+| **Jetson Orin** | Perception: cuVSLAM + nvblox + Nav2, plus the phase-4 VLM bridge (`image_bridge` republishes the colour frame as JPEG for `look()`; `pixel_to_goal` turns a VLM-picked pixel into an odom-frame Nav2 goal). Voice is OFF here — it runs on the Pi5 (PI5_VOICE.md) | ROS2 DDS |
 | **Mac Mini** | llama.cpp server, Gemma multimodal GGUF, 4 KV-cache slots | HTTP (OpenAI-compatible) |
 | **ESP32** | wheel firmware — 2-motor diff drive, BTS7960 + encoders, 50 Hz PID | micro-ROS over WiFi UDP 8888 → Pi5 |
 
@@ -98,11 +98,11 @@ abandons its in-flight turn for the new one.)
    them into sentences and publishes each on `/voice/robot_speech`
    immediately; the Jetson's Kokoro starts synthesizing the first sentence
    while the LLM is still writing the second. The utterance ends with the
-   `<|eou|>` marker; the Jetson holds `/voice/tts_speaking=true` (mic muted)
-   until it has played everything.
-6. **After the turn**: full message list (tool calls included) is persisted as
-   history; the turn is queued to **episodic memory** (embedded on-device,
-   written in the background); `last_turn_duration_seconds` gauge updates;
+   `<|eou|>` marker; tts_node holds `/voice/tts_speaking=true` (which mutes
+   stt_node's capture) until it has played everything, plus a tail.
+6. **After the turn**: the full message list (tool calls included) is kept as
+   history; the **cache warmer** prefills the next turn's prompt in the
+   background so it starts warm; `last_turn_duration_seconds` updates;
    `/brain/thinking=false`.
 
 Observed live: `→ TTS: It's currently 3:04 PM on Friday, July 3, 2026.`
@@ -174,35 +174,49 @@ You text the bot from outside the house:
    **inside the tools**: Mom (role `family`) texting "drive to the door" gets a
    polite refusal, and the attempt lands in the audit log.
 4. The reply routes to your **chat, never the speaker** (typing indicator
-   while it thinks; no TTS streaming, no barge-in). Memory records the turn
-   with `person="Rakesh"`.
+   while it thinks; no TTS streaming, no barge-in).
 
 Sending the bot a **photo** works too — it enters the turn as an image the
 multimodal model can see (chat hands over to local_agent, same as camera
-frames). The middleman flow — "tell Mom I'll be late **and let me know what
-she says**" — records an errand (`~/.langrobo/errands.json`, 24h expiry);
-Mom's eventual reply comes back framed with it, and if you asked out loud, the
-answer is announced through the section-4 proactive path. Proactive pings
-respect `LANGROBO_QUIET_HOURS`; replies to direct messages always go through.
+frames).
+
+A drive you start from Telegram **reports back to your chat**, not to the
+room: `tools/movement._last_nav_requester` remembers which channel asked, and
+`_on_nav_done` writes that into the `[SYSTEM]` turn as a routing instruction.
+Proactive pings respect `LANGROBO_QUIET_HOURS`; replies to your direct
+messages always go through.
 
 ---
 
 ## 5. A movement turn ("move forward ten centimeters")
 
-1. chat → `handover("navigate")` → navigate agent calls `move_robot("F:10")`.
-2. The tool computes the drive duration from calibrated wheel speed, then
-   publishes Twist on `/cmd_vel` at 20Hz (feeding the ESP32 watchdog) until
-   time is up, then publishes a zero Twist (stop).
-3. micro-ROS agent forwards every Twist over UDP to the ESP32 → wheels.
+**This one never reaches an LLM.** `fastpath.match()` recognises it exactly
+(`FastIntent(kind='move', args={'dir': 'F', 'cm': 10.0})`) and calls the same
+tool the navigate agent would — so command-to-motion is milliseconds, not the
+two LLM round-trips the graph would cost.
+
+1. `fastpath.try_handle("move forward ten centimeters")` matches, speaks
+   "Moving forward 10 centimeters." **first**, then calls `move_robot("F:10")`.
+2. The tool computes the drive duration from calibrated wheel speed
+   (`_PHYSICAL_VEL_MS`, see INTEGRATION_GAPS.md §3), then publishes Twist on
+   `/cmd_vel` at 20Hz (feeding the ESP32's 500ms watchdog) until time is up,
+   then publishes a zero Twist (stop).
+3. micro-ROS agent forwards every Twist over UDP to the ESP32, whose 50 Hz PID
+   tracks the commanded m/s against its encoders → wheels.
 4. Interruptible at every tick: a new utterance or the spoken **"stop"**
-   keyword (Jetson publishes `/voice/tts_stop`) sets the motion-interrupt
+   keyword (stt_node publishes `/voice/tts_stop`) sets the motion-interrupt
    event → the loop bails and stops the wheels immediately.
 
-`navigate_to_visible_object("cup")` works the same way but closes the loop on
-YOLO: Pi5 sets `/vision/target`, Jetson's target_node reports bearing/size on
-`/vision/target_result`, and the servo loop turns/drives until the object
-fills the frame. `navigate_to_pose("kitchen")` is the phase-2 Nav2 slot — it
-honestly reports map navigation isn't available until SLAM lands.
+Anything the matcher is not *certain* about returns `None` and takes the full
+graph instead: chat → `handover("navigate")` → the navigate agent. That is the
+whole safety property — the fast lane never guesses.
+
+`approach_described_object("the red bottle")` is the other shape: the VLM
+looks at the current frame and points at a pixel, the Jetson's `pixel_to_goal`
+deprojects that pixel with real depth into an odom-frame Nav2 goal with the
+standoff already applied, and Nav2 drives there **avoiding obstacles**. It
+returns as soon as the drive starts; arrival comes back later as a `[SYSTEM]`
+turn. `navigate_to_pose("kitchen")` goes to a saved location the same way.
 
 ---
 

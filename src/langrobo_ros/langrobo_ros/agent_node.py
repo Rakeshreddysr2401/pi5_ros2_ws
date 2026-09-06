@@ -361,22 +361,20 @@ class AgentNode(Node):
         self._input_event.set()
 
     def _on_tts_stop(self, msg: String) -> None:
-        """Stop keyword heard during robot speech — halt motion AND music.
+        """Stop keyword heard during robot speech — halt the wheels.
 
-        The Jetson already halts its own TTS playback (and stops music locally
-        for instant response); this is the brain-side sweep so nothing keeps
-        moving or playing if the Jetson-local path missed it.
+        stt_node halts TTS playback itself (instant, no round-trip); this is
+        the brain-side sweep, so "stop" is a safety word that stops the robot
+        moving and not merely one that stops it talking.
 
         Wake-word barge-in rides the same topic tagged "[wake:…]": it only
-        halts TTS on the Jetson — music keeps playing (AEC subtracts it) and
-        the user's new utterance does its own motion sweep on arrival — so it
-        must NOT trigger the stop-everything sweep here."""
+        halts TTS, and the user's new utterance does its own motion sweep on
+        arrival — so it must NOT trigger the stop-everything sweep here."""
         if msg.data.startswith("[wake:"):
             return
-        self.get_logger().info(f'Stop keyword ("{msg.data}") — cancelling motion + music')
+        self.get_logger().info(f'Stop keyword ("{msg.data}") — cancelling motion')
         self._bridge.cancel_navigation()
         self._bridge.request_motion_stop()
-        self._bridge.music_command({"action": "stop", "t": time.time()})
 
     # ── Voice-pipeline telemetry (spin thread) ────────────────────────────
 

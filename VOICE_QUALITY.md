@@ -79,7 +79,7 @@ specific failure you're seeing:
 |---|---|
 | `condition_on_previous_text=False` on the decode call | THE classic hallucination fix — stops one bad transcript from seeding the next |
 | `no_speech_threshold` ~0.6 + drop segments whose `avg_logprob` < −1.0 | discards "transcripts" of silence/noise instead of publishing them |
-| `initial_prompt="Rakhi, Chotu, Swiggy, Telegram, …"` (household vocabulary) | Whisper spells rare names right when primed; shrinks the wake-alias zoo |
+| `initial_prompt="Rakhi, Chotu, Telegram, kitchen, …"` (household vocabulary) | Whisper spells rare names right when primed; shrinks the wake-alias zoo |
 | Raise VAD strictness: `min_speech_duration` up, SileroVAD threshold up | fewer half-syllable blips reaching Whisper = fewer inventions |
 | Language pin `language="en"` (if not already) | stops random language-flip hallucinations |
 

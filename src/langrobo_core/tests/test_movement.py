@@ -19,9 +19,16 @@ def head_fitted(monkeypatch):
     monkeypatch.setattr(movement, "PAN_TILT_ENABLED", True)
 
 
-def test_navigate_has_point_camera():
-    names = [t.name for t in NAVIGATE_TOOLS]
-    assert "point_camera" in names
+def test_point_camera_is_not_bound_without_a_head():
+    """No servos fitted → the tool is not in any agent's set at all.
+
+    An always-refusing tool still costs prompt tokens on every turn and still
+    tempts the model into calling it. It comes back for both agents at once
+    when LANGROBO_PAN_TILT=1."""
+    from langrobo_core.tools import HEAD_TOOLS
+    assert not movement.PAN_TILT_ENABLED
+    assert HEAD_TOOLS == []
+    assert "point_camera" not in [t.name for t in NAVIGATE_TOOLS]
 
 
 def test_point_camera_in_range(head_fitted):

@@ -33,9 +33,9 @@ curl -s -H "Authorization: Bearer $LANGROBO_API_TOKEN" localhost:8090/status | j
 curl -s -H "Authorization: Bearer $LANGROBO_API_TOKEN" localhost:8090/metrics  # Prometheus text
 ```
 
-`/status` reports: LLM primary health + fallback state, episodic-memory state
-and pending writes, sticky agent, last-turn timestamp/duration, camera frame
-age, queued system events. Without `LANGROBO_API_TOKEN` the API binds
+`/status` reports: LLM primary health + fallback state, Telegram channel
+state, sticky agent, last-turn timestamp/duration, camera frame age, robot
+body, queued system/Telegram events. Without `LANGROBO_API_TOKEN` the API binds
 localhost-only; a LAN bind without a token is refused at startup (fail-fast).
 
 ## .env reference
@@ -126,13 +126,18 @@ debugging.
 ## Deploy checklist (Pi5 + Jetson protocol change)
 
 1. Pi5: `colcon build --symlink-install` + `pip3 install --break-system-packages -r requirements.txt`
-2. Jetson (`speech_vision` repo): rebuild `voice_pkg` — **both together when the
-   speech protocol changes** (chunks + `<|eou|>` must match tts_node).
-3. Mac Mini llama.cpp up: `curl http://singireddys-mac-mini.local:8080/v1/models`
-   — must report `"multimodal"` in capabilities (mmproj loaded) for look().
-4. `sudo systemctl restart langrobo-brain` → `curl localhost:8090/health`
-5. Latency: `python3 scripts/latency_replay.py` — first-audio budget ≤2s warm.
-6. Clocks: Pi5↔Jetson must be chrony-peered (replay flags negative deltas otherwise).
+2. Mac Mini llama.cpp up, **started with `--jinja --parallel 4`**:
+   `curl http://singireddys-mac-mini.local:8080/v1/models` must report
+   `"multimodal"` in capabilities (mmproj loaded) for look().
+3. `sudo systemctl restart langrobo-brain` → `curl localhost:8090/health`
+4. Check the boot log for `KV slot map (one per agent)` — a warning there
+   means the server has fewer slots than agents and every turn will pay
+   re-prefill. Fix the server, not the brain.
+5. Jetson: `./rover nav && ./rover vlm` in the perception repo. Without
+   `./rover vlm` there is no camera frame for `look()` and no depth grounding
+   for `approach_described_object`.
+6. Latency: `python3 scripts/latency_replay.py` — first-audio budget ≤2s warm.
+7. Clocks: Pi5↔Jetson must be chrony-peered (replay flags negative deltas otherwise).
 
 ## Mac Mini LLM server
 
@@ -163,7 +168,7 @@ debugging.
 |---|---|
 | Spoken "my brain server is offline" | Mac Mini down/unreachable → check server, or arm `LANGROBO_FALLBACK_*` |
 | Every turn slow (~20s before speech) | KV cache cold: the server started without `--parallel 4` (agents share slots and evict each other — the boot log says so), a clock in a prompt, or a mid-history mutation. See ARCHITECTURE_LLD.md §4 |
-| "I cannot see right now" | Jetson camera node down or frame >10s stale — check `/camera/color/image_raw/compressed`. On the orin-nav stack that topic is a 2 Hz republish from `detections_3d` — it goes dark whenever YOLO is paused (nav safety procedure) or the `vision` layer isn't up |
+| "I cannot see right now" | Frame >10s stale or absent. That topic is published by `phase4/nodes/image_bridge.py` on the Jetson — start it with `./rover vlm`. It also skips encoding entirely when nothing is subscribed, so check the brain is up before blaming the Jetson |
 | Vision turn slow (~60s end-to-end) | Measured 2026-07-19: router call ~43s + vision call ~16s on the Mac, sequential. `local_agent` is sticky, so the FOLLOW-UP question about the same scene skips the router; the first one still pays it |
 | Tool calls flaky / early stops | GGUF chat template mislabels control tokens → suspect the quant; try `strict_tool_calls:=false` |
 | "I couldn't measure its distance" | `pixel_to_goal.py` isn't running on the Jetson (`./rover vlm`), or depth had a hole at that pixel — the reason string says which |
@@ -184,5 +189,12 @@ unused daemons (cups, bluetooth, ModemManager, GUI stack) were disabled
   robot speaks — real fix is gaze attention (P2 face recognition).
 - Stop-spotter can miss a soft "stop" during the robot's own speech — real fix
   is AEC hardware (P1 mic array).
-- `navigate_to_visible_object` has no obstacle avoidance (mono cam) — drives
-  straight at the target; depth camera phase fixes this.
+- `approach_described_object` costs a VLM round-trip (~10-40s) per look, and
+  a search sweep is up to five of them. The cheap alternative — a detector
+  streaming object positions the brain can look up in microseconds — needs
+  `/vision/detections_3d`, which nothing on the rover publishes yet
+  (INTEGRATION_GAPS.md §1).
+- The robot sees nothing below 10 cm, above 24 cm, outside 87°, or **downward
+  at all** — there is no drop-off detection. Autonomous runs need a human
+  watching. (Measured in the rover repo; it is a property of the D555 mount,
+  not of this code.)

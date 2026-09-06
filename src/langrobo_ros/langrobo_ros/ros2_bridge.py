@@ -80,16 +80,7 @@ class ROS2Bridge:
         # ── Locks ─────────────────────────────────────────────────────────────
         self._frame_lock   = threading.Lock()
         self._pub_lock     = threading.Lock()
-        self._svc_lock     = threading.Lock()
         self._act_lock     = threading.Lock()
-
-        # ── Latest YOLO target-finder result (parsed JSON from /vision/target_result) ──
-        # Jetson target_node publishes {target, found, bearing_x, rel_size, conf, stamp}
-        # whenever a target is set on /vision/target. Used by the visual-servoing
-        # approach loop in graph.tools.movement.
-        self._target_lock = threading.Lock()
-        self._latest_target_result: dict | None = None
-        self._target_result_at: float = 0.0   # time.monotonic() of last result
 
         # ── Pixel-grounding replies (JSON from Jetson pixel_to_goal) ─────────
         # Keyed by the request id we sent in the query's frame_id; ground_pixel
@@ -105,10 +96,6 @@ class ROS2Bridge:
         # Commanded pan/tilt (open-loop; servos settle in ~0.3s). Kept so tools
         # can re-centre and report the current aim without a state topic.
         self._pan_tilt = (0.0, 0.0)
-
-        # ── Active Swiggy order (for background delivery polling) ─────────────
-        self._order_lock       = threading.Lock()
-        self._active_order_id: str | None = None
 
         # ── Speech state ───────────────────────────────────────────────────────
         # No Pi5-side queue: sentence chunks are published immediately and the
@@ -130,7 +117,6 @@ class ROS2Bridge:
 
         # ── Lazy client registries ─────────────────────────────────────────────
         self._dynamic_pubs:    dict = {}   # topic name → Publisher
-        self._service_clients: dict = {}   # service name → Client
         self._action_clients:  dict = {}   # action name → ActionClient
 
         # ── Registered callback for navigation completion ──────────────────────
@@ -141,15 +127,8 @@ class ROS2Bridge:
         # agent_node's system queue without importing anything ROS-side.
         self._system_turn_callback: Callable[[str], None] | None = None
 
-        # ── Music playback state (Jetson music_node) ──────────────────────────
-        self._music_lock = threading.Lock()
-        self._music_state: dict | None = None
-        self._music_state_at: float = 0.0   # time.monotonic() of last state msg
-        self._music_state_seq: int = 0      # counts received state messages
-
         # ── Fixed publishers (pre-created so tools never block on first call) ──
         self._speech_pub        = node.create_publisher(String, "/voice/robot_speech", 10)
-        self._vision_target_pub = node.create_publisher(String, "/vision/target", 10)
         self._sim_body = self._robot_body == "sim"
         if self._sim_body:
             from geometry_msgs.msg import TwistStamped
@@ -159,7 +138,6 @@ class ROS2Bridge:
         else:
             self._twist_pub = node.create_publisher(Twist, "/cmd_vel", 10)
         self._timing_pub        = node.create_publisher(String, "/diag/timing", 10)
-        self._music_pub         = node.create_publisher(String, "/audio/music_cmd", 10)
         # Camera pan/tilt: raw servo angles for the ESP32 (0-180, 90=centre) +
         # a JSON state topic the Jetson TF broadcaster mirrors into the TF tree
         # (NAV_FRAME detections stay correct while the head is turned).
@@ -178,8 +156,6 @@ class ROS2Bridge:
 
         # Subscribe to Kokoro speaking status (half-duplex state, stop-keyword later)
         node.create_subscription(Bool, "/voice/tts_speaking", self._on_speaking, 10)
-        # Music playback state from the Jetson music_node (JSON)
-        node.create_subscription(String, "/audio/music_state", self._on_music_state, 10)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 1 — Topics
@@ -191,16 +167,6 @@ class ROS2Bridge:
         with self._frame_lock:
             self._latest_frame = frame_bytes
             self._frame_stamp = time.monotonic()
-
-    def on_target_result(self, msg) -> None:
-        """Cache the latest /vision/target_result (JSON string) as a parsed dict."""
-        try:
-            data = json.loads(msg.data)
-        except (ValueError, TypeError):
-            return
-        with self._target_lock:
-            self._latest_target_result = data
-            self._target_result_at = time.monotonic()
 
     def _on_speaking(self, msg: Bool) -> None:
         with self._speech_lock:
@@ -266,28 +232,6 @@ class ROS2Bridge:
         """Last commanded (pan_deg, tilt_deg) — open-loop state."""
         return self._pan_tilt
 
-    # ── YOLO target finder (Jetson target_node) ───────────────────────────
-
-    def set_vision_target(self, target: str) -> None:
-        """Tell the Jetson target_node which COCO class to hunt for ("" to stop)."""
-        if target:
-            # New target — drop any stale result so callers wait for a fresh one.
-            with self._target_lock:
-                self._latest_target_result = None
-        self._vision_target_pub.publish(String(data=target))
-
-    def get_target_result(self, max_age_s: float | None = None) -> dict | None:
-        """Return the latest parsed /vision/target_result dict, or None if none
-        yet — or older than max_age_s (receive time on THIS machine, so the
-        Pi5↔Jetson clock drift doesn't matter). Staleness means the Jetson
-        detector/camera/link died: the servo loop must stop driving on it."""
-        with self._target_lock:
-            if self._latest_target_result is None:
-                return None
-            if max_age_s is not None and time.monotonic() - self._target_result_at > max_age_s:
-                return None
-            return self._latest_target_result
-
     def _on_pixel_result(self, msg) -> None:
         """Cache a /vision/pixel_result JSON reply under its request id."""
         try:
@@ -324,53 +268,6 @@ class ROS2Bridge:
                     return self._pixel_results.pop(req_id)
             time.sleep(0.05)
         return {"ok": False, "reason": "no_reply_from_jetson"}
-
-    # ── Music (Jetson music_node — see JETSON_VOICE_UPGRADE.md) ───────────
-
-    def _on_music_state(self, msg) -> None:
-        """Cache the latest /audio/music_state JSON as a parsed dict."""
-        try:
-            data = json.loads(msg.data)
-        except (ValueError, TypeError):
-            return
-        with self._music_lock:
-            self._music_state = data
-            self._music_state_at = time.monotonic()
-            self._music_state_seq += 1
-
-    def music_command(self, cmd: dict) -> None:
-        """Publish a music command: {"action": play|pause|resume|stop|volume, ...}."""
-        self._music_pub.publish(String(data=json.dumps(cmd)))
-
-    def get_music_state(self, max_playing_age_s: float | None = None) -> dict | None:
-        """Latest music state. With max_playing_age_s set, a PLAYING state older
-        than that is treated as gone: music_node heartbeats at 1Hz while playing,
-        so a stale "playing" means the player died mid-song — better to admit
-        silence than gate the mic / prompt on music that isn't there. (Idle
-        states have no heartbeat and never expire.)"""
-        with self._music_lock:
-            state = self._music_state
-            if (state and state.get("playing") and max_playing_age_s is not None
-                    and time.monotonic() - self._music_state_at > max_playing_age_s):
-                return None
-            return state
-
-    def get_music_state_seq(self) -> int:
-        """Count of music-state messages received — lets tools wait for a state
-        that arrived AFTER a command was sent without comparing the Jetson's
-        wall-clock stamp against ours (the two clocks drift ~1.5s)."""
-        with self._music_lock:
-            return self._music_state_seq
-
-    # ── Active order ──────────────────────────────────────────────────────
-
-    def set_active_order(self, order_id: str | None) -> None:
-        with self._order_lock:
-            self._active_order_id = order_id
-
-    def get_active_order(self) -> str | None:
-        with self._order_lock:
-            return self._active_order_id
 
     # ── Timing events (/diag/timing) ──────────────────────────────────────
 
@@ -425,56 +322,6 @@ class ROS2Bridge:
             self._twist_pub.publish(stamped)
         else:
             self._twist_pub.publish(twist)
-
-    def publish_to_topic(self, topic: str, data: str) -> None:
-        """Publish a String to any topic, creating the publisher lazily."""
-        with self._pub_lock:
-            if topic not in self._dynamic_pubs:
-                self._dynamic_pubs[topic] = self._node.create_publisher(String, topic, 10)
-        self._dynamic_pubs[topic].publish(String(data=data))
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # SECTION 2 — Services
-    # ══════════════════════════════════════════════════════════════════════════
-
-    def call_service(self, name: str, srv_type, request_msg, timeout: float = 5.0):
-        """Call a ROS2 service synchronously from the worker thread.
-
-        Service clients are created lazily on first call and cached.
-        Raises TimeoutError if the service is unavailable or slow.
-
-        Args:
-            name:        ROS2 service name, e.g. '/robot/get_status'
-            srv_type:    ROS2 service class, e.g. std_srvs.srv.Trigger
-            request_msg: Populated request object, e.g. Trigger.Request()
-            timeout:     Max wait in seconds for both availability and response
-
-        Example:
-            from std_srvs.srv import Trigger
-            resp = bridge.call_service('/robot/get_status', Trigger, Trigger.Request())
-            print(resp.message)
-        """
-        with self._svc_lock:
-            if name not in self._service_clients:
-                self._service_clients[name] = self._node.create_client(srv_type, name)
-
-        client = self._service_clients[name]
-        if not client.wait_for_service(timeout_sec=timeout):
-            raise TimeoutError(f"Service '{name}' not available after {timeout}s")
-
-        # Bridge worker thread ↔ ROS2 future using a threading Event
-        done_event  = threading.Event()
-        result_box: list = [None]
-
-        def _done(future):
-            result_box[0] = future.result()
-            done_event.set()
-
-        client.call_async(request_msg).add_done_callback(_done)
-
-        if not done_event.wait(timeout=timeout):
-            raise TimeoutError(f"Service '{name}' call timed out after {timeout}s")
-        return result_box[0]
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 3 — Actions (Nav2)

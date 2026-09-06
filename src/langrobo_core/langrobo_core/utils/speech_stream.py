@@ -3,12 +3,13 @@
 Turns LLM token streams into sentence-sized TTS chunks. agent_node attaches a
 SpeechStreamHandler per turn; every streamed content token from any agent flows
 through it, complete sentences are published immediately on /voice/robot_speech,
-and the Jetson tts_node synthesises them while the LLM is still generating.
+and tts_node synthesises them while the LLM is still generating. That is what
+makes first-audio arrive after the first SENTENCE rather than the full reply.
 
-Protocol (String topic unchanged): each sentence is one message; the utterance
-is terminated by a message whose data is exactly SPEECH_EOU. The Jetson holds
-/voice/tts_speaking True from the first chunk until the marker, so the mic
-stays muted across chunk gaps.
+Protocol (String topic): each sentence is one message; the utterance is
+terminated by a message whose data is exactly SPEECH_EOU. tts_node holds
+/voice/tts_speaking True from the first chunk until the marker, so stt_node
+keeps the mic muted across chunk gaps and the robot never answers itself.
 
 Text that accompanies a tool call streams too — that is deliberate: the model's
 "Let me check." becomes the acknowledgement the user hears while the tool runs.
@@ -23,7 +24,8 @@ from langchain_core.callbacks import BaseCallbackHandler
 
 logger = logging.getLogger(__name__)
 
-# End-of-utterance marker message. Must match tts_node.py on the Jetson.
+# End-of-utterance marker. Must match pi5_voice_pkg/tts_node.py — the two
+# halves of this protocol live in different packages; change both or neither.
 SPEECH_EOU = "<|eou|>"
 
 # Sentence boundary: terminal punctuation (plus closing quotes/brackets)
@@ -140,58 +142,6 @@ class SpeechStreamHandler(BaseCallbackHandler):
     def spoke(self, text: str | None) -> bool:
         """True if `text` was already fully streamed to TTS this turn."""
         return bool(text) and _norm(text) in self._completed
-
-    def _send(self, text: str) -> None:
-        try:
-            self._publish(text)
-            self.chunks_sent += 1
-        except Exception:
-            logger.exception("speech chunk publish failed")
-
-
-class SentenceEmitter:
-    """Sentence chunking for token sources that are NOT LangChain callbacks.
-
-    SpeechStreamHandler covers the in-process graph (agent_node hangs it off the
-    LLM run). Anything else that produces text incrementally — the LangGraph
-    Server SSE stream in dev mode, a future socket transport — feeds this
-    instead. Same boundary rules and the same utterance contract, so the Jetson
-    and pi5 tts_node cannot tell the two apart.
-
-    Usage: feed() per token, close() once at the end of the utterance.
-    """
-
-    def __init__(self, publish: Callable[[str], None]):
-        self._publish = publish
-        self._buf = ""
-        self.chunks_sent = 0
-
-    def feed(self, text: str) -> None:
-        if not text:
-            return
-        ready, self._buf = split_sentences(self._buf + text)
-        for sentence in ready:
-            self._send(sentence)
-
-    def flush(self) -> None:
-        """Publish whatever is buffered, without closing the utterance."""
-        rest, self._buf = self._buf.strip(), ""
-        if rest:
-            self._send(rest)
-
-    def close(self, force: bool = False) -> bool:
-        """Flush, then terminate the utterance with the EOU marker.
-
-        Returns True if a marker went out. Nothing is published for a turn that
-        produced no text at all (unless `force`), which matches agent_node:
-        a silent turn must not leave the mic muted, but it must not fake speech
-        either.
-        """
-        self.flush()
-        if self.chunks_sent or force:
-            self._publish(SPEECH_EOU)
-            return True
-        return False
 
     def _send(self, text: str) -> None:
         try:

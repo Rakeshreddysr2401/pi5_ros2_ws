@@ -10,10 +10,10 @@ the chassis; the Jetson handles perception.
 slot map all derive from it.
 
 ```
-Mac Mini  ──────  llama.cpp — Gemma multimodal GGUF (OpenAI-compatible HTTP)
-Jetson    ──────  USB cam · STT (Whisper) · TTS (Kokoro) · YOLOv8n target_node
-Pi 5      ──────  THIS REPO — LangGraph brain + services + micro-ROS agent
-ESP32     ──────  4-wheel drive chassis (micro-ROS over WiFi UDP 8888)
+Mac Mini  ──────  llama.cpp — Gemma multimodal GGUF, --parallel 4 (one KV slot per agent)
+Jetson    ──────  D555 depth cam · cuVSLAM · nvblox · Nav2 · VLM pixel→goal bridge
+Pi 5      ──────  THIS REPO — LangGraph brain + STT/TTS + micro-ROS agent
+ESP32     ──────  4-wheel drive chassis, 50 Hz PID (micro-ROS over WiFi UDP 8888)
 ```
 
 **Docs:** [HOW_IT_WORKS.md](HOW_IT_WORKS.md) — end-to-end walkthrough (start here) ·
@@ -40,8 +40,7 @@ src/
 │       ├── utils/     history trimming · message projection · speech streaming · timing
 │       └── bridges/   StubBridge (run everything without ROS2)
 ├── langrobo_ros/      ROS2 shim: agent_node + ROS2Bridge + launch + systemd
-├── pi5_voice_pkg/     CPU-only STT + TTS on the Pi 5 itself
-└── robot_interfaces/  Custom ROS2 interfaces
+└── pi5_voice_pkg/     CPU-only STT + TTS on the Pi 5 itself
 scripts/               run_brain.sh · run_microros.sh · dev.sh · install_systemd.sh · latency_replay.py
 graph_studio.py        LangGraph Studio entry point (langgraph dev)
 ```
