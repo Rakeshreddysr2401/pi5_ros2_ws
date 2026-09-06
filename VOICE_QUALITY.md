@@ -42,6 +42,15 @@ out the cost/privacy consequence. Turning on `wake_detector: openwakeword`
 means nothing leaves the house until the wake word is heard, and it removes
 the whole class of "the robot answered something it overheard".
 
+**DONE 2026-09-06.** `wake_detector: openwakeword` is now the default. Live
+measurement confirmed the narrowband-HFP-mic concern above is real, not
+theoretical: three clear "hey jarvis" utterances peaked at 0.47/0.12/0.25
+against the stock `wake_threshold: 0.5` — never crossed, so it silently never
+fired. This is exactly §4 step 5's predicted failure mode ("false rejects →
+lower `wake_threshold` toward 0.35") — lowered to `0.35`, confirmed live
+immediately after (wake fired, full turn completed, TTS spoke the reply).
+Full writeup: PI5_VOICE.md "Wake word" section.
+
 ## 1. The microphone is 70% of it (your earphone mic is the problem)
 
 An earphone mic is designed for a mouth 5 cm away. Across a room it delivers
@@ -113,7 +122,10 @@ record thousands of samples:
    the wake models dir; keep `wake_threshold: 0.5` to start).
 5. Rebuild voice_pkg + restart the stack (Jetson CLAUDE.md commands), then
    tune: false rejects → lower `wake_threshold` toward 0.35; false accepts →
-   raise toward 0.65, retrain with more negative data if needed.
+   raise toward 0.65, retrain with more negative data if needed. (This is
+   exactly what happened on the Pi5 with the `hey_jarvis` stand-in — see the
+   §0 update above. A custom model will need its own re-tune; don't assume
+   0.35 carries over.)
 6. Keep the transcript aliases — they strip the name from the utterance and
    are the fallback if openWakeWord ever can't load.
 

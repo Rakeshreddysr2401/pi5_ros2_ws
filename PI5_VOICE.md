@@ -34,8 +34,9 @@ is CUDA-accelerated and faster).
 | STT | `faster-whisper`, model `base`, `compute_type=int8`, 4 threads |
 | TTS | `kokoro-onnx`, **fp32** model (not int8 — see below), 4 threads |
 | VAD | `webrtcvad`, aggressiveness 2, 30ms frames, ~300ms pre-pad / ~600ms end-silence |
-| Wake gate | transcript-contains-alias fallback (`rakhi`/`chotu`/`hey pi`) — no trained wake-word model exists yet for this project (Jetson TODO: `hey_rakhi` training still pending), so this reuses the same fallback mode `speech_vision`'s VOICE_PIPELINE.md documents for when openWakeWord is unavailable |
-| Mic/speaker | Plantronics Blackwire C3220 USB headset (already attached to the Pi5) |
+| Noise gate | `vad_gate.py` — duration + energy + voiced-ratio, between the VAD and the recognizer. Exists because an idle room's VAD-positive noise got a cloud STT to invent a fluent sentence ("This is ₹11,800." from an empty room). `min_utterance_rms` shipped at 0.012 — **below** this file's own measured Bluetooth-mic noise floor of ~0.029 — so it did nothing on the mic actually in use; fixed to 0.05 (commit `d8379ba`, 2026-09-05) |
+| Wake gate | **`openwakeword`, acoustic, ON by default** (bundled `hey_jarvis` stand-in — the project's real wake word, "Rakhi"/"chotu", still needs a trained `.onnx`, see VOICE_QUALITY.md §4). While asleep, nothing is transcribed and nothing leaves the Pi5. `wake_detector: transcript_alias` (transcribe everything, gate on a name in the text) remains as a legacy fallback mode — see "Wake word" below for live-measured threshold tuning |
+| Mic/speaker | **boAt Stone 650 Bluetooth speaker, HFP profile** (call-quality mic at 8-16kHz narrowband, chosen so one device covers both legs — see `bt_audio.py` below). A wired USB headset (originally a Plantronics Blackwire) is the fallback path if `bt_mac` is unset |
 | Confidence filter | drop segments where `no_speech_prob > 0.6 AND avg_logprob < -1.0` — the exact fix VOICE_QUALITY.md validated on the Jetson |
 
 Wire protocol (must match `speech_stream.py` / the Jetson's tts_node exactly):
@@ -60,6 +61,32 @@ the two repos stay compatible without a coordinated change. They carry cost
 only — a character count, never the transcript or the spoken text (that is
 already on `/voice/debug_transcript` and `/voice/robot_speech`). They exist to
 feed the LangSmith trace of a turn — see OPERATIONS.md § LangSmith tracing.
+
+---
+
+## Bluetooth audio (boAt Stone) — `bt_audio.py`
+
+Both nodes address ALSA devices through `sounddevice`, but a Bluetooth speaker
+is a PipeWire node, not an ALSA card. `bt_audio.ensure(bt_mac, bt_profile)`
+(called independently by each node at startup — idempotent, order doesn't
+matter) does the glue: `bluetoothctl connect`, switch profile via `pactl`
+(`a2dp` = speaker only, full quality; `hfp` = adds the speaker's own call mic
+at 8-16kHz mono), make it PipeWire's default sink/source, then point the node
+at the `pipewire` ALSA device. Never raises — a missing tool, absent speaker,
+or refused connection returns a status dict the node logs and carries on with
+whatever device it already had (CLAUDE.md #4).
+
+**After a reboot the pairing does not persist automatically** — `Paired: no`,
+`Connected: no` even though `Trusted: yes` survives. Reconnect manually before
+launching the voice pair:
+```bash
+bluetoothctl trust D6:AA:BB:59:EF:B6
+bluetoothctl pair D6:AA:BB:59:EF:B6
+bluetoothctl connect D6:AA:BB:59:EF:B6
+pactl set-card-profile bluez_card.D6_AA_BB_59_EF_B6 headset-head-unit   # for hfp
+```
+Confirm with `wpctl status` — both a Sink and a Source named "boAt Stone 650"
+should show under Audio, with `*` marking them default.
 
 ---
 
@@ -198,6 +225,38 @@ raising `ProviderUnavailable`.
 
 ---
 
+## Wake word — threshold tuned from live audio, not the stock default
+
+`wake_detector: openwakeword` runs on every audio frame while asleep
+(negligible CPU, RTF ~0.2 measured) and fires when `last_score >=
+wake_threshold`. The stock default is `0.5`, calibrated (by openWakeWord's
+own authors) against clean wideband audio — not what this rig actually feeds
+it.
+
+**Measured live 2026-09-06** through the boAt Stone's HFP mic (8-16kHz
+narrowband — see the Bluetooth section above): three clear, deliberate "hey
+jarvis" utterances peaked at **0.47 / 0.12 / 0.25** against an idle-room
+noise floor of **0.00-0.08**. Real signal, well above noise — but the stock
+0.5 threshold never crossed even once, so the wake word silently never fired
+across three attempts, with zero indication anything was wrong (no error, no
+log line — just nothing happening, the worst kind of bug to notice).
+
+Lowered `wake_threshold` to **0.35** — comfortably below the measured peak,
+comfortably above the measured noise floor. Confirmed live immediately after:
+`wake word 'hey_jarvis' detected — listening` fired, `/voice/user_input` was
+published, `agent_node` answered, and `pi5_tts_node` spoke the reply. Full
+loop, real hardware, real Bluetooth mic.
+
+**This will very likely need retuning per household/room** — the mic path
+(HFP narrowband, Bluetooth codec, the physical mic's frequency response) and
+the ambient noise floor are hardware- and room-specific. Re-measure with the
+`[diag] asleep peak_wake_score=` heartbeat log (`diag_log_period_s` in
+`voice_params.yaml`) before trusting `0.35` on different hardware, and revisit
+once the custom "Rakhi" model replaces the `hey_jarvis` stand-in — a
+different model has a different score distribution.
+
+---
+
 ## Measured performance (this Pi5, Cortex-A76 @ 2.4GHz, 4 cores, 2026-09-04)
 
 | | RTF | note |
@@ -260,6 +319,32 @@ thread does the actual `transcribe()` call.
 ✅ **Sarvam success path confirmed.** A real key now returns HTTP 200 with the
 documented `{"transcript": "..."}` JSON (direct `curl` probe + live speech).
 Soniox has still never been reached (no key yet).
+
+✅ **Full voice loop verified end-to-end, live, real hardware (2026-09-06).**
+Not a component test — the whole chain, in order, through the boAt Stone:
+wake word ("hey jarvis") → openWakeWord fires → VAD segments the command →
+`vad_gate` passes it → Sarvam transcribes → `require_wake`/follow-up logic
+forwards it → `agent_node` invokes the graph against the Mac Mini's
+`llama.cpp` → reply comes back → `pi5_tts_node` speaks it through
+`sarvam_translate`. Confirmed by asking "Can you check now if the brain is
+working or not?" and hearing "I am functioning correctly and ready to help
+you" spoken back, 1.5s after the utterance ended.
+
+Latency is bimodal, and the difference matters for what "seamless" means
+here:
+- **Warm turn: ~1.5s** end-to-end (LLM call answered → spoken). This is the
+  number that matters for a live conversation.
+- **Cold/stale-connection turn: 50-108s.** Seen twice: once on the very first
+  turn after `agent_node` started (KV-cache cold), and once right after the
+  Mac Mini itself rebooted and got a new DHCP IP — `agent_node`'s HTTP client
+  held a connection to the old dead address until a request finally timed out
+  and retried fresh. **Barge-in saves this**: a second utterance during a
+  stuck turn correctly abandons the stale one ("Turn abandoned — newer user
+  input (barge-in)") rather than making you wait for it.
+- **Practical implication**: after restarting either `langrobo-brain` or the
+  Mac Mini's `llama.cpp`, expect the first turn to be slow — this is not a
+  regression, just cold state. Don't judge "is voice broken" from that one
+  turn; ask again.
 
 ---
 
@@ -329,6 +414,13 @@ Say **"what is the time today"** → text appears in Terminal 2. Say
 and publishes to `/voice/user_input` (what the brain consumes). The `[diag]`
 heartbeat in Terminal 1 shows `voiced=True` while you speak; any ALSA
 `input status` overflow prints as a WARNING.
+
+That walkthrough is for `wake_detector: transcript_alias`. With the current
+default (`openwakeword`), the node transcribes nothing until it hears **"hey
+jarvis"** first — watch for `[diag] asleep peak_wake_score=` climbing toward
+`wake_threshold` (see the Wake word section above) and `wake word 'hey_jarvis'
+detected — listening` in Terminal 1 before speaking your command; only then
+does the debug-transcript/user_input flow above apply.
 
 ### Test TTS (text → speech)
 
