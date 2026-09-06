@@ -6,7 +6,10 @@ hand-edited config and no dependency on the internet.
 
 > Replaces the old scheme where `fastdds_unicast.xml` was hand-edited with
 > hardcoded IPs and "reverted from git" on every network change. That file is
-> retired (see *Rollback*).
+> retired, and as of 2026-09-07 it is out of the working tree too — it said
+> "retired" while still sitting in the repo root, which is the kind of thing
+> someone eventually edits. The rollback below already restores it from git,
+> so nothing about that procedure changes.
 
 ## The one idea
 
@@ -145,7 +148,8 @@ should be removed when the cable is fixed:
 ## Rollback (if ever needed)
 
 The old scheme is preserved in git. To revert:
-1. `git checkout <pre-change> -- scripts/run_brain.sh scripts/run_microros.sh scripts/dev.sh fastdds_unicast.xml`
+1. `git checkout d19f1fb -- scripts/run_brain.sh scripts/run_microros.sh scripts/dev.sh fastdds_unicast.xml`
+   (`d19f1fb` is the last commit that still had `fastdds_unicast.xml` in the tree)
 2. Reinstall the old units, `sudo systemctl disable --now langrobo-discovery`,
    restart brain + micro-ROS.
 3. On the Jetson, restore the container env to `FASTRTPS_DEFAULT_PROFILES_FILE`

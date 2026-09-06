@@ -27,6 +27,7 @@ __pycache__/
 
 # Other
 .DS_Store
+.pytest_cache/
 
 # Voice model weights (downloaded, not tracked — see langrobo_ros/models/README.md)
 src/langrobo_ros/models/**/*.onnx

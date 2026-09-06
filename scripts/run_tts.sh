@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Launch the Pi5 TTS node (local Kokoro by default). Speaks anything published
-# to /voice/robot_speech. Pair with ./tts_say.py to type text. Ctrl-C to stop.
-# Override provider: ./run_tts.sh sarvam   (default: config value, i.e. local)
+# to /voice/robot_speech. Pair with ./scripts/tts_say.py to type text.
+# Override provider: ./scripts/run_tts.sh sarvam  (default: the config value)
 set -eo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."   # repo root: src/ and install/ live there
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 # Match the brain's DDS config EXACTLY (scripts/run_brain.sh): default multicast

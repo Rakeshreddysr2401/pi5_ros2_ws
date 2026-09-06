@@ -114,6 +114,27 @@ velocity in SI m/s** (`pidStep(wL, velL, ...)` against encoder feedback).
 translate. The rover's own `OPERATIONS.md` §2 measures it: *0.20 m/s commanded
 = 20 cm/s at the camera.*
 
+**Where those numbers came from — confirmed 2026-09-07.** The pi5 repo was
+still carrying the *previous* firmware, `rover_firmware.ino`, and it is
+open-loop:
+
+```c
+#define MAX_LINEAR_VEL  0.30f
+#define MAX_ANGULAR_VEL 2.0f
+#define WHEEL_BASE      0.15f
+float linear_pct  = linearX / MAX_LINEAR_VEL;   // commanded m/s -> PWM fraction
+```
+
+So on that firmware `linear.x = 0.28` really did mean `0.28/0.30 = 93 %` duty —
+which is exactly what the stale comment said. The constants were not guessed;
+they were correct for an L298N chassis with a 15 cm wheelbase that no longer
+exists. `angular.z = 2.8` against `MAX_ANGULAR_VEL 2.0` saturated at 100 %
+duty, which is also why 2.8 "worked" once and was never revisited.
+
+The v2 firmware replaced all of it: BTS7960 drivers, a 34 cm wheelbase, and a
+50 Hz PI loop closing on encoder velocity. Nothing about the old mapping
+survived, and nothing updated the brain.
+
 So the distance model divided by a speed **2.1× the real one**:
 `move_robot("F:20")` computed `0.20 / 0.60 = 0.33 s` of drive and covered
 about **9 cm**. Every fine adjustment the robot has ever made was less than

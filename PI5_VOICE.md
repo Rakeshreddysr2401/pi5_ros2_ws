@@ -395,15 +395,15 @@ wrapped paste splits the `--params-file` arg and fails):
 
 | Script | What it does |
 |---|---|
-| `./run_stt.sh [provider]` | STT node only. `./run_stt.sh` = local (English→English); `./run_stt.sh sarvam` = Telugu→English. |
-| `./run_tts.sh [provider]` | TTS node only. `local` / `sarvam` / `sarvam_translate` / `soniox`. |
-| `python3 tts_say.py` | Interactive: type a line → publishes to `/voice/robot_speech` (+ `<\|eou\|>`) so the TTS node speaks it. Needs ROS sourced first. |
+| `./scripts/run_stt.sh [provider]` | STT node only. `./scripts/run_stt.sh` = local (English→English); add `sarvam` for Telugu→English. |
+| `./scripts/run_tts.sh [provider]` | TTS node only. `local` / `sarvam` / `sarvam_translate` / `soniox`. |
+| `python3 scripts/tts_say.py` | Interactive: type a line → publishes to `/voice/robot_speech` (+ `<\|eou\|>`) so the TTS node speaks it. Needs ROS sourced first. |
 
 ### Test STT (speak → text)
 
 ```bash
 # Terminal 1 — start STT (add 'sarvam' for Telugu→English):
-./run_stt.sh                 # or: ./run_stt.sh sarvam
+./scripts/run_stt.sh         # or: ./scripts/run_stt.sh sarvam
 
 # Terminal 2 — watch the raw transcript for every utterance (no wake word needed):
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
@@ -426,13 +426,13 @@ does the debug-transcript/user_input flow above apply.
 
 ```bash
 # Terminal 1 — start TTS in the mode you want:
-./run_tts.sh                 # local Kokoro (English)
-./run_tts.sh sarvam          # Sarvam Bulbul (English, cloud, faster)
-./run_tts.sh sarvam_translate # English text spoken in Telugu
+./scripts/run_tts.sh          # local Kokoro (English)
+./scripts/run_tts.sh sarvam   # Sarvam Bulbul (English, cloud, faster)
+./scripts/run_tts.sh sarvam_translate  # English text spoken in Telugu
 
 # Terminal 2 — type text to hear it:
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
-python3 tts_say.py
+python3 scripts/tts_say.py
 # say> Good morning. Breakfast is ready.
 ```
 

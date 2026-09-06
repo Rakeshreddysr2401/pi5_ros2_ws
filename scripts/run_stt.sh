@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Launch the Pi5 STT node with live logs. Ctrl-C to stop. See PI5_VOICE.md.
 # Temporary [diag] logging (audio-callback heartbeat + ALSA warnings) is on.
-#   ./run_stt.sh                 # provider from config (default: local, English)
-#   ./run_stt.sh sarvam          # Telugu speech -> English text
+#   ./scripts/run_stt.sh         # provider from config (default: local, English)
+#   ./scripts/run_stt.sh sarvam  # Telugu speech -> English text
 set -eo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."   # repo root: src/ and install/ live there
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 # Match the brain's DDS config EXACTLY (scripts/run_brain.sh): default multicast
