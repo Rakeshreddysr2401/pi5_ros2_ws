@@ -145,8 +145,10 @@ the turn ends. A minute later the robot speaks without being spoken to:
    **system queue** (FIFO, never dropped, processed between user turns).
    If the goal came from Telegram, the injected text also carries a routing
    instruction so the report lands in that chat instead of the speaker.
-3. System turns always enter at the **supervisor**, whose only ability is a
-   grammar-forced `handover()` — it routes to chat.
+3. System turns enter at **chat** — the default responder, and the agent
+   whose slot is already warm from ordinary use. They deliberately do not
+   inherit stickiness: a proactive announcement must not be answered by
+   whichever agent the user happened to leave active.
 4. chat's reply streams to TTS: **"I've arrived at the kitchen."**
 
 **This is the pattern for every proactive behaviour.** A producer calls
@@ -242,12 +244,12 @@ The Mac Mini caches the LLM's processed prompt (KV cache) per slot. A warm
 turn only pays for the *new* tokens; a cold one re-processes ~2k+ tokens
 (~20s on the 12B). Everything below protects warmth:
 
-- **One slot per agent**: supervisor=0, chat=1, local_agent=2, navigate=3.
-  Four agents, four caches, nothing ever evicts anything. The map is declared
-  beside the agents in `registry.py`; start llama.cpp with `--parallel 4`.
-  This matters because it was measured: when the supervisor shared a slot with
-  another agent (2026-07-06), each call evicted the other's prefix and cost
-  18-50s of full-history re-prefill on the next turn.
+- **One slot per agent**: chat=0, local_agent=1, navigate=2. Three agents,
+  three caches, nothing ever evicts anything. The map is declared beside the
+  agents in `registry.py`; start llama.cpp with `--parallel 3`. This matters
+  because it was measured: when two agents shared a slot (2026-07-06), each
+  call evicted the other's prefix and cost 18-50s of full-history re-prefill
+  on the next turn.
 - **Append-only history**: the per-agent projection never mutates or drops
   mid-history messages; trims happen only at turn boundaries, and the
   **cache warmer** re-prefills in the background right after each trim.

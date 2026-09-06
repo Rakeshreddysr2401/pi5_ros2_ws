@@ -44,7 +44,7 @@ def safe_invoke(llm, messages: list, logger: logging.Logger, retries: int = 1,
        try the configured cloud fallback, if any.
     3. Everything failed: return a spoken degraded message — never raise.
 
-    `agent`: optional name (e.g. "supervisor") logged alongside which LLM
+    `agent`: optional name (e.g. "local_agent") logged alongside which LLM
     (primary/fallback) actually answered — a cloud fallback has no KV-cache
     slot, so a run of fallback answers for one agent is a lead if that
     agent's warm slot later shows an unexplained full re-prefill.

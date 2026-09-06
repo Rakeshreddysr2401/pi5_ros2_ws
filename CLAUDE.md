@@ -75,7 +75,7 @@ pip3 install --break-system-packages -r requirements.txt
    that need ROS message types import them lazily *inside* the function body.
 2. **One llama.cpp KV slot per agent.** Slots are declared in `registry.py`
    (`AgentSpec.slot`), NOT as ROS params. Start the server with
-   `--parallel 4`: each agent's ~1-2k token prompt prefix then stays resident
+   `--parallel 3`: each agent's ~900-token prompt prefix then stays resident
    in its own cache. Two agents on one slot evict each other every turn
    (~18-50s of re-prefill). agent_node probes the server's real slot count at
    boot, wraps with modulo, and warns loudly if it had to.
@@ -102,15 +102,15 @@ pip3 install --break-system-packages -r requirements.txt
 
 ## Layout (full detail in ARCHITECTURE_LLD.md)
 
-**Three agents and a router.** Each responder owns one modality: `chat` (text
-in/out, the default responder), `local_agent` (images — the only agent with
-`look()`), `navigate` (motion — the only agent that moves wheels), plus
-`supervisor`, which routes and never emits text.
+**Three agents, no router.** Each owns one modality: `chat` (text in/out —
+the default responder, and the one carrying the routing table), `local_agent`
+(images — the only agent with `look()`), `navigate` (motion — the only agent
+that moves wheels).
 
 - `langrobo_core/registry.py` — **ONE `AgentSpec` per agent, and nothing about
   an agent lives anywhere else**: routing copy, prompt, tool set, KV slot,
   sticky/keep_images. Adding an agent = a name in `agent_ids.py` + a spec here;
-  the graph, handover grammar, supervisor routing table, sticky set and slot
+  the graph, handover grammar, the routing table chat renders, sticky set and slot
   map all derive from it. Two import-time asserts catch drift.
 - `langrobo_core/prompts.py` — EVERY system prompt. `SPEECH_STYLE` (inside
   PERSONA) is the ONE spoken-output contract — don't restate it per agent.
@@ -120,9 +120,9 @@ in/out, the default responder), `local_agent` (images — the only agent with
   commands ("stop", "forward 30", "go to the kitchen") execute tools directly
   with ZERO LLM calls. Anything ambiguous falls through to the graph.
 - `langrobo_core/graph/` — topology (build.py, derived entirely from
-  registry.py), entry routing (sticky vs supervisor), handover + loop guards
-- `langrobo_core/agents/` — `factory.py` builds every responder from its spec;
-  `supervisor.py` is the only hand-written node (forced tool_choice)
+  registry.py), entry routing (sticky agent, else chat), handover + loop guards
+- `langrobo_core/agents/` — `factory.py` builds EVERY agent from its spec;
+  there are no hand-written nodes
 - `langrobo_core/tools/` — @tool functions; per-agent sets in `__init__.py`;
   robot I/O via `_bridge.get()`. Keep the sets SHORT: every tool is shipped as
   a schema on every turn to that agent, forever.
@@ -188,8 +188,8 @@ change both repos together or neither.
   `/servo_tilt` (no mount, and the ESP32 firmware has three subscriptions and
   none are servos), `/audio/music_*`. Check for a publisher before building on
   a topic here.
-- `strict_tool_calls` + streaming need the llama.cpp server started with
-  `--jinja --parallel 4` (one slot per agent: supervisor/chat/local_agent/navigate).
+- Streaming tool calls need the llama.cpp server started with
+  `--jinja --parallel 3` (one slot per agent: chat/local_agent/navigate).
 - Pi5↔Jetson clocks drift ~1.5s (chrony peering pending) — latency_replay
   flags negative deltas.
 

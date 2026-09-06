@@ -16,9 +16,9 @@ Deploy, run, observe, and troubleshoot the Pi5 brain.
 
 **Never run two brains at once** — both drive `/cmd_vel` and micro-ROS UDP 8888.
 
-The llama.cpp server on the Mac Mini must be started with **`--jinja --parallel 4`**:
-one KV-cache slot per agent (supervisor, chat, local_agent, navigate). With
-fewer slots the agents share and evict each other's cached prompt prefix, which
+The llama.cpp server on the Mac Mini must be started with **`--jinja --parallel 3`**:
+one KV-cache slot per agent (chat, local_agent, navigate). With fewer slots the
+agents share and evict each other's cached prompt prefix, which
 costs ~18-50s of re-prefill per turn. agent_node probes the server at boot and
 logs `KV slot map (one per agent): {...}` — or a warning naming the shortfall.
 See ARCHITECTURE_LLD.md §4.1.
@@ -116,7 +116,7 @@ the raw query equivalents are below):
 | Turns the Mac Mini missed, answered by the cloud fallback | `and(eq(metadata_key, "llm_primary_available"), eq(metadata_value, "false"))` |
 | Turns where cloud STT failed and local Whisper silently took over (no Telugu→English translation on those) | `and(eq(metadata_key, "stt_fell_back"), eq(metadata_value, "true"))` |
 | Every leg of one turn — STT metadata, the LLM run, each spoken sentence | `and(eq(metadata_key, "trace_id"), eq(metadata_value, "<id>"))` |
-| Hide the KV-cache prefills (two per turn, `cache_warm:chat` / `cache_warm:supervisor` — full prompt, no answer) | `-has(tags, "cache_warm")` |
+| Hide the KV-cache prefills (`cache_warm:chat` / `cache_warm:local_agent` — full prompt, no answer) | `-has(tags, "cache_warm")` |
 
 Cost: LangSmith batches uploads on a background thread, so the turn path does not
 wait on the network. It does ship conversation content (prompts, replies, camera
@@ -126,7 +126,7 @@ debugging.
 ## Deploy checklist (Pi5 + Jetson protocol change)
 
 1. Pi5: `colcon build --symlink-install` + `pip3 install --break-system-packages -r requirements.txt`
-2. Mac Mini llama.cpp up, **started with `--jinja --parallel 4`**:
+2. Mac Mini llama.cpp up, **started with `--jinja --parallel 3`**:
    `curl http://singireddys-mac-mini.local:8080/v1/models` must report
    `"multimodal"` in capabilities (mmproj loaded) for look().
 3. `sudo systemctl restart langrobo-brain` → `curl localhost:8090/health`
@@ -143,11 +143,11 @@ debugging.
 
 ```bash
 ./llama-server -m <model>.gguf --mmproj <mmproj>.gguf --port 8080 -ngl 99 \
-               --parallel 4 --jinja
+               --parallel 3 --jinja
 ```
 
-- `--parallel 4` — one KV slot per agent, pinned by the brain: 0 supervisor,
-  1 chat, 2 local_agent, 3 navigate. The map is `registry.SLOTS`, declared
+- `--parallel 3` — one KV slot per agent, pinned by the brain: 0 chat,
+  1 local_agent, 2 navigate. The map is `registry.SLOTS`, declared
   beside the agents; agent_node probes this server's real slot count at boot
   and warns if it is smaller. See ARCHITECTURE_LLD.md §4.1.
 - `--jinja` — required for grammar-forced handover + streamed tool calls.
@@ -167,10 +167,10 @@ debugging.
 | Symptom | Likely cause → fix |
 |---|---|
 | Spoken "my brain server is offline" | Mac Mini down/unreachable → check server, or arm `LANGROBO_FALLBACK_*` |
-| Every turn slow (~20s before speech) | KV cache cold: the server started without `--parallel 4` (agents share slots and evict each other — the boot log says so), a clock in a prompt, or a mid-history mutation. See ARCHITECTURE_LLD.md §4 |
+| Every turn slow (~20s before speech) | KV cache cold: the server started without `--parallel 3` (agents share slots and evict each other — the boot log says so), a clock in a prompt, or a mid-history mutation. See ARCHITECTURE_LLD.md §4 |
 | "I cannot see right now" | Frame >10s stale or absent. That topic is published by `phase4/nodes/image_bridge.py` on the Jetson — start it with `./rover vlm`. It also skips encoding entirely when nothing is subscribed, so check the brain is up before blaming the Jetson |
 | Vision turn slow (~60s end-to-end) | Measured 2026-07-19: router call ~43s + vision call ~16s on the Mac, sequential. `local_agent` is sticky, so the FOLLOW-UP question about the same scene skips the router; the first one still pays it |
-| Tool calls flaky / early stops | GGUF chat template mislabels control tokens → suspect the quant; try `strict_tool_calls:=false` |
+| Tool calls flaky / early stops | GGUF chat template mislabels control tokens → suspect the quant, and check the server has `--jinja` |
 | "I couldn't measure its distance" | `pixel_to_goal.py` isn't running on the Jetson (`./rover vlm`), or depth had a hole at that pixel — the reason string says which |
 | ESP32 not moving | `langrobo-microros` unit down, or ESP32 not on WiFi → `systemctl status langrobo-microros`, then power-cycle ESP32 |
 | DDS discovery fails Pi5↔Jetson | `ROS_DOMAIN_ID` mismatch, or a stray `ROS_DISCOVERY_SERVER` in the environment. **Prod is plain multicast since 2026-07-16** (the D555 is a raw DDS participant that discovery-server clients cannot see) — every prod script unsets `ROS_DISCOVERY_SERVER`; `langrobo-discovery` remains only for `dev.sh`/`langgraph dev` (127.0.0.1:11811). A client accidentally pointed at it goes silently invisible to the Jetson |

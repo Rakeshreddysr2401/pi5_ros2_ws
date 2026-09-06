@@ -94,10 +94,9 @@ class SpeechStreamHandler(BaseCallbackHandler):
     """Publishes sentence chunks as LLM tokens arrive.
 
     Create one per turn and pass it in the graph config alongside the timing
-    handler. Only agents whose LLM has streaming enabled fire tokens; the
-    supervisor streams nothing (streaming disabled per-agent) and non-streaming
-    fallbacks are covered by agent_node publishing the full text when spoke()
-    returns False.
+    handler. Only agents whose LLM has streaming enabled fire tokens;
+    non-streaming fallbacks are covered by agent_node publishing the full text
+    when spoke() returns False.
     """
 
     raise_error = False

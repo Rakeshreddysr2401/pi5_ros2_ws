@@ -2,9 +2,9 @@
 anywhere else.
 
 Adding an agent is exactly two edits: a name in `agent_ids.py`, and one
-AgentSpec here. The graph topology, the handover grammar, the supervisor's
-routing table, the sticky-entry set, the agent's rendered tool block and its
-llama.cpp KV slot all derive from this file. `tests/test_smoke.py` and
+AgentSpec here. The graph topology, the handover grammar, the sticky-entry
+set, the agent's rendered tool block and its llama.cpp KV slot all derive from
+this file. `tests/test_smoke.py` and
 `tests/test_prompt_contract.py` fail if they ever drift apart.
 
 The prompt in a spec is a TEMPLATE: its `{tools}` placeholder is filled from
@@ -23,14 +23,13 @@ A llama.cpp server started with `--parallel N` keeps N independent KV caches.
 Pin each agent to its own and its prefix stays resident, so a turn only
 prefills the NEW tokens. Share a slot between two agents and each call evicts
 the other's prefix — measured at ~18-50s of re-prefill per turn on the 12B
-model. With four agents and four slots, nothing ever evicts anything.
+model. With three agents and three slots, nothing ever evicts anything.
 
-    slot 0  supervisor    runs on EVERY turn, so it must never be evicted
-    slot 1  chat          the default responder
-    slot 2  local_agent   image prefix — kept away from the text agents
-    slot 3  navigate      latency-sensitive: a movement command is waiting
+    slot 0  chat          the default responder, and the router
+    slot 1  local_agent   image prefix — kept away from the text agents
+    slot 2  navigate      latency-sensitive: a movement command is waiting
 
-Start the server with `--parallel 4`. Fewer slots still works — slots are
+Start the server with `--parallel 3`. Fewer slots still works — slots are
 assigned modulo the server's real count at startup (services/llm.py), so a
 2-slot server just means two agents share, at the old cost.
 """
@@ -43,12 +42,7 @@ from typing import Callable, Optional
 
 from . import prompts
 from .agent_ids import AGENT_IDS, ROUTABLE
-from .tools import (
-    CHAT_TOOLS,
-    LOCAL_AGENT_TOOLS,
-    NAVIGATE_TOOLS,
-    SUPERVISOR_TOOLS,
-)
+from .tools import CHAT_TOOLS, LOCAL_AGENT_TOOLS, NAVIGATE_TOOLS
 
 
 # ── Dynamic prompt tails ─────────────────────────────────────────────────────
@@ -70,8 +64,8 @@ def _today_line() -> str:
 class AgentSpec:
     """Everything the system needs to know about one agent.
 
-    description / examples  routing copy — feeds the supervisor's agent list and
-                            the handover routing notes.
+    description / examples  routing copy — feeds build_agent_list() and the
+                            handover routing notes, i.e. what chat routes on.
     prompt                  system-prompt template containing `{tools}`.
     tools                   the bound tool set; also what fills `{tools}`.
     slot                    llama.cpp KV-cache slot (id_slot). See the module
@@ -84,8 +78,6 @@ class AgentSpec:
     keep_images             feed this agent the image-preserving projection of
                             the shared log (multimodal agents only).
     context                 optional callable returning the dynamic prompt tail.
-    routable                False only for the supervisor, which routes rather
-                            than being routed to.
     """
 
     name: str
@@ -97,19 +89,9 @@ class AgentSpec:
     sticky: bool = False
     keep_images: bool = False
     context: Optional[Callable[[], str]] = None
-    routable: bool = True
 
 
 _SPECS: tuple[AgentSpec, ...] = (
-    AgentSpec(
-        name="supervisor",
-        description="",           # the supervisor is not a routing destination
-        examples=[],
-        prompt=prompts.SUPERVISOR_PROMPT_TEMPLATE,
-        tools=SUPERVISOR_TOOLS,
-        slot=0,
-        routable=False,
-    ),
     AgentSpec(
         name="chat",
         description="general questions, web search, the time, robot status, small talk, and anything not about what the camera sees or about moving",
@@ -117,7 +99,7 @@ _SPECS: tuple[AgentSpec, ...] = (
                   "how are you doing?", "message mom that I'll be late"],
         prompt=prompts.CHAT_PROMPT,
         tools=CHAT_TOOLS,
-        slot=1,
+        slot=0,
         sticky=True,
         context=_today_line,
     ),
@@ -128,7 +110,7 @@ _SPECS: tuple[AgentSpec, ...] = (
                   "did he wear spectacles?", "send mom a photo of the room"],
         prompt=prompts.LOCAL_AGENT_PROMPT,
         tools=LOCAL_AGENT_TOOLS,
-        slot=2,
+        slot=1,
         sticky=True,
         keep_images=True,
     ),
@@ -139,18 +121,18 @@ _SPECS: tuple[AgentSpec, ...] = (
                   "turn left 90 degrees", "save this spot as dining area", "stop"],
         prompt=prompts.NAVIGATE_PROMPT,
         tools=NAVIGATE_TOOLS,
-        slot=3,
+        slot=2,
     ),
 )
 
 SPECS: dict[str, AgentSpec] = {spec.name: spec for spec in _SPECS}
 
-# Routing destinations only — what the supervisor picks between and what the
-# handover routing notes describe.
+# Routing copy — what chat's prompt picks between and what the handover
+# routing notes describe. Every agent is a destination now; there is no
+# router sitting outside the set.
 AGENTS: dict[str, dict] = {
     name: {"description": spec.description, "examples": spec.examples}
     for name, spec in SPECS.items()
-    if spec.routable
 }
 
 STICKY_ELIGIBLE: frozenset[str] = frozenset(
@@ -176,8 +158,13 @@ assert set(SPECS) == set(ROUTABLE), (
 assert len(set(SLOTS.values())) == len(SLOTS), f"duplicate KV slots: {SLOTS}"
 
 
-def build_supervisor_agent_list() -> str:
-    """Return the agents block for the supervisor prompt."""
+def build_agent_list(exclude: str = "") -> str:
+    """The routing block a prompt uses to describe the OTHER agents.
+
+    chat renders this so its hand-over rules cannot drift from the registry —
+    the descriptions an agent routes on are the ones declared above it.
+    """
     return "\n".join(
-        f'- "{name}" : {meta["description"]}' for name, meta in AGENTS.items()
+        f'- "{name}" : {meta["description"]}'
+        for name, meta in AGENTS.items() if name != exclude
     )

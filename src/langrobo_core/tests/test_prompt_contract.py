@@ -32,7 +32,9 @@ RENDERED = {
     for name, spec in SPECS.items()
 }
 
-SPEAKING = [name for name in SPECS if name != "supervisor"]
+# Every agent speaks now — the one that never did was the router, and it is
+# gone. Kept as a name so the parametrisation still reads as intent.
+SPEAKING = list(SPECS)
 
 
 @pytest.mark.parametrize("name", SPEAKING)
@@ -66,11 +68,13 @@ def test_every_speaking_agent_gets_the_speech_contract(name):
     assert prompts.SPEECH_STYLE in RENDERED[name], f"{name} is missing SPEECH_STYLE"
 
 
-def test_supervisor_has_no_persona_or_speech_style():
-    """The supervisor never emits user-facing text; prefill there is pure
-    routing latency (see prompts.py header)."""
-    assert prompts.SPEECH_STYLE not in RENDERED["supervisor"]
-    assert prompts.PERSONA not in RENDERED["supervisor"]
+def test_every_agent_shares_one_identity():
+    """PERSONA carries the "you are Rakhi, built by Rakesh" block. An agent
+    without it falls back to its training and tells users it was made by
+    Google (Issues/asked_weather.txt) — so every agent that can answer a user
+    must have it, and all of them can now."""
+    for name in SPECS:
+        assert prompts._IDENTITY in RENDERED[name], f"{name} has no identity block"
 
 
 @pytest.mark.parametrize("name", SPEAKING)
@@ -83,11 +87,27 @@ def test_prompts_carry_no_markup_the_voice_would_read_aloud(name):
             f"{name}: prompt line looks like markdown the model may imitate: {line!r}"
 
 
-def test_agent_list_in_supervisor_prompt_matches_the_registry():
-    from langrobo_core.registry import build_supervisor_agent_list
-    listing = build_supervisor_agent_list()
+def test_every_agent_is_reachable_from_the_routing_table():
+    """chat is the router now. build_agent_list is what a prompt renders to
+    describe the others; an agent missing from it is an agent nothing can
+    route to, which is the same as an agent that does not exist."""
+    from langrobo_core.registry import build_agent_list
+    listing = build_agent_list(exclude="chat")
     for name in AGENT_IDS:
+        if name == "chat":
+            continue
         assert f'"{name}"' in listing, f"{name} unreachable — not in the routing table"
+
+
+def test_chats_prompt_names_every_agent_it_must_route_to():
+    """chat's hand-over rules are hand-written prose. If an agent is added and
+    chat is never told about it, the agent exists in the graph and nothing
+    ever reaches it."""
+    for name in AGENT_IDS:
+        if name == "chat":
+            continue
+        assert name in RENDERED["chat"], (
+            f"chat's prompt never mentions {name!r} — nothing can route to it")
 
 
 def test_render_tools_reports_an_empty_provider_honestly():

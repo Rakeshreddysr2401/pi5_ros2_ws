@@ -1,15 +1,17 @@
 """StateGraph topology — the only file that knows how nodes connect.
 
 Architecture:
-  START → turn_entry → supervisor → supervisor_tools
-                                         ↓ (handover)
-                                   handle_handover → [chat | local_agent | navigate]
-                                                            ↓
-                                                      per-agent tools
-                                                            ↓ (if handover)
-                                                      handle_handover
-                                                            ↓ (chain=False, agent spoke)
-                                                           END (sticky to next agent)
+  START → turn_entry → [chat | local_agent | navigate]
+                              ↓
+                        per-agent tools
+                              ↓ (if a handover ran)
+                        handle_handover → another agent, or END
+                              ↓ (no tool calls left: the agent answered)
+                             END (that agent becomes sticky for the next turn)
+
+  turn_entry picks the entry directly — the sticky agent from last turn, or
+  chat. There is no router node: chat is the default responder AND carries the
+  routing table, so a fresh turn costs one LLM call, not two.
 
 Every agent below is derived from registry.py — the node, its ToolNode and its
 edges all come from one AgentSpec. Adding an agent needs NO edit to this file.

@@ -164,13 +164,18 @@ production ingredient the sim lacks — or was fixed by a commit since 07-06.
 and reminders (which produced the [SYSTEM] turns above) are both gone. The
 [SYSTEM] turn producer in this build is **navigation arrival**, so:
 
-1. Start llama.cpp with `--parallel 4` and confirm the brain logs
-   `KV slot map (one per agent): {'supervisor': 0, 'chat': 1, ...}`.
+1. Start llama.cpp with `--parallel 3` and confirm the brain logs
+   `KV slot map (one per agent): {'chat': 0, 'local_agent': 1, 'navigate': 2}`.
 2. Drive two goals in a row (`"go to the kitchen"`, wait for arrival, repeat).
    Each arrival is a [SYSTEM] turn that enters at the supervisor.
 3. `curl http://singireddys-mac-mini.local:8080/slots` and read
-   `n_prompt_tokens_processed` for slot 0. Reuse looks like the tail only
-   (tens of tokens); the 07-06 fault looked like ~1791, a full prefill.
+   `n_prompt_tokens_processed` for chat's slot 0. Reuse looks like the tail
+   only (tens of tokens); the 07-06 fault looked like ~1791, a full prefill.
+
+   **NB 2026-09-07: this may already be moot.** The agent that showed the
+   fault was the supervisor, and it is gone — [SYSTEM] turns now enter at
+   chat, which is warm from ordinary use. If chat's slot reuses on a nav
+   arrival, the symptom cannot recur in the shape it was found.
 4. If it full-prefills, capture the real request bodies with a logging proxy
    on `base_url` and diff two consecutive supervisor calls — the first
    differing message is the answer. The 07-10 investigation ruled out

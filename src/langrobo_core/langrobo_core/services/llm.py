@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 
 _config: dict = {}
 _agent_overrides: dict = {}
-_strict_tools: bool = True
 _fallback: FallbackLLM | None = None
 
 # Primary-health state: after a connection failure the primary is skipped
@@ -47,7 +46,6 @@ def configure(
     api_key: str,
     max_tokens: int,
     agent_overrides: dict | None = None,
-    strict_tools: bool = True,
     streaming: bool = False,
     slot: int | None = None,
 ) -> None:
@@ -56,11 +54,6 @@ def configure(
     agent_overrides: {agent_name: {provider?, model?, base_url?, api_key?,
                       max_tokens?, slot?, streaming?}} — any subset of fields
                       overrides the global config for that agent only.
-    strict_tools:    when True, nodes that MUST emit a tool call (the supervisor's
-                     handover) force it via tool_choice. On llama.cpp this becomes a
-                     grammar constraint generated from the tool's JSON schema, so the
-                     model can only emit a valid handover to a real agent. Disable if
-                     your llama.cpp build lacks --jinja tool-call support.
     streaming:       when True, invoke() streams under the hood and fires
                      on_llm_new_token callbacks — this is what feeds sentence
                      chunks to TTS (utils.speech_stream). openai/llamacpp
@@ -73,7 +66,7 @@ def configure(
                      12B model). Per-agent `slot` overrides still win
                      (e.g. local_agent's image cache slot). None/-1 = no pin.
     """
-    global _config, _agent_overrides, _strict_tools
+    global _config, _agent_overrides
     _config = {
         "provider": provider,
         "model": model,
@@ -84,7 +77,6 @@ def configure(
         "slot": slot,
     }
     _agent_overrides = agent_overrides or {}
-    _strict_tools = strict_tools
 
 
 def configure_fallback(fallback: FallbackLLM) -> None:
@@ -93,11 +85,6 @@ def configure_fallback(fallback: FallbackLLM) -> None:
     _fallback = fallback if fallback.configured else None
     if _fallback:
         logger.info("LLM fallback armed: %s/%s", _fallback.provider, _fallback.model)
-
-
-def strict_tools_enabled() -> bool:
-    """True if mandatory tool calls should be forced via tool_choice (grammar-constrained)."""
-    return _strict_tools
 
 
 # ── Primary health tracking (drives safe_invoke's routing) ─────────────────

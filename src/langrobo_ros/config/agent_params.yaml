@@ -32,12 +32,6 @@ agent_node:
     # local_agent's look() can see and reason over it.
     use_vision: true
 
-    # Force the supervisor's mandatory handover() via tool_choice. On llama.cpp
-    # the server grammar-constrains the output (from the tool's JSON schema,
-    # incl. the next_agent enum) so a small model can only emit a valid
-    # handover. Requires a llama.cpp server started with --jinja.
-    strict_tool_calls: true
-
     # Stream sentence chunks to /voice/robot_speech as the LLM generates,
     # ending each utterance with the <|eou|> marker (utils/speech_stream.py).
     # First audio starts after the first sentence instead of the full reply.
@@ -50,11 +44,11 @@ agent_node:
     # fold-when-out-of-range algorithm in agent_node, which is a lot of moving
     # parts for "give each agent its own cache".
     #
-    # What you DO need: start the llama.cpp server with --parallel 4, one slot
-    # per agent (supervisor, chat, local_agent, navigate). agent_node probes
-    # the server's real slot count at boot and warns — loudly — if it is lower,
-    # because sharing a slot means each call evicts the other agent's prompt
-    # prefix and pays it back as ~18-50s of re-prefill on the next turn.
+    # What you DO need: start the llama.cpp server with --parallel 3, one slot
+    # per agent (chat, local_agent, navigate). agent_node probes the server's
+    # real slot count at boot and warns — loudly — if it is lower, because
+    # sharing a slot means each call evicts the other agent's prompt prefix and
+    # pays it back as ~18-50s of re-prefill on the next turn.
 
     # Override model for local_agent only ("" = inherit the global model).
     # Set to your multimodal GGUF if the global model is text-only.

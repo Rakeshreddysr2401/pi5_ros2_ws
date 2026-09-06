@@ -63,26 +63,23 @@ class _Resolution(NamedTuple):
 
 
 def _resolve(state: AgentState, raw_next: str, reason: str) -> _Resolution:
-    current = state.get("active_agent", "supervisor")
+    current = state.get("active_agent", "chat")
     user_query = _last_user_query(state)
 
     # Routing notes are PERMANENT history: the projection keeps every historical
     # SystemMessage so cached prompt prefixes never diverge mid-history (see
     # message_utils). Word each note so a stale one reads as a past event
     # ("control passed"), never as a standing instruction to whoever reads it.
-    if raw_next == "supervisor":
-        if reason == "cannot_answer":
-            content = (
-                f"[Routing note] The '{current}' agent could not answer the user's "
-                f"question. Do NOT route back to '{current}'. Try a different agent.\n"
-                f"The user asked: \"{user_query}\""
-            )
-        else:
-            content = (
-                f"[Routing note] The '{current}' agent completed its task "
-                f"(reason: '{reason or 'done'}'). Route to the next appropriate "
-                f"agent or back to 'chat' to respond to the user."
-            )
+    if raw_next == "chat" and reason == "cannot_answer":
+        # chat is the default responder AND the router, so "I could not answer
+        # this" lands there. Name the agent that gave up, or chat routes
+        # straight back to it and the loop guard has to end the turn.
+        content = (
+            f"[Routing note] The '{current}' agent could not answer the user's "
+            f"question. Do NOT route back to '{current}'. Answer it yourself or "
+            f"try a different agent.\n"
+            f"The user asked: \"{user_query}\""
+        )
     else:
         meta = AGENTS.get(raw_next)
         desc = meta["description"] if meta else raw_next
@@ -102,8 +99,9 @@ def handle_handover(state: AgentState) -> Command[Literal[ROUTABLE]] | dict:  # 
     next_agent, reason, chain, ai_content = _extract_handover_context(state)
 
     if not next_agent:
-        logger.warning("handle_handover: no handover tool message found — falling back to supervisor")
-        return Command(goto="supervisor", update={})
+        logger.warning("handle_handover: no handover tool message found — "
+                       "falling back to chat")
+        return Command(goto="chat", update={})
 
     # A hallucinated target (possible on the cloud fallback — schema enums are
     # advisory there) or a ToolNode validation-error payload must never become
@@ -123,11 +121,11 @@ def handle_handover(state: AgentState) -> Command[Literal[ROUTABLE]] | dict:  # 
         chain, ai_content = True, ""
     else:
         res = _resolve(state, next_agent, reason)
-    current = state.get("active_agent", "supervisor")
+    current = state.get("active_agent", "chat")
 
     # Self-handover: an agent routed to itself instead of answering. Re-enter it
     # once with a hard "answer now" nudge (counts toward the loop budget below).
-    if res.next_agent == current and current != "supervisor":
+    if res.next_agent == current:
         logger.info("Self-handover by '%s' — nudging it to answer directly", current)
         res = _Resolution(
             next_agent=current,

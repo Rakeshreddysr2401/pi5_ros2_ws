@@ -43,6 +43,3 @@ LOCAL_AGENT_TOOLS = [look, handover] + HEAD_TOOLS + TELEGRAM_TOOLS
 NAVIGATE_TOOLS = [move_robot, navigate_to_pose, approach_described_object,
                   scan_surroundings, save_location, list_saved_locations,
                   handover] + HEAD_TOOLS + TELEGRAM_TOOLS
-
-# supervisor — routes and nothing else. One tool, forced via tool_choice.
-SUPERVISOR_TOOLS = [handover]

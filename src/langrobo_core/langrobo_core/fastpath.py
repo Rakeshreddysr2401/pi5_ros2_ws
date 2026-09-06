@@ -1,7 +1,7 @@
 """Deterministic movement fast-path — spoken command to wheels with NO LLM.
 
 Movement is the robot's top-priority function (New_Requirement.md): a
-round-trip through supervisor + navigate on the 12B model costs seconds even
+round-trip through chat + navigate on the 12B model costs seconds even
 with hot KV slots. This lane recognises exact movement phrasings with strict
 regexes and executes the SAME tools the navigate agent would call, in
 milliseconds. Anything the matcher is not certain about returns None and
@@ -122,6 +122,61 @@ _LIST = re.compile(
     r"(?:list|show|tell me|what are)\s+(?:the\s+|your\s+|all\s+)?"
     r"(?:saved\s+)?(?:locations|places|spots)(?:\s+you\s+know)?|"
     r"where can you go")
+
+
+# ── Vision entry shortcut ────────────────────────────────────────────────────
+# NOT a tool lane — this one changes where the GRAPH starts, and it is the only
+# thing in this file that does.
+#
+# "what do you see?" costs THREE LLM calls on the normal path: chat decides to
+# hand over, local_agent decides to call look(), then local_agent answers with
+# the image. Measured at ~60s end to end on the 12B.
+#
+# All three calls exist to reach a conclusion we can reach here for free: a
+# question about what the robot can see needs the camera frame and the
+# multimodal agent. So agent_node grabs the frame itself, staples it to the
+# turn exactly the way look() would, and enters at local_agent — which then
+# answers in ONE call, from an image already in the conversation.
+#
+# The image lands in the shared history, so "did he wear spectacles?" still
+# works as a follow-up; local_agent is sticky, so that follow-up also skips
+# routing. Same guarantee as match(): if this is not CERTAINLY a question
+# about the current view, it returns False and the full graph runs.
+_VISION_Q = re.compile(
+    r"(?:what|who)(?:'?s| is| are| can you| do you| did you)?\s+"
+    r"(?:you\s+)?(?:see|seeing|looking at|in front of you|around you|there|"
+    r"in the room|in this room)\b.*"
+    r"|(?:what|who)(?:'?s| is)\s+(?:in front of|behind|next to|near)\s+you\b.*"
+    # _normalize strips a leading "can you "/"do you ", so the pattern has to
+    # match what is LEFT: "can you see anything" arrives here as "see anything".
+    r"|(?:(?:can|do)\s+you\s+)?see\s+(?:anything|anyone|someone|somebody|"
+    r"something|what'?s (?:there|here|around))\b.*"
+    r"|(?:is|are)\s+(?:there\s+)?(?:anyone|anybody|someone|somebody|any people)"
+    r"\s*(?:here|there|in the room|around|in front of you)?\s*\??"
+    r"|describe\s+(?:what\s+you\s+(?:see|can see)|the\s+(?:room|scene|view))\b.*"
+    r"|(?:take a look|have a look)\s*(?:at\s+(?:this|that))?"
+    r"|what\s+does\s+it\s+look\s+like\b.*"
+)
+
+# Phrases the pattern above would otherwise swallow. "look around" is a SCAN
+# (drive a full circle); "look left" aims the head. Both are movement, and
+# movement must not be answered with a photo.
+_NOT_VISION = re.compile(r"look\s+(?:around|left|right|up|down|behind|back)\b")
+
+
+def is_vision_question(text: str) -> bool:
+    """True only when the utterance is CERTAINLY about the robot's current view.
+
+    Used by agent_node to enter the graph at local_agent with the camera frame
+    already attached. Anything uncertain returns False and takes the normal
+    route — the shortcut never guesses, exactly like match().
+    """
+    t = _normalize(text)
+    if not t or len(t) > 60:
+        return False
+    if _NOT_VISION.search(t) or _SCAN.fullmatch(t) or _LOOK.fullmatch(t):
+        return False
+    return bool(_VISION_Q.fullmatch(t))
 
 
 def match(text: str, known_locations: set | None = None) -> FastIntent | None:

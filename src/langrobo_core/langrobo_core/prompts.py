@@ -10,8 +10,6 @@ Rules that keep these prompts fast (ARCHITECTURE.md, KV-cache discipline):
     re-prefills ~2k tokens (~20s on the 12B Mac Mini) every turn.
   - Editing a prompt here invalidates that agent's llama.cpp slot once
     (the next turn re-prefills, then it's warm again) — that's fine.
-  - The supervisor prompt deliberately has NO persona: it never emits
-    user-facing text, and extra prefill there is pure routing latency.
 """
 
 # ── Shared identity ──────────────────────────────────────────────────────────
@@ -98,23 +96,6 @@ def render_tools(tools) -> str:
         return "== TOOLS ==\n  (none available right now)\n"
     return "== TOOLS ==\n" + "\n".join(lines) + "\n"
 
-# ── Supervisor (pure router — grammar-forced handover, never speaks) ─────────
-
-SUPERVISOR_PROMPT_TEMPLATE = """\
-You are a routing supervisor for a home robot. Your ONLY job is to decide which \
-agent should handle the user's request and call handover() immediately. \
-You NEVER respond to the user with text.
-
-Available agents:
-{agent_list}
-
-Rules:
-1. Always call handover() — never write a text response.
-2. Pass a short reason (e.g. "user wants to order food", "user asking about delivery").
-3. When unsure between chat and another agent, prefer the more specific agent.
-4. When in doubt or the request is ambiguous, route to "chat".
-"""
-
 # ── Chat (default responder) ─────────────────────────────────────────────────
 
 CHAT_PROMPT = PERSONA + """\
@@ -186,9 +167,10 @@ Right now you handle visual queries — you can see camera images directly.
    call handover("navigate", reason="go near <exact object description>").
    Put EVERY visual detail in the reason: navigate cannot see images, so your
    reason text is the only visual information it gets.
-8. If the user asks something with NO visual part (general questions, web facts,
-   battery), do NOT try to answer it — call handover("supervisor",
-   reason="changed topic") so it is routed correctly.
+8. If the user asks something with NO visual part (general questions, web
+   facts, battery), do NOT try to answer it — call handover("chat",
+   reason="changed topic"), and say nothing yourself. chat is the default
+   responder and will route onward if it needs to.
 9. NEVER hand over to "local_agent" (yourself) — look (if needed), then answer.
 """
 
@@ -212,10 +194,13 @@ R:<deg> rotate right, S stop immediately (e.g. F:20, L:90).
    several movements ("forward 100 then turn left"), call only the first one
    now. The graph loops back to you after each tool — call the next one then.
    Never put two move_robot() calls in the same response.
-3. After ALL movements are complete, reply with a short confirmation and call
-   handover("supervisor") with chain=False in the same response to end the turn.
+3. After ALL movements are complete, reply with a short confirmation and NO
+   tool call. A reply with no tool call IS the end of the turn — you do not
+   need to hand over to anyone to finish.
 4. Don't narrate a move before making it — move, then confirm in one sentence.
-5. NEVER hand over to "navigate" (yourself) — move, confirm, hand to supervisor.
+5. NEVER hand over to "navigate" (yourself) — move, then confirm and stop.
+   Hand over to "chat" only if the user changed the subject to something that
+   is not about moving.
 6. navigate_to_pose and approach_described_object return IMMEDIATELY while the
    robot keeps driving; a [SYSTEM] message reports arrival later. Relay the
    tool's own message — never claim you have already arrived.

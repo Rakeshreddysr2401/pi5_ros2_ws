@@ -12,13 +12,12 @@ from langrobo_core.tools import (
     CHAT_TOOLS,
     LOCAL_AGENT_TOOLS,
     NAVIGATE_TOOLS,
-    SUPERVISOR_TOOLS,
 )
 
 _bridge._instance = None
 _bridge.init(StubBridge())
 
-EXPECTED_AGENTS = {"supervisor", "chat", "local_agent", "navigate"}
+EXPECTED_AGENTS = {"chat", "local_agent", "navigate"}
 
 
 def test_graph_builds_with_all_agents():
@@ -44,12 +43,11 @@ def test_handover_enum_matches_registry():
     from langrobo_core.tools.handover import handover
     enum = set(handover.args_schema.model_json_schema()
                ["properties"]["next_agent"]["enum"])
-    assert enum == EXPECTED_AGENTS | {"supervisor"}
+    assert enum == EXPECTED_AGENTS
 
 
 def test_tool_sets_bind_and_have_handover():
-    for tools in (CHAT_TOOLS, LOCAL_AGENT_TOOLS, NAVIGATE_TOOLS,
-                  SUPERVISOR_TOOLS):
+    for tools in (CHAT_TOOLS, LOCAL_AGENT_TOOLS, NAVIGATE_TOOLS):
         names = [t.name for t in tools]
         assert "handover" in names
         assert len(names) == len(set(names)), f"duplicate tool in {names}"
@@ -92,7 +90,6 @@ def test_turn_entry_routing():
     def target(incoming):
         return turn_entry_node({"messages": [], "active_agent": incoming}).goto
 
-    assert target("supervisor") == "supervisor"     # [SYSTEM] events
     assert target("chat") == "chat"                 # sticky
     assert target("local_agent") == "local_agent"   # sticky
     assert target("navigate") == "chat"             # navigate is not sticky

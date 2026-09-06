@@ -1,11 +1,10 @@
 """The handover tool — the only way control moves between agents.
 
 `next_agent` is a Literal built from agent_ids.ROUTABLE rather than a
-hand-written list. That matters beyond tidiness: with strict_tool_calls on,
-llama.cpp turns this schema into a decoding grammar, so the enum IS the set of
-routes a small model can physically emit. A hand-maintained copy that fell
-behind the registry meant either a dead route in the grammar or a live agent
-the supervisor could never reach.
+hand-written list. That matters beyond tidiness: llama.cpp turns this schema
+into a decoding grammar, so the enum IS the set of routes a small model can
+physically emit. A hand-maintained copy that fell behind the registry meant
+either a dead route in the grammar or a live agent nothing could reach.
 """
 
 import json

@@ -43,29 +43,35 @@ ASTs — no import, so it runs with no ROS2 installed.
 
 ---
 
-## 2. The four agents
+## 2. The three agents
 
-Three responders and a router. Each responder owns one modality.
+One per modality, and no router above them.
 
 | agent | owns | KV slot | sticky |
 |---|---|---|---|
-| `supervisor` | routing, nothing else. Never emits text. | 0 | — |
-| `chat` | text in, text out. The default responder. | 1 | yes |
-| `local_agent` | images in. The only agent with `look()`. | 2 | yes |
-| `navigate` | motion out. The only agent that moves wheels. | 3 | no |
+| `chat` | text in, text out. The default responder **and the router**. | 0 | yes |
+| `local_agent` | images in. The only agent with `look()`. | 1 | yes |
+| `navigate` | motion out. The only agent that moves wheels. | 2 | no |
+
+There was a fourth — a `supervisor` that did nothing but route. It was removed
+on 2026-09-07 because it had stopped doing that: agent_node enters every user
+turn at `chat` or the sticky agent, so the supervisor only ever saw `[SYSTEM]`
+turns, of which this build produces exactly one kind (navigation arrival),
+which always routes to `chat`. A whole agent, prompt, node and KV slot to make
+a decision with one possible answer.
 
 Everything about an agent is one `AgentSpec` in
 `langrobo_core/registry.py`. Adding one is two edits — a name in
 `agent_ids.py`, a spec in `registry.py` — and the graph topology, the handover
-grammar, the supervisor's routing table, the sticky set, the rendered tool
+grammar, the routing table `chat` renders, the sticky set, the rendered tool
 block and the KV slot all follow. Two import-time assertions fail if the two
 files disagree, or if two agents claim the same slot.
 
 **Why `navigate` is not sticky.** Sticky means the next turn re-enters the
 same agent directly, skipping the routing hop. That is safe for agents that
 answer in plain text and can re-route a topic change themselves. `navigate`
-hands back to the supervisor by design after a move, so the turn after it
-starts at `chat`.
+ends its turn with a plain confirmation and no routing opinion, so the turn
+after it starts at `chat`.
 
 ---
 
@@ -74,19 +80,23 @@ starts at `chat`.
 ```
  mic ──▶ stt_node ──▶ /voice/user_input ──▶ agent_node queue ──▶ worker thread
                                                                       │
-                                            ┌── fast path? ───────────┤
-                                            │   (regex, no LLM)       │
-                                            ▼                         ▼
-                                     tool + spoken ack          LangGraph
+                                     ┌── movement fast path? ─────────┤
+                                     │   (regex, ZERO LLM calls)      │
+                                     ▼                                │
+                              tool + spoken ack                       │
                                                                       │
-                                        turn_entry ──▶ sticky? ──▶ agent
-                                             │  no                    │
-                                             ▼                        │
-                                        supervisor ──handover()───────┘
-                                                                      │
-                                            agent ──▶ its ToolNode ──▶│
-                                                                      ▼
-                             /voice/robot_speech ◀── sentence chunks ◀┘
+                                     ┌── vision question? ────────────┤
+                                     │   (frame attached here)        │
+                                     ▼                                ▼
+                              enter local_agent               turn_entry
+                                     │                                │
+                                     │                     sticky agent, else chat
+                                     └────────────┬─────────────────  ┘
+                                                  ▼
+                                    agent ──▶ its ToolNode ──▶ handover?
+                                                  │                 │
+                                                  ▼                 ▼
+                              /voice/robot_speech ◀── chunks    another agent
                                      │
                                 tts_node ──▶ speaker
 ```
@@ -105,25 +115,53 @@ Two properties make it safe:
   `"come here"` says "Coming to you." immediately, then spends its VLM
   round-trip.
 
+### 3.1b The vision entry shortcut (`fastpath.is_vision_question`)
+
+Not a tool lane — the only thing in the codebase that changes where the graph
+*starts*.
+
+`"what do you see?"` used to cost **three** LLM calls: `chat` decides to hand
+over, `local_agent` decides to call `look()`, `local_agent` answers with the
+image. Measured at ~60s end to end on the 12B.
+
+All three exist to reach a conclusion the matcher reaches for free: a question
+about the current view needs the camera frame and the multimodal agent. So
+agent_node grabs the frame itself, staples it onto the turn exactly the way
+`look()` would, and enters at `local_agent` — which answers in **one** call.
+
+The image lands in the shared history, so `"did he wear spectacles?"` still
+works as a follow-up, and `local_agent` is sticky so that follow-up also skips
+routing. Two guards keep it honest:
+
+- It fires only when a **fresh frame actually exists**. With the camera down
+  the normal path is better, because `look()` reports the outage in words
+  instead of the model guessing at an empty conversation.
+- `look around`, `look left`, `scan the room` are movement and are explicitly
+  excluded — a movement command must never be answered with a photo.
+  `test_vision_and_movement_lanes_never_both_claim_an_utterance` enforces it.
+
 ### 3.2 Entry routing (`graph/turn_entry.py`)
 
-| previous turn left | this turn starts at | LLM calls to first token |
+| the turn | starts at | LLM calls to the answer |
 |---|---|---|
-| `chat` (sticky) | `chat` | 1 |
-| `local_agent` (sticky) | `local_agent` | 1 |
-| `navigate` | `chat` | 1 |
-| a `[SYSTEM]` event | `supervisor` (forced) | 2 |
+| exact movement command | no graph at all | **0** |
+| certain vision question | `local_agent`, frame attached | **1** |
+| follow-up after `chat` (sticky) | `chat` | 1 |
+| follow-up after `local_agent` (sticky) | `local_agent` | 1 |
+| fresh general question | `chat` | 1 |
+| fresh question for another agent | `chat` → handover | 2 |
+| after `navigate` (not sticky) | `chat` | 1 |
+| a `[SYSTEM]` event | `chat` | 1 |
 
-`chat` is the default rather than the supervisor because `chat` carries the
-full routing table itself. A fresh general question therefore costs **one**
-LLM call, not a serial supervisor→agent pair.
+`chat` is the default because it carries the routing table itself, so the
+common case costs **one** LLM call rather than a serial router→agent pair.
 
 ### 3.3 Handover (`tools/handover.py`, `graph/handover_resolver.py`)
 
 The only way control moves between agents. `next_agent` is a `Literal` built
-from `agent_ids.ROUTABLE`, so with `strict_tool_calls` on, llama.cpp compiles
-that enum into the decoding grammar — a small model **physically cannot** emit
-a route to an agent that does not exist.
+from `agent_ids.ROUTABLE`, so llama.cpp compiles that enum into the decoding
+grammar — a small model **physically cannot** emit a route to an agent that
+does not exist.
 
 `chain=False` means "I have answered, end the turn". `chain=True` means "the
 next agent must act on my result" (local_agent identifies an object, navigate
@@ -160,7 +198,7 @@ measured at 18-50s of re-prefill per turn.
 registry.py            AgentSpec.slot          ← declared beside the agent
       │
       ▼
-registry.SLOTS         {supervisor:0, chat:1, local_agent:2, navigate:3}
+registry.SLOTS         {chat: 0, local_agent: 1, navigate: 2}
       │
       ▼
 agent_node.__init__    probes GET /props for the server's real slot count,
@@ -173,7 +211,7 @@ services/llm.configure(agent_overrides={name: {"slot": n}})
 ChatOpenAI(extra_body={"id_slot": n})     ← forwarded verbatim to llama.cpp
 ```
 
-**Start the server with `--parallel 4`.** Fewer slots is not an error; it just
+**Start the server with `--parallel 3`.** Fewer slots is not an error; it just
 costs, and agent_node says so at boot.
 
 This replaced five hand-maintained ROS parameters plus a fold-when-out-of-range
@@ -224,10 +262,9 @@ spoken: a markdown list is read aloud bullet characters and all. That is why
 | `registry.py` | **one `AgentSpec` per agent.** Prompt, tools, KV slot, sticky, keep_images. The file to read first. |
 | `prompts.py` | every system prompt, in one file. Read top to bottom to see everything the robot is told to be. |
 | `fastpath.py` | the deterministic movement lane — regex to wheels, no LLM. |
-| `agents/factory.py` | builds a node from a spec. Every responder is this function. |
-| `agents/supervisor.py` | the only hand-written node — forced `tool_choice`, single-handover normalisation. |
+| `agents/factory.py` | builds a node from a spec. **Every** agent is this function — there are no hand-written nodes. |
 | `graph/build.py` | the StateGraph. Derived entirely from `registry.SPECS`; adding an agent needs no edit here. |
-| `graph/turn_entry.py` | sticky vs supervisor routing, per turn. |
+| `graph/turn_entry.py` | which agent a turn enters: the sticky one, or chat. |
 | `graph/handover_resolver.py` | executes a handover; guards against loops. |
 | `graph/state.py` | `AgentState` — messages, active agent, per-turn counters, sender identity. |
 | `tools/` | `@tool` functions. Per-agent sets in `__init__.py`. Robot I/O via `_bridge.get()`. |

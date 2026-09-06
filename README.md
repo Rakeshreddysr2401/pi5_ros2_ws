@@ -1,16 +1,16 @@
 # LangRobo — Pi5 Robot Brain
 
 The **brain** of a distributed home assistant robot ("Rakhi"). The Pi5 runs all
-reasoning (a LangGraph supervisor + three agents) and bridges motor commands to
+reasoning (a LangGraph state machine over three agents) and bridges motor commands to
 the chassis; the Jetson handles perception.
 
-**Three agents, one KV cache slot each.** `chat` answers, `local_agent` sees,
-`navigate` moves — and a `supervisor` routes between them. Every agent is one
+**Three agents, one KV cache slot each, and no router above them.** `chat`
+answers and routes, `local_agent` sees, `navigate` moves. Every agent is one
 `AgentSpec` in `registry.py`; the graph, the routing grammar and the llama.cpp
 slot map all derive from it.
 
 ```
-Mac Mini  ──────  llama.cpp — Gemma multimodal GGUF, --parallel 4 (one KV slot per agent)
+Mac Mini  ──────  llama.cpp — Gemma multimodal GGUF, --parallel 3 (one KV slot per agent)
 Jetson    ──────  D555 depth cam · cuVSLAM · nvblox · Nav2 · VLM pixel→goal bridge
 Pi 5      ──────  THIS REPO — LangGraph brain + STT/TTS + micro-ROS agent
 ESP32     ──────  4-wheel drive chassis, 50 Hz PID (micro-ROS over WiFi UDP 8888)
@@ -34,7 +34,7 @@ src/
 │       ├── prompts.py   every system prompt, in one file
 │       ├── fastpath.py  spoken movement command → wheels, no LLM
 │       ├── graph/     StateGraph topology, entry routing, handover resolution
-│       ├── agents/    factory (builds every responder from its spec) + supervisor
+│       ├── agents/    factory — every agent is built from its spec, no exceptions
 │       ├── tools/     look() · movement · approach · telegram · web · handover
 │       ├── services/  config · llm(+cloud fallback) · telegram · permissions · health · logging · metrics
 │       ├── utils/     history trimming · message projection · speech streaming · timing
@@ -88,7 +88,7 @@ ros2 launch langrobo_ros brain_launch.py
 
 ```
 
-The llama.cpp server needs **`--parallel 4`** — one KV-cache slot per agent.
+The llama.cpp server needs **`--parallel 3`** — one KV-cache slot per agent.
 With fewer, agents share a slot and evict each other's cached prompt prefix;
 agent_node warns at boot when that happens. See ARCHITECTURE_LLD.md §4.1.
 

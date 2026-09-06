@@ -10,12 +10,16 @@ Adding an agent starts here and continues in registry.py. Nothing else in the
 codebase should hard-code an agent name.
 """
 
-# Routing targets, in the order the supervisor sees them. `supervisor` is not
-# here: it routes, it is not a destination the registry describes.
+# THREE agents, and no router above them. Each owns one modality: text in/out
+# (chat), images in (local_agent), motion out (navigate).
 #
-# THREE responders, on purpose. Each one owns a distinct input modality:
-# text-in/text-out (chat), image-in (local_agent), motion-out (navigate).
-# That is also why each gets its own llama.cpp KV slot — see registry.py.
+# There used to be a fourth, a `supervisor` whose only job was routing. It was
+# removed on 2026-09-07 because it had stopped doing that job: agent_node
+# enters every user turn at chat or the sticky agent, so the supervisor only
+# ever saw [SYSTEM] turns — of which this build produces exactly one kind,
+# navigation arrival, which always routes to chat. A whole agent, prompt and
+# KV slot to make a decision with one possible answer. chat carries the
+# routing table now, which it already did.
 AGENT_IDS: tuple[str, ...] = (
     "chat",
     "local_agent",
@@ -25,4 +29,4 @@ AGENT_IDS: tuple[str, ...] = (
 # Every name Command(goto=...) and handover(next_agent=...) may legally target.
 # A handover to anything else is silently ignored by langgraph (unknown
 # channel) and the turn would end with no reply at all.
-ROUTABLE: tuple[str, ...] = ("supervisor",) + AGENT_IDS
+ROUTABLE: tuple[str, ...] = AGENT_IDS

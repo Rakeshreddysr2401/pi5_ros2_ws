@@ -33,6 +33,7 @@ from langrobo_core.services import telegram as telegram_service
 from langrobo_core.services.logging import new_trace, setup_logging
 from langrobo_core.tools import _bridge as bridge_module
 from langrobo_core import registry
+from langrobo_core import fastpath
 from langrobo_core.graph import build_graph
 from langrobo_core.utils import timing
 from langrobo_core.utils.history import trim_history
@@ -67,9 +68,6 @@ class AgentNode(Node):
         # kitchen" reached the graph as just "go to the kitchen"). 0 disables.
         self.declare_parameter("utterance_merge_window_s", 1.2)
         self.declare_parameter("use_vision",  True)
-        # Force the supervisor's mandatory handover via tool_choice (grammar-constrained
-        # on llama.cpp). Set False if your llama.cpp build lacks --jinja tool support.
-        self.declare_parameter("strict_tool_calls", True)
         # Stream sentence chunks to TTS as the LLM generates (needs a llama.cpp
         # build that streams tool calls). Set False to publish one full reply
         # per turn — the wire protocol (chunks + end marker) stays the same.
@@ -97,7 +95,6 @@ class AgentNode(Node):
         self._merge_window   = float(self.get_parameter("utterance_merge_window_s").value)
         self._use_vision     = self.get_parameter("use_vision").value
         local_agent_model    = self.get_parameter("local_agent_model").value
-        strict_tool_calls    = self.get_parameter("strict_tool_calls").value
         self._stream_speech  = self.get_parameter("stream_speech").value
         self._fast_path      = self.get_parameter("fast_path").value
 
@@ -133,9 +130,6 @@ class AgentNode(Node):
                 self.get_logger().info(f"KV slot map (one per agent): {slots}")
 
         agent_overrides = {name: {"slot": slot} for name, slot in slots.items()}
-        # The supervisor never emits user-facing text (grammar-forced
-        # handover), so streaming would only add overhead.
-        agent_overrides["supervisor"]["streaming"] = False
         # local_agent may run a different GGUF than the text agents.
         if local_agent_model:
             agent_overrides["local_agent"]["model"] = local_agent_model
@@ -172,7 +166,6 @@ class AgentNode(Node):
         self._timing_handler = timing.TimingCallbackHandler()
         llm_module.configure(provider, model, base_url, api_key, max_tokens,
                              agent_overrides,
-                             strict_tools=strict_tool_calls,
                              streaming=self._stream_speech)
         llm_module.configure_fallback(settings.fallback)
         self._telegram = telegram_service.init(settings.telegram)
@@ -188,14 +181,10 @@ class AgentNode(Node):
         self._history_lock = threading.Lock()
         # Background KV-cache warmer (boot + after history trims) — at most one.
         self._warm_thread: threading.Thread | None = None
-        # The supervisor runs ONLY on [SYSTEM] turns (see _process: user turns
-        # enter at chat or a sticky agent), on its own slot with its own
-        # prompt — so it is warmed independently of chat's.
-        self._sup_warm_thread: threading.Thread | None = None
 
         # Sticky routing: the agent left active at the end of the previous turn.
-        # turn_entry re-enters it directly (skipping the supervisor hop) only if
-        # it is STICKY_ELIGIBLE; [SYSTEM] events always force a fresh supervisor route.
+        # turn_entry re-enters it directly only if it is STICKY_ELIGIBLE;
+        # [SYSTEM] events always start fresh at chat.
         self._sticky_agent: str | None = None
         # Last /voice/stt_meta, with the wall clock it arrived — stapled onto the
         # next voice turn's trace. Stale ones are dropped: a Telegram turn (or a
@@ -625,7 +614,7 @@ class AgentNode(Node):
             self._pub_thinking.publish(Bool(data=True))
         try:
             # ── Deterministic movement fast-path (voice + text Telegram) ───
-            # Exact movement commands skip the graph entirely: no supervisor,
+            # Exact movement commands skip the graph entirely: no routing,
             # no LLM, no KV-cache traffic — the intent regex either matches
             # with certainty or falls through to the normal LLM route. The
             # exchange is appended to history as a plain text turn (append-only
@@ -634,7 +623,6 @@ class AgentNode(Node):
             # route the deferred nav-arrival report back to that chat; photo
             # turns always take the graph (the image needs the VLM).
             if self._fast_path and not is_system and not (telegram and telegram.photo):
-                from langrobo_core import fastpath
                 from langchain_core.messages import AIMessage
                 with self._trace_span(
                         f"fastpath:{source}",
@@ -692,13 +680,50 @@ class AgentNode(Node):
                          "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
                     ])
                 self._telegram.send_typing(telegram.chat_id)
+
+            # ── Vision entry shortcut (fastpath.is_vision_question) ─────────
+            # "what do you see?" is three LLM calls on the normal path: chat
+            # hands over, local_agent decides to look(), local_agent answers.
+            # All three exist to reach a conclusion we can reach here for
+            # nothing — so grab the frame, staple it on exactly the way look()
+            # does, and enter at local_agent, which answers in ONE call.
+            #
+            # Only when we actually HAVE a fresh frame: with the camera down
+            # the normal path is better, because look() reports the outage in
+            # words instead of the model guessing at an empty conversation.
+            vision_entry = None
+            if (self._fast_path and not is_system and turn_msg is None
+                    and fastpath.is_vision_question(text)):
+                frame = self._bridge.get_frame(max_age_s=10.0)
+                if frame is not None:
+                    import base64
+                    b64 = base64.b64encode(frame).decode()
+                    turn_msg = HumanMessage(content=[
+                        {"type": "text", "text": turn_text},
+                        {"type": "image_url",
+                         "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                    ])
+                    vision_entry = "local_agent"
+                    metrics.inc("vision_fastpath_turns_total")
+                    self.get_logger().info(
+                        f"Vision entry: {text!r} — frame attached, entering "
+                        f"local_agent directly (skips 2 LLM calls)")
+
             messages = history + [turn_msg or HumanMessage(content=turn_text)]
 
-            # Sticky routing: re-enter the previous agent for a user follow-up;
-            # [SYSTEM] events always get a fresh supervisor route. turn_entry
-            # enforces which agents are actually sticky-eligible and defaults
+            # Sticky routing: re-enter the previous agent for a user follow-up.
+            # turn_entry enforces which agents are sticky-eligible and defaults
             # everything else to chat (the single-call common path).
-            incoming_agent = "supervisor" if is_system else (self._sticky_agent or "chat")
+            #
+            # [SYSTEM] events go to chat too, and do NOT inherit stickiness: a
+            # proactive announcement must not be answered by whichever agent
+            # the user happened to leave active. They used to enter at a
+            # dedicated router, which for the one [SYSTEM] producer this build
+            # has (navigation arrival) meant a whole extra LLM call to reach
+            # the only sensible destination.
+            incoming_agent = (
+                "chat" if is_system
+                else vision_entry or self._sticky_agent or "chat")
 
             self.get_logger().info(
                 f"Invoking graph with input: {text} (entry={incoming_agent}, "
@@ -784,18 +809,13 @@ class AgentNode(Node):
                 # whose context was discarded with this turn.
                 return
 
-            # Remember where the turn ended so the next user follow-up can skip
-            # the supervisor (turn_entry gates which agents are sticky-eligible).
-            sticky = result.get("active_agent") if result else None
-            # A specialist ending its turn with handover("supervisor") leaves
-            # active_agent="supervisor" — persisting THAT as sticky made the
-            # next user turn enter at the supervisor: a routing hop whose
-            # prompt evicts the specialist slot and re-prefills the whole
-            # history (~20-50s measured on the 12B, 2026-07-06). Fresh turns
-            # belong at chat (the one-LLM-call common path; it carries the
-            # full routing table); only [SYSTEM] events force the supervisor,
-            # and agent_node does that explicitly via is_system.
-            self._sticky_agent = None if sticky == "supervisor" else sticky
+            # Remember where the turn ended, so the next user follow-up can
+            # re-enter it directly and skip the routing hop entirely.
+            # turn_entry decides which agents are actually sticky-eligible:
+            # chat and local_agent, both of which can re-route a topic change
+            # themselves. navigate is not, so the turn after a drive starts at
+            # chat.
+            self._sticky_agent = result.get("active_agent") if result else None
 
             # Persist the FULL message list from the graph (including any frames
             # captured via look()), so follow-up turns reason over the same image.
@@ -885,13 +905,6 @@ class AgentNode(Node):
         self._warm_thread = threading.Thread(
             target=self._warm_cache, args=(agent,), daemon=True)
         self._warm_thread.start()
-        # Supervisor's slot is independent of the chat/local_agent warm above
-        # (own slot, own prompt) — runs on every [SYSTEM] turn, so it gets its
-        # own small thread instead of waiting behind (or competing with) it.
-        if not (self._sup_warm_thread and self._sup_warm_thread.is_alive()):
-            self._sup_warm_thread = threading.Thread(
-                target=self._warm_cache, args=("supervisor",), daemon=True)
-            self._sup_warm_thread.start()
 
     def _warm_cache(self, agent: str) -> None:
         """Prefill `agent`'s llama.cpp slot with its current projected prompt.
@@ -919,7 +932,7 @@ class AgentNode(Node):
             llm, msgs = build_llm_call(history + [HumanMessage(content="(warmup)")])
             # Named + tagged so these don't sit in the LangSmith trace list as
             # anonymous root ChatOpenAI runs next to real turns: there are two
-            # per turn (chat + supervisor), they carry the full prompt, and they
+            # per turn, they carry the full prompt, and they
             # answer nothing. Hide them in the UI with -has(tags, "cache_warm").
             llm.bind(max_tokens=1).invoke(msgs, config={
                 "run_name": f"cache_warm:{agent}",

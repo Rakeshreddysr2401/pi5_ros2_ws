@@ -1,9 +1,9 @@
 """One agent node implementation, built from an AgentSpec.
 
-Every responder is the same twenty lines with three words changed — bind the
+Every agent is the same twenty lines with three words changed — bind the
 tools, project the history, invoke, tag the state. They are this factory plus a
-row in registry.py; `supervisor.py` stays hand-written because it is not a
-responder at all (forced tool_choice, single-handover normalisation).
+row in registry.py, with no exceptions: the one hand-written node was the
+router, and it is gone.
 
 Two things happen once at import and never again, both to protect the
 llama.cpp KV cache: `{tools}` is substituted into the prompt, and the dynamic

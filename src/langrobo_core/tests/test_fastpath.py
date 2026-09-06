@@ -2,6 +2,8 @@
 commands and NOTHING ambiguous (false positives here mean the wrong physical
 motion; false negatives just fall back to the LLM)."""
 
+import pytest
+
 from langrobo_core.fastpath import FastIntent, match
 
 KNOWN = {"kitchen", "charging_dock", "dining_area"}
@@ -175,3 +177,68 @@ def test_try_handle_approach_runs_the_vlm_lane(monkeypatch):
     # the fast path — the user hears something immediately.
     assert spoken and "coming to you" in spoken.lower()
     assert "on my way" in spoken.lower()
+
+
+# ── Vision entry shortcut ───────────────────────────────────────────────────
+# Not a tool lane: this one decides where the GRAPH starts. agent_node uses it
+# to attach the camera frame and enter local_agent directly, turning a
+# three-LLM-call turn into one.
+
+@pytest.mark.parametrize("text", [
+    "what do you see",
+    "what do you see?",
+    "what can you see",
+    "what's in front of you",
+    "whats in front of you?",
+    "can you see anything",
+    "do you see anyone",
+    "is anyone in the room",
+    "is there anybody here",
+    "who is in the room",
+    "who's there",
+    "describe what you see",
+    "describe the room",
+    "describe the scene",
+    "take a look",
+    "what does it look like",
+])
+def test_vision_questions_take_the_shortcut(text):
+    from langrobo_core.fastpath import is_vision_question
+    assert is_vision_question(text), text
+
+
+@pytest.mark.parametrize("text", [
+    # Movement, and movement must never be answered with a photo.
+    "look around",
+    "look left",
+    "look behind you",
+    "scan the room",
+    "go to the kitchen",
+    "come here",
+    "find the bottle",
+    "forward 20",
+    "stop",
+    # Not about the current view at all.
+    "what can you do",
+    "what do you think",
+    "what time is it",
+    "tell me a joke",
+    "see you later",
+    "what's the weather",
+])
+def test_non_vision_takes_the_normal_route(text):
+    from langrobo_core.fastpath import is_vision_question
+    assert not is_vision_question(text), text
+
+
+def test_vision_and_movement_lanes_never_both_claim_an_utterance():
+    """A phrase must not be both a FastIntent and a vision entry — the two are
+    checked in different places, so an overlap would be decided by ordering."""
+    from langrobo_core.fastpath import is_vision_question, match
+    known = {"kitchen", "bedroom"}
+    for text in ("look around", "look left", "scan the room", "come here",
+                 "go to the kitchen", "stop", "forward 20", "turn left 90",
+                 "save this location as desk", "what do you see",
+                 "describe the room", "take a look", "is anyone here"):
+        assert not (match(text, known) and is_vision_question(text)), (
+            f"{text!r} is claimed by BOTH the movement lane and vision entry")
