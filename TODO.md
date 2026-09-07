@@ -140,7 +140,8 @@ User-facing impact: proactive announcements (reminders/watch alerts) take
 
 **Update 2026-07-10 (offline investigation from the laptop — robot was down):
 could NOT reproduce with current code.** `scripts/kv_replay_supervisor.py`
-(new) drives the real graph through two consecutive [SYSTEM] reminder turns
+(since deleted — `git show b2bf231^:scripts/kv_replay_supervisor.py`) drove
+the real graph through two consecutive [SYSTEM] reminder turns
 with a production-shaped history and proves BOTH halves behave:
 
 - Client side: consecutive supervisor request bodies are strictly append-only
@@ -167,7 +168,7 @@ and reminders (which produced the [SYSTEM] turns above) are both gone. The
 1. Start llama.cpp with `--parallel 3` and confirm the brain logs
    `KV slot map (one per agent): {'chat': 0, 'local_agent': 1, 'navigate': 2}`.
 2. Drive two goals in a row (`"go to the kitchen"`, wait for arrival, repeat).
-   Each arrival is a [SYSTEM] turn that enters at the supervisor.
+   Each arrival is a [SYSTEM] turn, which now enters at **chat**.
 3. `curl http://singireddys-mac-mini.local:8080/slots` and read
    `n_prompt_tokens_processed` for chat's slot 0. Reuse looks like the tail
    only (tens of tokens); the 07-06 fault looked like ~1791, a full prefill.
@@ -177,12 +178,12 @@ and reminders (which produced the [SYSTEM] turns above) are both gone. The
    chat, which is warm from ordinary use. If chat's slot reuses on a nav
    arrival, the symptom cannot recur in the shape it was found.
 4. If it full-prefills, capture the real request bodies with a logging proxy
-   on `base_url` and diff two consecutive supervisor calls — the first
+   on `base_url` and diff two consecutive [SYSTEM]-turn calls — the first
    differing message is the answer. The 07-10 investigation ruled out
    registry ordering, projection, trim_history, the Gemma template's
    mid-history system-role handling, grammar × cache, and ctx overflow.
 5. If it reuses: it was fixed somewhere in 07-06..today — delete this section.
 
-Worth doing: the supervisor is the one agent that runs on turns the user did
-not initiate, so a full prefill there is latency nobody is waiting through
-and nobody notices.
+Worth doing anyway: a [SYSTEM] turn is one the user did not initiate, so a
+full prefill there is latency nobody waits through and therefore nobody
+notices — which is exactly how it went unmeasured for two months.

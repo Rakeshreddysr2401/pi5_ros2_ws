@@ -80,11 +80,39 @@ def configure(
 
 
 def configure_fallback(fallback: FallbackLLM) -> None:
-    """Install the cloud fallback (from services.config.load_settings())."""
+    """Install the cloud fallback (from services.config.load_settings()).
+
+    The provider's package is BUILT once here, at startup, and the fallback is
+    disarmed if that fails. It has to be checked now rather than on first use,
+    because `safe_invoke` asks for the fallback object BEFORE it tries the
+    primary — so an unimportable provider does not merely break the fallback,
+    it raises on every LLM call the robot ever makes, including the ones where
+    the primary is perfectly healthy.
+
+    That is reachable in normal operation: anthropic/gemini/ollama are optional
+    extras (pyproject.toml), so `pip install -r requirements.txt` on the Pi 5
+    installs none of them. Configuring a fallback you have not installed is a
+    plausible mistake, and rule 4 in CLAUDE.md says it must degrade, not crash.
+    """
     global _fallback
     _fallback = fallback if fallback.configured else None
-    if _fallback:
-        logger.info("LLM fallback armed: %s/%s", _fallback.provider, _fallback.model)
+    if not _fallback:
+        return
+    try:
+        _build({
+            "provider": _fallback.provider, "model": _fallback.model,
+            "base_url": _fallback.base_url, "api_key": _fallback.api_key or "none",
+            "max_tokens": 16, "streaming": False, "slot": None,
+        })
+    except Exception as e:
+        logger.error(
+            "LLM fallback %s/%s is configured but cannot be built (%s) — "
+            "DISARMED. The robot will speak an offline message instead of "
+            "falling back. Install the extra: pip install 'langrobo-core[%s]'",
+            _fallback.provider, _fallback.model, e, _fallback.provider)
+        _fallback = None
+        return
+    logger.info("LLM fallback armed: %s/%s", _fallback.provider, _fallback.model)
 
 
 # ── Primary health tracking (drives safe_invoke's routing) ─────────────────
@@ -180,15 +208,22 @@ def get_fallback_llm():
     """
     if _fallback is None:
         return None
-    return _build({
-        "provider": _fallback.provider,
-        "model": _fallback.model,
-        "base_url": _fallback.base_url,
-        "api_key": _fallback.api_key or "none",
-        "max_tokens": _config.get("max_tokens", 6000),
-        "streaming": _config.get("streaming", False),
-        "slot": None,
-    })
+    try:
+        return _build({
+            "provider": _fallback.provider,
+            "model": _fallback.model,
+            "base_url": _fallback.base_url,
+            "api_key": _fallback.api_key or "none",
+            "max_tokens": _config.get("max_tokens", 6000),
+            "streaming": _config.get("streaming", False),
+            "slot": None,
+        })
+    except Exception as e:
+        # configure_fallback already proved this builds, so reaching here means
+        # something changed under us. Never let it kill a turn whose primary is
+        # fine — safe_invoke asks for this before it tries the primary.
+        logger.error("Fallback LLM could not be built (%s) — continuing without it", e)
+        return None
 
 
 def _build(cfg: dict):

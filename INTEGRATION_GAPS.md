@@ -8,8 +8,12 @@ The two repos are individually sound. Almost every real fault lives at the
 subscribes to, a frame name that means something different on each machine, a
 calibration constant copied from a firmware that has since been rewritten.
 That is the class of bug this file exists to track, because neither repo's own
-tests can see it — `langrobo_core`'s 281 tests all pass against a StubBridge
-that answers every topic perfectly.
+tests can see it — `langrobo_core`'s tests all pass against a StubBridge that
+answers every topic perfectly.
+
+**Paths in this file span two repos.** `src/…`, `scripts/…` and the docs are
+in `pi5_ros2_ws`; anything under `phase1/`, `phase3/`, `phase4/`, `logs/` or
+`./rover` is in `-langrobo_perception-` on the Jetson side.
 
 **How to read the status column:** ✅ fixed in this commit · ⬜ open, needs
 hardware or a decision.
@@ -238,7 +242,7 @@ already publishes per-sentence `rtf`.
 ## What I could not check
 
 Neither repo was run. This was read on a laptop with no robot, no Jetson and
-no Pi 5 attached; `langrobo_core`'s 281 tests pass here, and nothing else in
+no Pi 5 attached; `langrobo_core`'s 182 tests pass here, and nothing else in
 either repo is executable off-hardware. Everything above is either read from
 the code, or quoted from measurements the repos already record. The turn-rate
 default in §3 is the one change that alters physical behaviour on evidence

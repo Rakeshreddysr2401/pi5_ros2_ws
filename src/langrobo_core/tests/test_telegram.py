@@ -2,7 +2,6 @@
 degradation without a token, tool-level permission enforcement, and the send
 path over a mocked httpx transport. No network, no robot."""
 
-import time
 
 import pytest
 

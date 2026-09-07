@@ -13,7 +13,6 @@ Python, no rclpy — so it runs and tests on any machine.
 """
 
 import json
-import logging
 import os
 import time
 import threading

@@ -28,7 +28,7 @@ get().publish_twist(twist)      # ROS2Bridge on the robot, StubBridge on a lapto
 ```
 
 `agent_node` calls `_bridge.init(ROS2Bridge(...))` at startup; `graph_studio.py`
-and the tests call `_bridge.init(StubBridge())`. That single seam is why 179
+and the tests call `_bridge.init(StubBridge())`. That single seam is why 182
 tests run with no robot, no LLM server and no API keys.
 
 The cost of the rule: `StubBridge` must implement every public method

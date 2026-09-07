@@ -58,7 +58,7 @@ laptop's key + sshd were set up 2026-07-07 so the Pi5→laptop hop works.
 ./scripts/fleet.sh down       # full shutdown incl. Pi5 services (sudo)
 ./scripts/fleet.sh status
 
-# Test (pure core — no robot, no LLM server, no keys; 179 tests, ~1.5s)
+# Test (pure core — no robot, no LLM server, no keys; 182 tests, ~1.5s)
 cd src/langrobo_core && python3 -m pytest tests/ -q
 
 # Build + deploy after code changes

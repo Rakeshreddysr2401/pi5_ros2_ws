@@ -13,7 +13,7 @@ import json
 import os
 import threading
 import time
-from typing import Callable, Optional
+from typing import Callable
 
 import math
 

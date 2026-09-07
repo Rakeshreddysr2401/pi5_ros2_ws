@@ -1,7 +1,6 @@
 """Service-layer tests: config validation, LLM fallback policy
 round-trip (skipped if qdrant/fastembed unavailable), metrics rendering."""
 
-import time
 
 import pytest
 
@@ -111,3 +110,69 @@ def test_metrics_prometheus_render():
 
 
 
+
+
+# ── Fallback that cannot be built must DISARM, not crash every turn ─────────
+# anthropic/gemini/ollama are optional extras (pyproject.toml), so a stock
+# `pip install -r requirements.txt` on the Pi 5 installs none of them.
+# safe_invoke asks for the fallback object BEFORE it tries the primary, so an
+# unimportable provider does not merely break the fallback — it raises on every
+# LLM call the robot makes, including ones where the primary is healthy.
+
+def _block_import(monkeypatch, prefix):
+    import builtins
+    real = builtins.__import__
+
+    def fake(name, *a, **k):
+        if name.startswith(prefix):
+            raise ImportError(f"No module named {prefix!r}")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", fake)
+
+
+def test_unbuildable_fallback_is_disarmed_at_startup(monkeypatch):
+    from langrobo_core.services import llm as llm_service
+    from langrobo_core.services.config import FallbackLLM
+
+    _block_import(monkeypatch, "langchain_anthropic")
+    llm_service.configure("llamacpp", "m", "http://127.0.0.1:9/v1", "none", 100)
+    llm_service.configure_fallback(FallbackLLM(
+        provider="anthropic", model="claude", api_key="k",
+        base_url="", configured=True))
+
+    assert llm_service.get_fallback_llm() is None
+    assert llm_service.status()["fallback"] is None
+
+
+def test_a_healthy_turn_survives_an_unbuildable_fallback(monkeypatch):
+    """The regression this guards: the primary was fine and the turn still died."""
+    import logging
+    from langrobo_core.services import llm as llm_service
+    from langrobo_core.services.config import FallbackLLM
+    from langrobo_core.utils.message_utils import safe_invoke
+
+    _block_import(monkeypatch, "langchain_anthropic")
+    llm_service.configure("llamacpp", "m", "http://127.0.0.1:9/v1", "none", 100)
+    llm_service.configure_fallback(FallbackLLM(
+        provider="anthropic", model="claude", api_key="k",
+        base_url="", configured=True))
+
+    class _Primary:
+        def invoke(self, messages):
+            return "answered"
+
+    assert safe_invoke(_Primary(), [], logging.getLogger(), agent="chat") == "answered"
+
+
+def test_a_buildable_fallback_still_arms():
+    """The guard must not disarm a fallback that is genuinely fine."""
+    from langrobo_core.services import llm as llm_service
+    from langrobo_core.services.config import FallbackLLM
+
+    llm_service.configure("llamacpp", "m", "http://127.0.0.1:9/v1", "none", 100)
+    llm_service.configure_fallback(FallbackLLM(
+        provider="openai", model="gpt-4o-mini", api_key="k",
+        base_url="", configured=True))
+    assert llm_service.get_fallback_llm() is not None
+    assert llm_service.status()["fallback"] == "openai/gpt-4o-mini"
