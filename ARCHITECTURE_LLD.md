@@ -28,7 +28,7 @@ get().publish_twist(twist)      # ROS2Bridge on the robot, StubBridge on a lapto
 ```
 
 `agent_node` calls `_bridge.init(ROS2Bridge(...))` at startup; `graph_studio.py`
-and the tests call `_bridge.init(StubBridge())`. That single seam is why 136
+and the tests call `_bridge.init(StubBridge())`. That single seam is why 179
 tests run with no robot, no LLM server and no API keys.
 
 The cost of the rule: `StubBridge` must implement every public method
@@ -64,8 +64,12 @@ Everything about an agent is one `AgentSpec` in
 `langrobo_core/registry.py`. Adding one is two edits — a name in
 `agent_ids.py`, a spec in `registry.py` — and the graph topology, the handover
 grammar, the routing table `chat` renders, the sticky set, the rendered tool
-block and the KV slot all follow. Two import-time assertions fail if the two
-files disagree, or if two agents claim the same slot.
+block and the KV slot all follow. Three import-time assertions fail the moment
+they drift: the registry and `agent_ids` must name the same agents, every
+routable target must have a spec, and no two agents may claim the same KV slot.
+
+All three are built by the same twenty-line factory (`agents/factory.py`).
+There are no hand-written agent nodes — the one that existed was the router.
 
 **Why `navigate` is not sticky.** Sticky means the next turn re-enters the
 same agent directly, skipping the routing hop. That is safe for agents that
@@ -78,27 +82,29 @@ after it starts at `chat`.
 ## 3. A turn, end to end
 
 ```
- mic ──▶ stt_node ──▶ /voice/user_input ──▶ agent_node queue ──▶ worker thread
-                                                                      │
-                                     ┌── movement fast path? ─────────┤
-                                     │   (regex, ZERO LLM calls)      │
-                                     ▼                                │
-                              tool + spoken ack                       │
-                                                                      │
-                                     ┌── vision question? ────────────┤
-                                     │   (frame attached here)        │
-                                     ▼                                ▼
-                              enter local_agent               turn_entry
-                                     │                                │
-                                     │                     sticky agent, else chat
-                                     └────────────┬─────────────────  ┘
-                                                  ▼
-                                    agent ──▶ its ToolNode ──▶ handover?
-                                                  │                 │
-                                                  ▼                 ▼
-                              /voice/robot_speech ◀── chunks    another agent
-                                     │
-                                tts_node ──▶ speaker
+ mic ─▶ stt_node ─▶ /voice/user_input ─▶ agent_node queue ─▶ worker thread
+                                                                    │
+      ┌──────────────────────┬────────────────────────┬─────────────┘
+      │ movement command?    │ vision question?       │ everything else
+      ▼                      ▼                        ▼
+ fastpath.match()      is_vision_question()      turn_entry
+ regex → the tool      attach camera frame       sticky agent, else chat
+ ZERO LLM calls        enter local_agent
+      │                      │                        │
+      ▼                      └───────────┬────────────┘
+ spoken ack, done                        ▼
+ (turn ends here)                      agent
+                                         │
+                                         ▼
+                                    its ToolNode
+                                         │
+                          handover? ─────┴───── no tool calls left
+                              │                       │
+                              ▼                       ▼
+                        another agent                END
+                                                      │
+        speaker ◀─ tts_node ◀─ /voice/robot_speech ◀── sentence chunks
+                                   (streamed while the LLM is still writing)
 ```
 
 ### 3.1 The fast path (`langrobo_core/fastpath.py`)
@@ -115,7 +121,7 @@ Two properties make it safe:
   `"come here"` says "Coming to you." immediately, then spends its VLM
   round-trip.
 
-### 3.1b The vision entry shortcut (`fastpath.is_vision_question`)
+### 3.2 The vision entry shortcut (`fastpath.is_vision_question`)
 
 Not a tool lane — the only thing in the codebase that changes where the graph
 *starts*.
@@ -140,7 +146,7 @@ routing. Two guards keep it honest:
   excluded — a movement command must never be answered with a photo.
   `test_vision_and_movement_lanes_never_both_claim_an_utterance` enforces it.
 
-### 3.2 Entry routing (`graph/turn_entry.py`)
+### 3.3 Entry routing (`graph/turn_entry.py`)
 
 | the turn | starts at | LLM calls to the answer |
 |---|---|---|
@@ -156,20 +162,31 @@ routing. Two guards keep it honest:
 `chat` is the default because it carries the routing table itself, so the
 common case costs **one** LLM call rather than a serial router→agent pair.
 
-### 3.3 Handover (`tools/handover.py`, `graph/handover_resolver.py`)
+### 3.4 Handover (`tools/handover.py`, `graph/handover_resolver.py`)
 
 The only way control moves between agents. `next_agent` is a `Literal` built
 from `agent_ids.ROUTABLE`, so llama.cpp compiles that enum into the decoding
 grammar — a small model **physically cannot** emit a route to an agent that
 does not exist.
 
-`chain=False` means "I have answered, end the turn". `chain=True` means "the
-next agent must act on my result" (local_agent identifies an object, navigate
-drives to it). The reason string is the only information that crosses: other
-agents cannot see images, so `local_agent`'s reason text is all `navigate`
-gets.
+The resolver's actual rule is two lines:
 
-### 3.4 Loop guard (`graph/build.py`)
+```
+agent was silent (no AI text) OR chain=True  →  Command(goto=next) [immediate]
+agent spoke AND chain=False                  →  dict update + END  [sticky]
+```
+
+So `chain=True` means "the next agent must act on my result" — local_agent
+identifies an object, navigate drives to it. `chain=False` after the agent has
+already spoken ends the turn. And an agent that hands over **without saying
+anything** always chains, whatever it passed: a silent turn would otherwise
+leave the user with no reply at all.
+
+The reason string is the only information that crosses. Other agents cannot
+see images, so `local_agent`'s reason text is all `navigate` ever gets about
+what it saw.
+
+### 3.5 Loop guard (`graph/build.py`)
 
 Each agent node may execute at most 8 times per turn. Past the cap it
 short-circuits with a plain reply instead of calling the LLM again. This
@@ -181,15 +198,19 @@ it.
 
 ## 4. Latency: where the seconds go, and what buys them back
 
-On the 12B model over the Mac Mini's llama.cpp, prompt *prefill* dominates. The
-whole design below is about not paying for it twice.
+On the 12B model over the Mac Mini's llama.cpp, prompt *prefill* dominates.
+There are two ways to win: don't make the call at all (§3.1 and §3.2 — a
+movement command costs zero LLM calls, a vision question costs one instead of
+three), or make sure the call you do make starts from a warm cache. This
+section is the second half.
 
 ### 4.1 One KV slot per agent — the parallel cache
 
-Each agent's system prompt is a different ~1-2k token prefix. A server started
-with `--parallel N` keeps N independent KV caches. Pin each agent to its own
-(`id_slot`) and its prefix stays resident, so a turn prefills only the new
-tokens.
+Each agent's system prompt is a different prefix — measured at ~941 (chat),
+~881 (local_agent) and ~952 (navigate) tokens, plus the shared history. A
+server started with `--parallel N` keeps N independent KV caches. Pin each
+agent to its own (`id_slot`) and its prefix stays resident, so a turn prefills
+only the new tokens.
 
 Share a slot between two agents and **each call evicts the other's prefix** —
 measured at 18-50s of re-prefill per turn.
@@ -261,13 +282,14 @@ spoken: a markdown list is read aloud bullet characters and all. That is why
 | `agent_ids.py` | the agent names. Zero imports, so `tools/handover.py` can use it without a cycle. |
 | `registry.py` | **one `AgentSpec` per agent.** Prompt, tools, KV slot, sticky, keep_images. The file to read first. |
 | `prompts.py` | every system prompt, in one file. Read top to bottom to see everything the robot is told to be. |
-| `fastpath.py` | the deterministic movement lane — regex to wheels, no LLM. |
+| `fastpath.py` | two shortcuts: the movement lane (regex → wheels, zero LLM calls) and `is_vision_question`, which decides where the graph starts. |
 | `agents/factory.py` | builds a node from a spec. **Every** agent is this function — there are no hand-written nodes. |
 | `graph/build.py` | the StateGraph. Derived entirely from `registry.SPECS`; adding an agent needs no edit here. |
 | `graph/turn_entry.py` | which agent a turn enters: the sticky one, or chat. |
 | `graph/handover_resolver.py` | executes a handover; guards against loops. |
 | `graph/state.py` | `AgentState` — messages, active agent, per-turn counters, sender identity. |
 | `tools/` | `@tool` functions. Per-agent sets in `__init__.py`. Robot I/O via `_bridge.get()`. |
+| `tools/_bridge.py` | the seam itself — a module-level singleton, set once at startup. Twenty lines, and the reason the whole brain runs off-robot. |
 | `services/` | state that outlives a turn: `config`, `llm`, `telegram`, `permissions`, `health`, `logging`, `metrics`. |
 | `utils/` | pure helpers: history trimming, message projection, sentence streaming, timing. |
 | `bridges/stub.py` | the no-ROS bridge. Must mirror `ROS2Bridge`'s public surface. |
@@ -312,6 +334,9 @@ thread you are on:
 Blocking I/O started from the spin thread always gets its own short-lived
 thread. A tool that blocks is fine — it is on the worker.
 
+The vision entry adds no thread: it reads the frame cache (a lock and a
+`bytes` reference) on the worker, then invokes the graph as usual.
+
 The queue between them has three lanes: user input (newest wins — a stale
 question should not be answered), system events (FIFO, never dropped), and
 Telegram (FIFO, drained after voice, because the person in the room comes
@@ -346,8 +371,16 @@ in prompts. A prompt can be talked around; `if cap not in role` cannot.
 ## 8. Extending it
 
 **Add an agent:** a name in `agent_ids.py`, an `AgentSpec` in `registry.py`
-with the next free `slot`, a prompt in `prompts.py`. Raise `--parallel`.
-Nothing else — `test_smoke.py` fails if you miss a piece.
+with the next free `slot`, a prompt in `prompts.py`, and a line in chat's
+prompt telling it when to route there. Raise `--parallel` to match. Nothing
+else — `test_smoke.py` and `test_prompt_contract.py` fail if you miss a piece,
+including the chat-prompt line.
+
+**If you add more than a couple of agents, put the router back.** `chat`
+carrying the routing table is right at three agents and wrong at eight: its
+prompt grows with every one, and it pays that growth on every single turn
+including the ones that need no routing at all. The supervisor pattern exists
+for exactly that trade — it is in git (see below).
 
 **Add a tool:** an `@tool` function in `tools/`, added to one set in
 `tools/__init__.py`. It appears in that agent's rendered prompt automatically.
@@ -357,9 +390,19 @@ Keep the sets short: every tool costs prompt tokens on every turn, forever.
 `bridge.enqueue_system_turn()`. Do not invent a second mechanism — the nav
 arrival report is the worked example.
 
-**Restore something that was removed:** it is in git, on
-`dev-1.2.8-refactor-test`. The Swiggy/Instamart/Dineout/tracker agents, the
-knowledge agent and its document ingest, the briefing agent, reminders,
-household lists, music, home-watch, and the Qdrant episodic memory all lived
-there. `INTEGRATION_GAPS.md` §1 carries the `/vision/detections_3d` contract to
-restore `approach_object` and the world model against.
+**Restore something that was removed.** Nothing was deleted that is not in
+git:
+
+| what | where |
+|---|---|
+| the `supervisor` agent — prompt, node, forced `tool_choice`, `strict_tool_calls` | `git show bb8cc03^:src/langrobo_core/langrobo_core/agents/supervisor.py` |
+| Swiggy / Instamart / Dineout / tracker agents and the MCP provider registry | branch `dev-1.2.8-refactor-test` |
+| the knowledge agent + Telegram document ingest | `dev-1.2.8-refactor-test` |
+| the briefing agent, reminders, household lists, music, home-watch | `dev-1.2.8-refactor-test` |
+| Qdrant episodic memory + nightly consolidation | `dev-1.2.8-refactor-test` |
+| `approach_object` and the persistent world model | `dev-1.2.8-refactor-test` |
+| `studio_voice_node` (dev-mode voice against `langgraph dev`) | `dev-1.2.8-refactor-test` |
+
+`INTEGRATION_GAPS.md` §1 carries the `/vision/detections_3d` JSON contract to
+restore `approach_object` and the world model against — that topic having no
+publisher is why they went, not anything wrong with the code.
