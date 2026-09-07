@@ -1,12 +1,21 @@
 # LangRobo Pi5 brain — project guide
 
-Home robot "Rakhi": Pi5 (this repo) runs the LangGraph brain; Jetson Orin runs
-perception in rover mode (cuVSLAM/nvblox/Nav2/YOLO, `orin-nav-stack`); voice (STT/TTS, separate `speech_vision` repo) is a DIFFERENT role, OFF on the Orin in rover mode; a second, independent CPU-only voice pair (`pi5_voice_pkg`, this repo) now runs
-locally on the Pi5 instead, so voice works concurrently with driving — see PI5_VOICE.md; Mac Mini serves the LLM
-(llama.cpp, `singireddys-mac-mini.local:8080`); ESP32 drives the wheels.
+Home robot "Rakhi". Four machines:
+
+- **Pi 5** (this repo) — the LangGraph brain, **three agents**, plus a CPU-only
+  STT/TTS pair (`pi5_voice_pkg`) so voice runs concurrently with driving.
+- **Jetson Orin** — perception: cuVSLAM + nvblox + Nav2, and the phase-4 VLM
+  bridge (`image_bridge` publishes the colour frame as JPEG for `look()`;
+  `pixel_to_goal` turns a VLM-picked pixel into an odom-frame Nav2 goal).
+  Repo: `-langrobo_perception-`, brought up with `./rover`.
+- **Mac Mini** — the LLM and VLM (llama.cpp, `singireddys-mac-mini.local:8080`).
+  **Must run with `--jinja --parallel 3`** — one KV slot per agent.
+- **ESP32** — 50 Hz closed-loop PID on four wheels, micro-ROS over WiFi.
+
 Read HOW_IT_WORKS.md for the end-to-end walkthrough (boot, turn lifecycle,
-failure paths); ARCHITECTURE_LLD.md before touching graph/agent code;
-OPERATIONS.md for run/deploy/troubleshooting; PI5_VOICE.md for the local STT/TTS pair; the Jetson `orin-nav-stack/SYSTEM_INTEGRATION.md` for the cross-machine ROS contract.
+failure paths); **ARCHITECTURE_LLD.md before touching graph/agent code**;
+INTEGRATION_GAPS.md before building anything that touches the world;
+OPERATIONS.md for run/deploy/troubleshooting; PI5_VOICE.md for the STT/TTS pair.
 
 ## Fleet start — one command brings up the whole robot
 
@@ -17,15 +26,16 @@ OPERATIONS.md for run/deploy/troubleshooting; PI5_VOICE.md for the local STT/TTS
   robot by real mic/speaker while the body is simulated) and the `isaac_ros` perception
   container (nvblox/SLAM consuming the sim's /cam_1 depth/RGB). Also switches the brain's
   `robot_body` to `sim` (cmd_vel becomes TwistStamped on /mecanum_drive_controller/cmd_vel).
-- **`rover`** — the REAL body: starts this Pi5's micro-ROS agent (ESP32 wheels) and the
-  Jetson's `isaac_ros` perception role in REAL mode (D555 + cuVSLAM localization +
-  nvblox + Nav2, plus the phase-4 VLM bridge). Voice is OFF on the
-  Jetson in this mode (perception owns the 8GB Orin; cuVSLAM RUNS on Orin (standalone pyCuVSLAM cu12 wheel) —
-  cuVSLAM is the localizer): talk to the robot via Telegram, start voice manually
-  with `fleet_role.sh voice start` (won't fit alongside perception — see PI5_VOICE.md),
-  or `ros2 launch pi5_voice_pkg voice_launch.py` here for CPU-only voice that runs
-  fine alongside it. Switches `robot_body` back to `rover` (plain Twist
-  on /cmd_vel).
+- **`rover`** — the REAL body: starts this Pi5's micro-ROS agent (ESP32 wheels) and
+  the Jetson's perception role (D555 + cuVSLAM + nvblox + Nav2 + the phase-4 VLM
+  bridge). Perception owns the 8 GB Orin, so Jetson voice is OFF in this mode —
+  run `ros2 launch pi5_voice_pkg voice_launch.py` here instead (CPU-only, fits
+  alongside), or use Telegram. Switches `robot_body` back to `rover` (plain
+  Twist on `/cmd_vel`).
+
+  **`./scripts/fleet.sh rover` does not start the Jetson's VLM bridge.** Without
+  `./rover vlm` over there, `look()` has no camera frame and
+  `approach_described_object` has no depth grounding.
 - **`stop`** parks the robot: stops the body (sim + Jetson roles) but keeps `langrobo-brain`
   + `langrobo-discovery` up, so chat/Telegram keeps listening. No password.
 - **`down`** full shutdown: everything `stop` does PLUS this Pi5's system units (brain,
@@ -48,7 +58,7 @@ laptop's key + sshd were set up 2026-07-07 so the Pi5→laptop hop works.
 ./scripts/fleet.sh down       # full shutdown incl. Pi5 services (sudo)
 ./scripts/fleet.sh status
 
-# Test (pure core — no robot, no LLM, no keys; ~4s)
+# Test (pure core — no robot, no LLM server, no keys; 179 tests, ~1.5s)
 cd src/langrobo_core && python3 -m pytest tests/ -q
 
 # Build + deploy after code changes
@@ -61,7 +71,7 @@ ros2 launch langrobo_ros brain_launch.py            # foreground all-in-one
 
 # Observe
 journalctl -u langrobo-brain -f -o cat              # JSON logs (jq-able, trace_id per turn)
-curl -s localhost:8090/status | jq                  # LLM/memory/turn state
+curl -s localhost:8090/status | jq                  # LLM health, telegram, turn state
 python3 scripts/latency_replay.py "utterance"       # per-stage latency waterfall
 
 # Python deps (system python, PEP 668)
@@ -89,9 +99,10 @@ pip3 install --break-system-packages -r requirements.txt
      tool-driven on purpose (there is no episodic-memory tool in this cut —
      see ARCHITECTURE_LLD.md §8 if you add one back).
 4. **No `speak()` tool** — an agent's reply text IS the speech (streamed
-   sentence-by-sentence, utterance closed with `<|eou|>`). The wire protocol
-   with the Jetson (`/voice/*`, `<|eou|>`) must match tts_node — change both
-   repos together or neither.
+   sentence-by-sentence, utterance closed with `<|eou|>`). The two halves of
+   that protocol are `langrobo_core/utils/speech_stream.py` and
+   `pi5_voice_pkg/tts_node.py` — different packages, same repo. Change both or
+   neither.
 5. **Missing keys degrade, never crash**: no Tavily key → no web search and
    chat says it can't look that up; no Telegram allowlist → the channel stays
    off; Mac Mini down → cloud fallback or a spoken offline message. Keep this
@@ -111,14 +122,22 @@ that moves wheels).
   an agent lives anywhere else**: routing copy, prompt, tool set, KV slot,
   sticky/keep_images. Adding an agent = a name in `agent_ids.py` + a spec here;
   the graph, handover grammar, the routing table chat renders, sticky set and slot
-  map all derive from it. Two import-time asserts catch drift.
+  map all derive from it. THREE import-time asserts catch drift: registry vs
+  agent_ids, every routable target has a spec, and no duplicate KV slot.
 - `langrobo_core/prompts.py` — EVERY system prompt. `SPEECH_STYLE` (inside
   PERSONA) is the ONE spoken-output contract — don't restate it per agent.
   Tool lists are NOT hand-written: prompts carry a `{tools}` placeholder that
   `render_tools()` fills from the bound tool set.
-- `langrobo_core/fastpath.py` — deterministic movement lane: exact spoken
-  commands ("stop", "forward 30", "go to the kitchen") execute tools directly
-  with ZERO LLM calls. Anything ambiguous falls through to the graph.
+- `langrobo_core/fastpath.py` — **two shortcuts, both of which must never
+  guess**:
+  - `match()` — the movement lane. Exact spoken commands ("stop", "forward 30",
+    "go to the kitchen") execute tools directly with ZERO LLM calls.
+  - `is_vision_question()` — decides where the GRAPH starts. A certain vision
+    question ("what do you see?") gets the camera frame attached by agent_node
+    and enters `local_agent` directly: one LLM call instead of three.
+  Anything either one is unsure about falls through to the normal graph. A test
+  asserts the two lanes never both claim the same utterance — a movement
+  command must never be answered with a photo.
 - `langrobo_core/graph/` — topology (build.py, derived entirely from
   registry.py), entry routing (sticky agent, else chat), handover + loop guards
 - `langrobo_core/agents/` — `factory.py` builds EVERY agent from its spec;
@@ -193,15 +212,24 @@ change both repos together or neither.
 - Pi5↔Jetson clocks drift ~1.5s (chrony peering pending) — latency_replay
   flags negative deltas.
 
-## Simulation laptop (rover_sim) — the stand-in robot body
+## Simulation laptop (rover_sim) — the second body
 
-Until the real rover exists, a Gazebo sim on the laptop (`rakhi24`, wifi DHCP)
-plays the robot body: mecanum X3 rover with lidar + RealSense-D555-style RGBD
-camera in a furnished house world, with Nav2 + slam_toolbox on top.
-Repo: https://github.com/Rakeshreddysr2401/rover_sim (laptop path
-`/workspace/ros2_ws/src/rover_sim`). Its `docs/INTERFACE.md` is the
-topic/action/frame contract this brain should code against — same contract the
-real rover must satisfy later.
+**The real rover exists and drives** (see Gotchas). The sim is no longer a
+stand-in — it is a second body you can develop against without a robot in the
+room, selected with `./scripts/fleet.sh sim`.
+
+A Gazebo sim on the laptop (`rakhi24`, wifi DHCP): mecanum X3 rover with lidar
++ RealSense-D555-style RGBD camera in a furnished house world, Nav2 +
+slam_toolbox on top. Repo:
+https://github.com/Rakeshreddysr2401/rover_sim (laptop path
+`/workspace/ros2_ws/src/rover_sim`); `docs/INTERFACE.md` is its contract.
+
+**The two bodies do NOT agree, and that is the trap.** The sim has a `map`
+frame (slam_toolbox) and takes TwistStamped; the real rover has **no map frame
+at all** and takes plain Twist. Code that works in sim can therefore fail
+silently on the rover — which is exactly how `navigate_to_pose` was broken for
+months. `ROS2Bridge` handles the cmd_vel shape (`robot_body`), and `NAV_FRAME`
+handles the frame; anything else that differs is on you to check.
 
 - The sim joins our discovery server: on the laptop,
   `export ROS_DISCOVERY_SERVER=rakhi24-desktop.local:11811` before launching.

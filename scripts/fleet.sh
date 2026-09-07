@@ -5,8 +5,8 @@
 #   ./scripts/fleet.sh sim      # SIMULATION body: laptop Gazebo sim (+ nav2)
 #                               #   + Jetson voice AND isaac_ros (perception)
 #   ./scripts/fleet.sh rover    # REAL body: Pi5 micro-ROS agent (ESP32 wheels)
-#                               #   + Jetson isaac_ros perception (D555 + RTAB-Map
-#                               #   + nvblox + Nav2 + YOLO detections, mode real).
+#                               #   + Jetson isaac_ros perception (D555 + cuVSLAM
+#                               #   + nvblox + Nav2 + the VLM bridge).
 #                               #   NO voice on the Jetson: perception owns the
 #                               #   8GB Orin (DEPTH_CAMERA.md decision) — talk to
 #                               #   the robot via Telegram.
@@ -97,7 +97,8 @@ rover)
     echo "pi5:    microros=$(systemctl is-active langrobo-microros)"
     if reachable "$JETSON_HOST"; then
         # Perception owns the Jetson in rover mode (voice off — Telegram):
-        # D555 + RTAB-Map + nvblox + Nav2 + detections_3d, real profile.
+        # D555 + cuVSLAM + nvblox + Nav2, real profile. The VLM bridge
+        # (./rover vlm) is separate — start it there for look()/depth.
         echo "jetson: starting perception (real)..."
         $SSH $JETSON "$ROLE_SCRIPT perception start real" || echo "jetson: perception start FAILED"
     else
