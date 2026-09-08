@@ -128,16 +128,15 @@ that moves wheels).
   PERSONA) is the ONE spoken-output contract — don't restate it per agent.
   Tool lists are NOT hand-written: prompts carry a `{tools}` placeholder that
   `render_tools()` fills from the bound tool set.
-- `langrobo_core/fastpath.py` — **two shortcuts, both of which must never
-  guess**:
-  - `match()` — the movement lane. Exact spoken commands ("stop", "forward 30",
-    "go to the kitchen") execute tools directly with ZERO LLM calls.
-  - `is_vision_question()` — decides where the GRAPH starts. A certain vision
-    question ("what do you see?") gets the camera frame attached by agent_node
-    and enters `local_agent` directly: one LLM call instead of three.
-  Anything either one is unsure about falls through to the normal graph. A test
-  asserts the two lanes never both claim the same utterance — a movement
-  command must never be answered with a photo.
+- **There is no fast path.** `fastpath.py` (two regex lanes in front of the
+  graph) was removed 2026-09-08 — its intent vocabulary was a hand-kept lookup
+  table that had already drifted (it gated objects on a COCO class list while
+  dispatching to a VLM tool). Every turn now goes through the graph, so
+  movement costs 2 LLM calls and a vision question 3. **Do not reintroduce
+  regex intent matching** — the replacement is a MiniLM entry classifier,
+  designed in INTENT_ROUTING_PLAN.md and not yet built.
+  Stopping never depended on it: `agent_node._on_user_input` halts the wheels
+  on every utterance before the graph runs.
 - `langrobo_core/graph/` — topology (build.py, derived entirely from
   registry.py), entry routing (sticky agent, else chat), handover + loop guards
 - `langrobo_core/agents/` — `factory.py` builds EVERY agent from its spec;

@@ -122,6 +122,15 @@ _SPECS: tuple[AgentSpec, ...] = (
         prompt=prompts.NAVIGATE_PROMPT,
         tools=NAVIGATE_TOOLS,
         slot=2,
+        # Sticky since 2026-09-08. It was not, because navigate ends its turn
+        # with a plain confirmation and no routing opinion. But with the regex
+        # fast path gone every movement command costs chat + handover +
+        # navigate, and a multi-step drive ("forward a metre" ... "now turn
+        # left") paid that twice. Sticky makes the follow-up ONE call.
+        # The trade: a non-movement follow-up now lands here first and must be
+        # handed back to chat — NAVIGATE_PROMPT rule 6 is what makes that
+        # reliable, so the two must stay in step.
+        sticky=True,
     ),
 )
 

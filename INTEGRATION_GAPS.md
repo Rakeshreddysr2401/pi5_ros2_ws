@@ -75,11 +75,13 @@ cannot move. Now gated behind `PAN_TILT_ENABLED` (`LANGROBO_PAN_TILT=1` once
 servos are wired), and `point_camera` says it has no mount instead of
 reporting a successful move.
 
-While gating it I found the two sides disagree on which way is left:
-`point_camera`'s docstring says `-90 = full left`, `fastpath.py` mapped
-"look left" to `+60`. One of them is wrong whatever way the servo ends up
-mounted. `fastpath` now follows the docstring — **confirm the physical
-direction once, then make both agree.**
+While gating it I found the two sides disagreed on which way is left:
+`point_camera`'s docstring says `-90 = full left`, the old `fastpath.py`
+mapped "look left" to `+60`. That second caller is gone (the fast path was
+removed — see ARCHITECTURE_LLD.md §3.1), and with it the disagreement: the
+docstring is now the only statement of the convention, and the navigate agent
+reads it. Still **confirm the physical direction once a mount exists** — the
+docstring is currently unverified against hardware, not merely uncontested.
 
 ---
 

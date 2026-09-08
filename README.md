@@ -32,7 +32,6 @@ src/
 │   └── langrobo_core/
 │       ├── registry.py  ONE AgentSpec per agent — start here
 │       ├── prompts.py   every system prompt, in one file
-│       ├── fastpath.py  spoken movement command → wheels, no LLM
 │       ├── graph/     StateGraph topology, entry routing, handover resolution
 │       ├── agents/    factory — every agent is built from its spec, no exceptions
 │       ├── tools/     look() · movement · approach · telegram · web · handover

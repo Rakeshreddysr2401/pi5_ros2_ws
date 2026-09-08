@@ -83,8 +83,9 @@ abandons its in-flight turn for the new one.)
 2. **Worker thread** (`_process`): stamps a fresh `trace_id`, bumps
    `turns_total`, publishes `/brain/thinking=true`.
 3. Builds the message list: persisted history + your new HumanMessage. Entry
-   point is the **sticky agent** from last turn if it was chat/local_agent,
-   else chat — so the common case costs ONE LLM call, no router hop.
+   point is the **sticky agent** from last turn if there was one (all three
+   agents are sticky), else chat — so a follow-up costs ONE LLM call, no
+   router hop.
 4. **Graph runs** (`langrobo_core/graph/build.py`):
    - `turn_entry` resets the per-turn loop counters, routes to chat.
    - `chat` builds its prompt: static system prompt + HOUSEHOLD MEMORY block
@@ -192,26 +193,29 @@ messages always go through.
 
 ## 5. A movement turn ("move forward ten centimeters")
 
-**This one never reaches an LLM.** `fastpath.match()` recognises it exactly
-(`FastIntent(kind='move', args={'dir': 'F', 'cm': 10.0})`) and calls the same
-tool the navigate agent would — so command-to-motion is milliseconds, not the
-two LLM round-trips the graph would cost.
+Every movement turn goes through the graph. There is no regex lane any more
+(see ARCHITECTURE_LLD.md §3.1 for why it was removed), so this costs **two**
+LLM calls: `chat` reads the utterance and hands over, `navigate` picks the tool.
 
-1. `fastpath.try_handle("move forward ten centimeters")` matches, speaks
-   "Moving forward 10 centimeters." **first**, then calls `move_robot("F:10")`.
-2. The tool computes the drive duration from calibrated wheel speed
+1. `chat` calls `handover("navigate", reason="movement request")`; the
+   resolver routes straight through because chat said nothing itself.
+2. `navigate` emits `move_robot("F:10")` and a one-sentence confirmation.
+3. The tool computes the drive duration from calibrated wheel speed
    (`_PHYSICAL_VEL_MS`, see INTEGRATION_GAPS.md §3), then publishes Twist on
    `/cmd_vel` at 20Hz (feeding the ESP32's 500ms watchdog) until time is up,
    then publishes a zero Twist (stop).
-3. micro-ROS agent forwards every Twist over UDP to the ESP32, whose 50 Hz PID
+4. micro-ROS agent forwards every Twist over UDP to the ESP32, whose 50 Hz PID
    tracks the commanded m/s against its encoders → wheels.
-4. Interruptible at every tick: a new utterance or the spoken **"stop"**
+5. Interruptible at every tick: a new utterance or the spoken **"stop"**
    keyword (stt_node publishes `/voice/tts_stop`) sets the motion-interrupt
    event → the loop bails and stops the wheels immediately.
 
-Anything the matcher is not *certain* about returns `None` and takes the full
-graph instead: chat → `handover("navigate")` → the navigate agent. That is the
-whole safety property — the fast lane never guesses.
+**"Stop" does not wait for the LLM.** `agent_node._on_user_input` calls
+`cancel_navigation()` + `request_motion_stop()` on *every* incoming utterance
+before the graph is touched at all, and `_drive_for_duration` polls that flag
+every 5 ms and publishes a zero Twist on abort. So the wheels halt in
+milliseconds no matter what the model later decides the sentence meant — the
+two LLM calls buy the *spoken confirmation*, not the brake.
 
 `approach_described_object("the red bottle")` is the other shape: the VLM
 looks at the current frame and points at a pixel, the Jetson's `pixel_to_goal`

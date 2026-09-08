@@ -32,7 +32,6 @@ from langrobo_core.services import telegram as telegram_service
 from langrobo_core.services.logging import new_trace, setup_logging
 from langrobo_core.tools import _bridge as bridge_module
 from langrobo_core import registry
-from langrobo_core import fastpath
 from langrobo_core.graph import build_graph
 from langrobo_core.utils import timing
 from langrobo_core.utils.history import trim_history
@@ -71,11 +70,6 @@ class AgentNode(Node):
         # build that streams tool calls). Set False to publish one full reply
         # per turn — the wire protocol (chunks + end marker) stays the same.
         self.declare_parameter("stream_speech", True)
-        # Deterministic movement fast-path: exact spoken movement commands
-        # ("stop", "go to the kitchen", "come here", "forward 30") execute
-        # directly — zero LLM calls, sub-100ms command-to-motion. Anything the
-        # matcher isn't sure about falls through to the normal graph.
-        self.declare_parameter("fast_path", True)
         # Per-agent llama.cpp KV slots are NOT parameters — they are declared
         # next to their agent in registry.py (registry.SLOTS). See that file's
         # header for why one slot per agent is the whole latency design.
@@ -95,7 +89,6 @@ class AgentNode(Node):
         self._use_vision     = self.get_parameter("use_vision").value
         local_agent_model    = self.get_parameter("local_agent_model").value
         self._stream_speech  = self.get_parameter("stream_speech").value
-        self._fast_path      = self.get_parameter("fast_path").value
 
         api_key = os.environ.get(api_key_env, "") if api_key_env else "none"
         # The launch file's Mac-Mini base_url default must not poison a cloud
@@ -612,47 +605,6 @@ class AgentNode(Node):
             # meaningless (and misleading) for a phone conversation.
             self._pub_thinking.publish(Bool(data=True))
         try:
-            # ── Deterministic movement fast-path (voice + text Telegram) ───
-            # Exact movement commands skip the graph entirely: no routing,
-            # no LLM, no KV-cache traffic — the intent regex either matches
-            # with certainty or falls through to the normal LLM route. The
-            # exchange is appended to history as a plain text turn (append-only
-            # → cache-safe) so the LLM keeps full context of what the robot did.
-            # Telegram turns reply to the sender's chat (never the speaker) and
-            # route the deferred nav-arrival report back to that chat; photo
-            # turns always take the graph (the image needs the VLM).
-            if self._fast_path and not is_system and not (telegram and telegram.photo):
-                from langchain_core.messages import AIMessage
-                with self._trace_span(
-                        f"fastpath:{source}",
-                        inputs={"text": text},
-                        metadata=self._trace_metadata(trace, source, "fastpath", telegram),
-                        tags=[f"channel:{source}", "entry:fastpath"]) as span:
-                    if telegram:
-                        spoken = fastpath.try_handle(
-                            text,
-                            say_fn=lambda m: self._telegram.send_message(telegram.chat_id, m),
-                            state={"channel": "telegram", "sender_name": telegram.name,
-                                   "messages": []})
-                    else:
-                        spoken = fastpath.try_handle(text)
-                    if span is not None:
-                        # handled=false means the regex declined and the turn
-                        # falls through to the graph — the LLM trace follows.
-                        span.end(outputs={"handled": spoken is not None,
-                                          "spoken": spoken})
-                if spoken is not None:
-                    timing.emit("fastpath_done", trace=trace)
-                    self.get_logger().info(f"Fast-path handled: {text!r} → {spoken[:120]}")
-                    metrics.inc("fastpath_turns_total")
-                    with self._history_lock:
-                        self._history.append(HumanMessage(
-                            content=self._frame_telegram_turn(telegram, text)
-                            if telegram else text))
-                        self._history.append(AIMessage(content=spoken))
-                    self._start_cache_warm()
-                    return
-
             with self._history_lock:
                 history = list(self._history)
 
@@ -680,34 +632,6 @@ class AgentNode(Node):
                     ])
                 self._telegram.send_typing(telegram.chat_id)
 
-            # ── Vision entry shortcut (fastpath.is_vision_question) ─────────
-            # "what do you see?" is three LLM calls on the normal path: chat
-            # hands over, local_agent decides to look(), local_agent answers.
-            # All three exist to reach a conclusion we can reach here for
-            # nothing — so grab the frame, staple it on exactly the way look()
-            # does, and enter at local_agent, which answers in ONE call.
-            #
-            # Only when we actually HAVE a fresh frame: with the camera down
-            # the normal path is better, because look() reports the outage in
-            # words instead of the model guessing at an empty conversation.
-            vision_entry = None
-            if (self._fast_path and not is_system and turn_msg is None
-                    and fastpath.is_vision_question(text)):
-                frame = self._bridge.get_frame(max_age_s=10.0)
-                if frame is not None:
-                    import base64
-                    b64 = base64.b64encode(frame).decode()
-                    turn_msg = HumanMessage(content=[
-                        {"type": "text", "text": turn_text},
-                        {"type": "image_url",
-                         "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                    ])
-                    vision_entry = "local_agent"
-                    metrics.inc("vision_fastpath_turns_total")
-                    self.get_logger().info(
-                        f"Vision entry: {text!r} — frame attached, entering "
-                        f"local_agent directly (skips 2 LLM calls)")
-
             messages = history + [turn_msg or HumanMessage(content=turn_text)]
 
             # Sticky routing: re-enter the previous agent for a user follow-up.
@@ -720,9 +644,7 @@ class AgentNode(Node):
             # dedicated router, which for the one [SYSTEM] producer this build
             # has (navigation arrival) meant a whole extra LLM call to reach
             # the only sensible destination.
-            incoming_agent = (
-                "chat" if is_system
-                else vision_entry or self._sticky_agent or "chat")
+            incoming_agent = "chat" if is_system else (self._sticky_agent or "chat")
 
             self.get_logger().info(
                 f"Invoking graph with input: {text} (entry={incoming_agent}, "
@@ -897,10 +819,13 @@ class AgentNode(Node):
         one is already running)."""
         if self._warm_thread and self._warm_thread.is_alive():
             return
-        # Warm the agent the next turn will actually enter: the sticky
-        # specialist if one is active (local_agent keeps its image prefix on
-        # its own slot), otherwise chat — the default responder.
-        agent = self._sticky_agent if self._sticky_agent == "local_agent" else "chat"
+        # Warm the agent the next turn will actually enter — the same rule
+        # turn_entry applies, read from the registry rather than restated
+        # here (it named local_agent explicitly and so went stale the moment
+        # navigate became sticky). Each sticky agent has its own KV slot, so
+        # warming the right one is what keeps that prefix resident.
+        agent = (self._sticky_agent
+                 if self._sticky_agent in registry.STICKY_ELIGIBLE else "chat")
         self._warm_thread = threading.Thread(
             target=self._warm_cache, args=(agent,), daemon=True)
         self._warm_thread.start()

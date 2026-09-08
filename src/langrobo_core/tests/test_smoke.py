@@ -92,8 +92,9 @@ def test_turn_entry_routing():
 
     assert target("chat") == "chat"                 # sticky
     assert target("local_agent") == "local_agent"   # sticky
-    assert target("navigate") == "chat"             # navigate is not sticky
+    assert target("navigate") == "navigate"         # sticky since 2026-09-08
     assert target(None) == "chat"                   # fresh turn default
+    assert target("supervisor") == "chat"           # unknown/removed → default
 
 
 def test_loop_guard_ends_turn_without_llm():

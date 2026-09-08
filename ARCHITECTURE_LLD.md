@@ -51,7 +51,7 @@ One per modality, and no router above them.
 |---|---|---|---|
 | `chat` | text in, text out. The default responder **and the router**. | 0 | yes |
 | `local_agent` | images in. The only agent with `look()`. | 1 | yes |
-| `navigate` | motion out. The only agent that moves wheels. | 2 | no |
+| `navigate` | motion out. The only agent that moves wheels. | 2 | yes |
 
 There was a fourth — a `supervisor` that did nothing but route. It was removed
 on 2026-09-07 because it had stopped doing that: agent_node enters every user
@@ -71,11 +71,23 @@ routable target must have a spec, and no two agents may claim the same KV slot.
 All three are built by the same twenty-line factory (`agents/factory.py`).
 There are no hand-written agent nodes — the one that existed was the router.
 
-**Why `navigate` is not sticky.** Sticky means the next turn re-enters the
-same agent directly, skipping the routing hop. That is safe for agents that
-answer in plain text and can re-route a topic change themselves. `navigate`
-ends its turn with a plain confirmation and no routing opinion, so the turn
-after it starts at `chat`.
+**All three are sticky.** Sticky means the next turn re-enters the same agent
+directly, skipping the routing hop — worth one whole LLM round-trip per
+follow-up turn. The requirement is that the agent can re-route a topic change
+itself, because a sticky agent is handed follow-ups that may not be its own.
+
+`navigate` was NOT sticky until 2026-09-08, on the grounds that it ends its
+turn with a plain confirmation and no routing opinion. Removing the regex fast
+path (§3.1) changed the arithmetic: every movement command now costs
+`chat` + handover + `navigate`, and a multi-step drive ("forward a metre" …
+"now turn left") paid that on every step. Sticky makes each follow-up one call.
+
+The trade is real and is paid in `NAVIGATE_PROMPT` rule 6: a non-movement
+follow-up ("what's the weather") now lands on `navigate` first and must be
+handed back to `chat`, costing 2 calls where it used to cost 1. Movement
+follow-ups are the common case after a move, so this is the right side of the
+trade — but the rule is what makes it safe, so registry and prompt must stay
+in step.
 
 ---
 
@@ -84,80 +96,79 @@ after it starts at `chat`.
 ```
  mic ─▶ stt_node ─▶ /voice/user_input ─▶ agent_node queue ─▶ worker thread
                                                                     │
-      ┌──────────────────────┬────────────────────────┬─────────────┘
-      │ movement command?    │ vision question?       │ everything else
-      ▼                      ▼                        ▼
- fastpath.match()      is_vision_question()      turn_entry
- regex → the tool      attach camera frame       sticky agent, else chat
- ZERO LLM calls        enter local_agent
-      │                      │                        │
-      ▼                      └───────────┬────────────┘
- spoken ack, done                        ▼
- (turn ends here)                      agent
-                                         │
-                                         ▼
-                                    its ToolNode
-                                         │
-                          handover? ─────┴───── no tool calls left
-                              │                       │
-                              ▼                       ▼
-                        another agent                END
-                                                      │
-        speaker ◀─ tts_node ◀─ /voice/robot_speech ◀── sentence chunks
+                                                                    ▼
+                                                              turn_entry
+                                                       sticky agent, else chat
+                                                                    │
+                                                                    ▼
+                                                                  agent
+                                                                    │
+                                                                    ▼
+                                                              its ToolNode
+                                                                    │
+                                                 handover? ─────────┴──── no tool calls left
+                                                     │                        │
+                                                     ▼                        ▼
+                                               another agent                 END
+                                                                              │
+        speaker ◀─ tts_node ◀─ /voice/robot_speech ◀──────────────── sentence chunks
                                    (streamed while the LLM is still writing)
 ```
 
-### 3.1 The fast path (`langrobo_core/fastpath.py`)
+### 3.1 The fast path — REMOVED (was `langrobo_core/fastpath.py`)
 
-Exact spoken movement commands never reach an LLM. `"stop"`, `"forward 30"`,
-`"turn left 90"`, `"go to the kitchen"` match strict regexes and call the same
-tool the `navigate` agent would, in milliseconds instead of seconds.
+Until 2026-09-08 two regex lanes sat in front of the graph. `match()` mapped
+exact spoken movement commands (`"stop"`, `"forward 30"`, `"go to the
+kitchen"`) straight onto the tool the `navigate` agent would have called, at
+zero LLM calls; `is_vision_question()` recognised `"what do you see?"` and
+entered `local_agent` with the camera frame already attached, at one call
+instead of three.
 
-Two properties make it safe:
+**Both are gone.** They were fast and they never guessed — `match()` returned
+`None` whenever it was not certain — but the intent vocabulary was a hand-kept
+lookup table (48 COCO class strings, an alias map, a spelled-out-number map,
+eleven regexes) and it had already drifted from the robot underneath it:
 
-- `match()` is a pure function of `(text, known_locations)` and returns `None`
-  whenever it is not *certain*. Anything ambiguous falls through to the graph.
-- It speaks its acknowledgement **before** the slow action, not after — so
-  `"come here"` says "Coming to you." immediately, then spends its VLM
-  round-trip.
+- `_canon_object()` gated every object on `COCO_CLASSES`, but the only tool it
+  dispatched to is `approach_described_object`, which is a **VLM** path. The
+  YOLO tool that needed a COCO vocabulary was deleted when we found nothing
+  publishes `/vision/detections_3d` (§1 of INTEGRATION_GAPS.md). So
+  `"go to the red bottle"` failed the gate and fell through to the LLM for no
+  reason other than a stale word list.
+- `_execute()`'s `look` intent called `point_camera` directly, bypassing the
+  `PAN_TILT_ENABLED` gate that keeps that tool out of every agent's tool set
+  on a robot with no servo mount.
 
-### 3.2 The vision entry shortcut (`fastpath.is_vision_question`)
+The replacement is the model itself: `chat` reads the utterance and hands over.
+That is slower — see the table in §3.3 — and a MiniLM entry classifier is
+planned to win the latency back without a lookup table. The design is written
+up in **INTENT_ROUTING_PLAN.md**; it is not built.
 
-Not a tool lane — the only thing in the codebase that changes where the graph
-*starts*.
+What did *not* depend on the fast path, and still holds:
 
-`"what do you see?"` used to cost **three** LLM calls: `chat` decides to hand
-over, `local_agent` decides to call `look()`, `local_agent` answers with the
-image. Measured at ~60s end to end on the 12B.
-
-All three exist to reach a conclusion the matcher reaches for free: a question
-about the current view needs the camera frame and the multimodal agent. So
-agent_node grabs the frame itself, staples it onto the turn exactly the way
-`look()` would, and enters at `local_agent` — which answers in **one** call.
-
-The image lands in the shared history, so `"did he wear spectacles?"` still
-works as a follow-up, and `local_agent` is sticky so that follow-up also skips
-routing. Two guards keep it honest:
-
-- It fires only when a **fresh frame actually exists**. With the camera down
-  the normal path is better, because `look()` reports the outage in words
-  instead of the model guessing at an empty conversation.
-- `look around`, `look left`, `scan the room` are movement and are explicitly
-  excluded — a movement command must never be answered with a photo.
-  `test_vision_and_movement_lanes_never_both_claim_an_utterance` enforces it.
+**Stopping is not an LLM decision.** `agent_node._on_user_input` calls
+`cancel_navigation()` + `request_motion_stop()` on every incoming utterance
+before the graph runs, and `movement._drive_for_duration` polls that flag every
+5 ms and publishes a zero Twist on abort. The wheels halt in milliseconds
+whatever the model later concludes. The removed `"stop"` lane spoke the
+*acknowledgement* early; it was never the brake.
 
 ### 3.3 Entry routing (`graph/turn_entry.py`)
 
 | the turn | starts at | LLM calls to the answer |
 |---|---|---|
-| exact movement command | no graph at all | **0** |
-| certain vision question | `local_agent`, frame attached | **1** |
 | follow-up after `chat` (sticky) | `chat` | 1 |
 | follow-up after `local_agent` (sticky) | `local_agent` | 1 |
 | fresh general question | `chat` | 1 |
-| fresh question for another agent | `chat` → handover | 2 |
-| after `navigate` (not sticky) | `chat` | 1 |
 | a `[SYSTEM]` event | `chat` | 1 |
+| movement command | `chat` → handover → `navigate` | **2** |
+| vision question | `chat` → handover → `local_agent` → `look()` → answer | **3** |
+| movement follow-up after `navigate` (sticky) | `navigate` | 1 |
+| non-movement follow-up after `navigate` | `navigate` → handover → `chat` | 2 |
+
+The last three rows are the cost of removing the fast path (§3.1). The
+three-call vision path was measured at ~60 s end to end on the 12B. Recovering
+them is what INTENT_ROUTING_PLAN.md is for.
 
 `chat` is the default because it carries the routing table itself, so the
 common case costs **one** LLM call rather than a serial router→agent pair.
@@ -282,7 +293,6 @@ spoken: a markdown list is read aloud bullet characters and all. That is why
 | `agent_ids.py` | the agent names. Zero imports, so `tools/handover.py` can use it without a cycle. |
 | `registry.py` | **one `AgentSpec` per agent.** Prompt, tools, KV slot, sticky, keep_images. The file to read first. |
 | `prompts.py` | every system prompt, in one file. Read top to bottom to see everything the robot is told to be. |
-| `fastpath.py` | two shortcuts: the movement lane (regex → wheels, zero LLM calls) and `is_vision_question`, which decides where the graph starts. |
 | `agents/factory.py` | builds a node from a spec. **Every** agent is this function — there are no hand-written nodes. |
 | `graph/build.py` | the StateGraph. Derived entirely from `registry.SPECS`; adding an agent needs no edit here. |
 | `graph/turn_entry.py` | which agent a turn enters: the sticky one, or chat. |

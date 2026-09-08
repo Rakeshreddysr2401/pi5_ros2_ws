@@ -97,7 +97,7 @@ What a turn looks like in the UI:
 
 | | |
 |---|---|
-| Run name | `turn:voice` / `turn:telegram` / `turn:system`, or `fastpath:voice` for the zero-LLM movement lane |
+| Run name | `turn:voice` / `turn:telegram` / `turn:system` |
 | Tags | `channel:<voice\|telegram\|system>`, `entry:<agent>` |
 | Tree | `turn_entry → <agent> → <agent>_tools → …`, one child chat-model run per LLM call, tool runs underneath |
 | Metadata | `trace_id`, `channel`, `entry_agent`, `sticky_agent`, `llm_provider`, `llm_base_url`, `llm_primary_available`, `llm_fallback`; Telegram turns add `sender_name`/`sender_role`/`telegram_photo`; voice turns add `stt_*` (provider, `fell_back`, latency, RTF) |

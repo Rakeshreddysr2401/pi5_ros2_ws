@@ -6,17 +6,17 @@ Resets per-turn loop-guard counters, then routes:
   - to `chat` otherwise — chat is the default responder AND carries the full
     routing table, so the common case costs ONE LLM call.
 
-There is no separate router node to enter. agent_node also enters `local_agent`
-directly, with the camera frame already attached, for an utterance
-fastpath.is_vision_question() is certain about.
+There is no separate router node to enter, and no shortcut around this one:
+the regex fast path that used to pre-empt it was removed (ARCHITECTURE_LLD.md
+§3.1), so every user turn arrives here.
 
 Which agents are sticky is declared per-agent in registry.py (`sticky=True`),
-not listed here. They are the agents that answer in plain text (no mandatory
-mandatory hand-back) AND can re-route a topic change themselves: `chat`
-carries the full routing table, and `local_agent` owns visual follow-ups
-("what colour is it?") with an out-of-scope catch-all. `navigate` ends its
-turn with a plain confirmation and no routing opinion, so it is intentionally
-NOT sticky — the turn after it starts at chat.
+not listed here. The requirement is that the agent can re-route a topic change
+itself, because a sticky agent sees follow-ups that may not be its own:
+`chat` carries the full routing table, `local_agent` owns visual follow-ups
+("what colour is it?") with an out-of-scope catch-all, and `navigate` owns
+multi-step drives ("now turn left") with the same catch-all in rule 6 of its
+prompt. All three are sticky as of 2026-09-08.
 
 agent_node passes the previous turn's active_agent in as the incoming state.
 """

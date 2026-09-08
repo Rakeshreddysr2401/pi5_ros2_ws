@@ -1,5 +1,4 @@
-"""Service-layer tests: config validation, LLM fallback policy
-round-trip (skipped if qdrant/fastembed unavailable), metrics rendering."""
+"""Service-layer tests: config validation, LLM fallback policy, metrics rendering."""
 
 
 import pytest
