@@ -42,7 +42,8 @@ class ROS2Bridge:
     # cuVSLAM map-relocalisation.
     NAV_FRAME = os.environ.get("LANGROBO_NAV_FRAME", "odom")
 
-    def __init__(self, node, known_locations: dict = None, robot_body: str = "rover"):
+    def __init__(self, node, known_locations: dict = None, robot_body: str = "rover",
+                 use_vision: bool = True):
         self._node = node
         # Which body this brain drives cmd_vel to: the real ESP32 rover (plain
         # Twist on /cmd_vel) or the Gazebo sim rover_sim (TwistStamped on
@@ -187,6 +188,35 @@ class ROS2Bridge:
         # Music playback state from the Jetson music_node (JSON)
         node.create_subscription(String, "/audio/music_state", self._on_music_state, 10)
 
+        # ── Vision inputs ─────────────────────────────────────────────────
+        # These belong HERE because this class owns the caches they fill:
+        # get_frame()/frame_age(), the target result, and the world model. They
+        # used to be wired in agent_node instead, which meant any OTHER owner of
+        # a bridge got the caches with nothing to fill them -- graph_studio.py
+        # (LangGraph Studio) had a fully wired bridge whose look() returned "no
+        # camera frame is available" forever and whose approach_object could
+        # never see a thing, on a robot whose camera was publishing fine.
+        # /vision/pixel_result is already subscribed above for the same reason;
+        # the image half was simply left outside. Same failure family as the
+        # NAV_FRAME note at the top of this class: wiring that lives in more
+        # than one place drifts, and the half nobody is looking at goes quiet.
+        if use_vision:
+            from sensor_msgs.msg import CompressedImage
+            # Consume the JPEG camera_node already publishes -- no raw-frame
+            # transport over the Jetson<->Pi5 link and no re-encode on the Pi5.
+            # The compressed bytes ARE what look() needs (base64 image/jpeg).
+            node.create_subscription(CompressedImage, "/camera/color/image_raw/compressed",
+                                     self._on_compressed_image, 1)
+            node.create_subscription(String, "/vision/target_result",
+                                     self.on_target_result, 10)
+
+        # 3D object detections from the Jetson depth pipeline (D555 + Isaac ROS
+        # -- see JETSON_D555_SETUP.md). Subscribed unconditionally: without the
+        # publisher the cache just stays empty and approach_object reports
+        # honestly that it cannot see anything.
+        node.create_subscription(String, "/vision/detections_3d",
+                                 self.on_detections, 10)
+
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 1 — Topics
     # ══════════════════════════════════════════════════════════════════════════
@@ -197,6 +227,18 @@ class ROS2Bridge:
         with self._frame_lock:
             self._latest_frame = frame_bytes
             self._frame_stamp = time.monotonic()
+
+    def _on_compressed_image(self, msg) -> None:
+        """CompressedImage -> the byte cache. msg.data is already JPEG.
+
+        Kept separate from on_image() because that one takes raw bytes and is
+        part of the bridge protocol StubBridge also implements; this is the ROS
+        message adapter and only makes sense with rclpy present.
+        """
+        try:
+            self.on_image(bytes(msg.data))
+        except Exception as e:
+            self._node.get_logger().warning(f"Frame cache error: {e}")
 
     def on_target_result(self, msg) -> None:
         """Cache the latest /vision/target_result (JSON string) as a parsed dict."""

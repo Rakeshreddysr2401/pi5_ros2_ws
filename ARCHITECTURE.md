@@ -97,6 +97,16 @@ The same graph is driven two ways — never simultaneously.
 `StubBridge` serves `STUDIO_TEST_IMAGE` (a JPEG path) as the camera frame so
 `look()` vision is testable off-robot.
 
+**Vision inputs are subscribed by `ROS2Bridge` itself**, not by `agent_node` —
+the camera frame, `/vision/target_result` and `/vision/detections_3d` all fill
+caches this class owns, so wiring them anywhere else means only that one owner
+gets them. They *were* wired in `agent_node`, and the cost was exactly that: on
+the `langgraph dev` column above, a fully wired `ROS2Bridge` had `get_frame()`
+returning `None` forever, so `look()` answered "no camera frame is available"
+and `approach_object` could never see — on a robot whose camera was publishing
+normally. Fixed 2026-09-09; keep new ROS I/O in the bridge, per the "ALL ROS2
+I/O" rule above.
+
 ### Voice in dev mode
 
 `langgraph dev` serves the graph over HTTP and has no ROS side, so dev mode

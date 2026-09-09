@@ -231,7 +231,7 @@ class AgentNode(Node):
 
         # ── Inject config into the core ───────────────────────────────────
         self._bridge = ROS2Bridge(self, known_locations=known_locations,
-                                  robot_body=robot_body)
+                                  robot_body=robot_body, use_vision=self._use_vision)
         bridge_module.init(self._bridge)
         timing.set_sink(self._bridge.publish_timing)
         self._timing_handler = timing.TimingCallbackHandler()
@@ -320,23 +320,13 @@ class AgentNode(Node):
         self.create_subscription(String, "/voice/stt_meta", self._on_stt_meta, 10)
         self.create_subscription(String, "/voice/tts_meta", self._on_tts_meta, 10)
 
+        # Vision inputs (camera frame, target result, 3D detections) are
+        # subscribed by ROS2Bridge itself — it owns the caches they fill, so
+        # every owner of a bridge gets them, not just this node. See the
+        # "Vision inputs" block in ros2_bridge.py.
         if self._use_vision:
-            from sensor_msgs.msg import CompressedImage
-            # Consume the JPEG that camera_node already publishes — no raw-frame
-            # transport over the Jetson↔Pi5 link and no re-encode on the Pi5.
-            # The compressed bytes ARE what look() needs (base64 image/jpeg).
-            self.create_subscription(CompressedImage, "/camera/color/image_raw/compressed",
-                                     self._on_compressed_image, 1)
-            self.create_subscription(String, "/vision/target_result",    self._bridge.on_target_result, 10)
             self.get_logger().info(
                 "Vision enabled — /camera/color/image_raw/compressed + /vision/target_result")
-
-        # 3D object detections from the Jetson depth pipeline (D555 + Isaac ROS
-        # — see JETSON_D555_SETUP.md). Subscribed unconditionally: without the
-        # publisher the cache just stays empty and approach_object reports
-        # honestly that it can't see anything.
-        self.create_subscription(String, "/vision/detections_3d",
-                                 self._bridge.on_detections, 10)
 
         # ── Health/status/metrics API (in-process, daemon thread) ─────────
         health_service.start_health_api(settings.health, extra_status=self._runtime_status)
@@ -424,15 +414,6 @@ class AgentNode(Node):
                        f"over Telegram — send this report to them with "
                        f"send_telegram_message instead of saying it aloud.)")
         self._enqueue_system(f"[SYSTEM] {status}: {message}{routing}")
-
-    # ── Image callback (spin thread) ──────────────────────────────────────
-
-    def _on_compressed_image(self, msg) -> None:
-        # msg.data is already JPEG (camera_node encodes '.jpg', format='jpeg').
-        try:
-            self._bridge.on_image(bytes(msg.data))
-        except Exception as e:
-            self.get_logger().warning(f"Frame cache error: {e}")
 
     # ── Two-slot queue (spin thread → worker thread) ──────────────────────
 
