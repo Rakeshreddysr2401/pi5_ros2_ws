@@ -499,12 +499,76 @@ class ROS2Bridge:
 
             goal_handle.get_result_async().add_done_callback(_result)
 
-            # Poll for cancel or result
+            from action_msgs.msg import GoalStatus as _GS
+            _TERMINAL = {_GS.STATUS_SUCCEEDED, _GS.STATUS_ABORTED,
+                         _GS.STATUS_CANCELED}
+            _RESULT_GRACE_S = 5.0     # let the result arrive normally first
+            _HARD_LIMIT_S = 900.0     # nothing may wait here forever
+
+            # STATUS BACKSTOP. This loop used to have exactly two exits, the
+            # result future and an explicit cancel, and on 2026-09-10 it found
+            # the third: nav2 aborted the goal (bt_navigator logged "Goal
+            # failed" after three backup recoveries) and the result future
+            # never resolved. The thread span here forever, _fire_nav_done was
+            # never called, and the user was told "I'll say when I'm there"
+            # by a robot that had already given up. Nothing logged, because
+            # the only code that logs is the code that never ran.
+            #
+            # So trust the action's STATUS TOPIC as well as its result. rclpy
+            # keeps goal_handle.status fresh from /navigate_to_pose/_action/
+            # status independently of the result service, so a terminal status
+            # is proof the goal is over even when the result never lands.
+            # Grace period first, because the result carries more detail.
+            waited = 0.0
+            terminal_since = None
             while not result_event.wait(timeout=1.0):
+                waited += 1.0
                 if cancel_event.is_set():
                     goal_handle.cancel_goal_async()
                     dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"
                     self._fire_nav_done(False, f"Navigation to {dest} cancelled")
+                    return
+
+                try:
+                    status = goal_handle.status
+                except Exception:
+                    status = None
+
+                if status in _TERMINAL:
+                    if terminal_since is None:
+                        terminal_since = waited
+                        self._node.get_logger().warning(
+                            f"nav: goal reached terminal status {status} but no "
+                            f"result yet — waiting {_RESULT_GRACE_S:.0f}s for it")
+                    elif waited - terminal_since >= _RESULT_GRACE_S:
+                        dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"
+                        self._node.get_logger().error(
+                            f"nav: result never arrived for terminal status "
+                            f"{status}; reporting from status instead")
+                        if status == _GS.STATUS_SUCCEEDED:
+                            self._fire_nav_done(True, f"I've arrived at {dest}.")
+                        elif status == _GS.STATUS_CANCELED:
+                            self._fire_nav_done(
+                                False, f"Navigation to {dest} cancelled")
+                        else:
+                            self._fire_nav_done(
+                                False,
+                                f"Navigation to {dest} failed — path may be "
+                                f"blocked.")
+                        return
+                else:
+                    terminal_since = None
+
+                if waited >= _HARD_LIMIT_S:
+                    dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"
+                    goal_handle.cancel_goal_async()
+                    self._node.get_logger().error(
+                        f"nav: no result and no terminal status after "
+                        f"{_HARD_LIMIT_S:.0f}s — giving up")
+                    self._fire_nav_done(
+                        False,
+                        f"Navigation to {dest} never finished — I've stopped "
+                        f"waiting and cancelled the goal.")
                     return
 
             result = result_box[0]
