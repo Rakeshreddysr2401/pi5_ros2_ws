@@ -124,14 +124,20 @@ def locate_object(description: str,
                 f"that can't give me the direction or coordinates.)")
 
     dist = (rel["forward_m"] ** 2 + rel["left_m"] ** 2) ** 0.5
-    obj = res.get("object") or {}
     where = describe_bearing(rel["bearing_deg"])
 
-    answer = (f"{description.capitalize()} is about {dist:.1f} m away, "
-              f"{where} ({rel['bearing_deg']:+.0f}°). "
-              f"Relative to me that's {rel['forward_m']:.2f} m forward and "
-              f"{abs(rel['left_m']):.2f} m to my "
-              f"{'left' if rel['left_m'] >= 0 else 'right'}.")
-    if obj:
-        answer += f" Map position: x={obj['x']:.2f}, y={obj['y']:.2f} in odom."
-    return answer
+    # Everything here is robot-relative and stays that way. The odom position
+    # is deliberately NOT reported: odom's origin is wherever the rover was
+    # when ./rover fused started and bears no relation to where it is pointing
+    # now, so "y=0.75" says nothing about left or right -- but printed beside
+    # forward/left, which DO, it reads as though it does. A user read it that
+    # way on 2026-09-10 and reasonably concluded the tool was wrong about a
+    # wall it had in fact located correctly. A number nobody can act on is not
+    # worth the sentence it costs, let alone the contradiction.
+    return (f"{description.capitalize()} is about {dist:.1f} m away, "
+            f"{where} ({rel['bearing_deg']:+.0f}°). "
+            f"That's {rel['forward_m']:.2f} m in front of me and "
+            f"{abs(rel['left_m']):.2f} m to my "
+            f"{'left' if rel['left_m'] >= 0 else 'right'} "
+            f"— left and right from the robot's own point of view, so they are "
+            f"mirrored if you are facing it.")

@@ -75,18 +75,40 @@ def test_reports_a_measured_distance_and_direction(monkeypatch):
     out = locate_object.invoke({"description": "chair", "state": dict(VOICE_STATE)})
     assert "1.5 m away" in out              # hypot(1.36, 0.58) = 1.48
     assert "slightly to my left" in out
-    assert "1.36 m forward" in out
+    assert "1.36 m in front of me" in out
     assert "0.58 m to my left" in out
 
 
-def test_reports_the_object_position_not_the_standoff_goal(monkeypatch):
-    """The regression this whole change exists for. `goal` is 0.45 m SHORT of
-    the object on purpose; quoting it would understate every distance by that
-    much, plausibly enough that nobody would notice."""
+def test_says_whose_left_it_means(monkeypatch):
+    """A user facing the robot sees its left on their right, and read a
+    correct answer as wrong because of it (2026-09-10). Say whose frame it is
+    rather than expecting the reader to supply it."""
     _patch(monkeypatch)
     out = locate_object.invoke({"description": "chair", "state": dict(VOICE_STATE)})
-    assert "x=-0.14, y=-0.68" in out        # object, not goal (0.255, -0.463)
-    assert "0.26" not in out and "0.46" not in out
+    assert "robot's own point of view" in out
+    assert "mirrored" in out
+
+
+def test_never_reports_odom_coordinates(monkeypatch):
+    """odom's origin is wherever ./rover fused started, so its x/y say nothing
+    about left or right — but printed next to forward/left, which do, they read
+    as if they did. That misled a user on 2026-09-10 into thinking a correctly
+    located wall was wrong. Robot-relative only."""
+    _patch(monkeypatch)
+    out = locate_object.invoke({"description": "chair", "state": dict(VOICE_STATE)})
+    assert "odom" not in out.lower()
+    assert "map position" not in out.lower()
+    assert "-0.14" not in out and "-0.68" not in out
+
+
+def test_distance_comes_from_relative_not_the_standoff_goal(monkeypatch):
+    """`goal` is 0.45 m SHORT of the object on purpose; quoting it would
+    understate every distance by that much, plausibly enough to go
+    unnoticed. hypot(0.255, 0.463) = 0.53 — nothing like the real 1.48."""
+    _patch(monkeypatch)
+    out = locate_object.invoke({"description": "chair", "state": dict(VOICE_STATE)})
+    assert "1.5 m away" in out
+    assert "0.5 m away" not in out
 
 
 def test_distance_is_measured_from_base_link_not_the_camera(monkeypatch):
@@ -107,6 +129,7 @@ def test_right_hand_side_object_says_right(monkeypatch):
     out = locate_object.invoke({"description": "box", "state": dict(VOICE_STATE)})
     assert "slightly to my right" in out
     assert "0.85 m to my right" in out
+    assert "odom" not in out.lower()
 
 
 # ── It must never move ──────────────────────────────────────────────────────
