@@ -11,6 +11,7 @@ tool — see CLAUDE.md rule 3.
 """
 
 from .look import look
+from .locate import locate_object
 from .approach import (approach_described_object, list_saved_locations,
                        scan_surroundings)
 from .movement import (PAN_TILT_ENABLED, move_robot, navigate_to_pose,
@@ -37,7 +38,11 @@ CHAT_TOOLS = [get_current_time, get_robot_status, handover] + WEB_TOOLS + TELEGR
 # local_agent — the only multimodal agent. look() puts the current camera
 # frame into the conversation as an image; keep_images in its AgentSpec is
 # what lets it still see that image on follow-up turns.
-LOCAL_AGENT_TOOLS = [look, handover] + HEAD_TOOLS + TELEGRAM_TOOLS
+# locate_object() earns its schema cost: without it this agent has RGB
+# pixels and nothing else, so every "how far is that?" is answered by
+# invention. It is read-only and never turns the robot -- driving to a
+# thing is navigate's job (approach_described_object).
+LOCAL_AGENT_TOOLS = [look, locate_object, handover] + HEAD_TOOLS + TELEGRAM_TOOLS
 
 # navigate — everything that moves the wheels.
 NAVIGATE_TOOLS = [move_robot, navigate_to_pose, approach_described_object,
