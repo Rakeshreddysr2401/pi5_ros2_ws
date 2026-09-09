@@ -125,19 +125,24 @@ def locate_object(description: str,
 
     dist = (rel["forward_m"] ** 2 + rel["left_m"] ** 2) ** 0.5
     where = describe_bearing(rel["bearing_deg"])
+    fwd, lft = rel["forward_m"], rel["left_m"]
 
-    # Everything here is robot-relative and stays that way. The odom position
-    # is deliberately NOT reported: odom's origin is wherever the rover was
-    # when ./rover fused started and bears no relation to where it is pointing
-    # now, so "y=0.75" says nothing about left or right -- but printed beside
-    # forward/left, which DO, it reads as though it does. A user read it that
-    # way on 2026-09-10 and reasonably concluded the tool was wrong about a
-    # wall it had in fact located correctly. A number nobody can act on is not
-    # worth the sentence it costs, let alone the contradiction.
-    return (f"{description.capitalize()} is about {dist:.1f} m away, "
-            f"{where} ({rel['bearing_deg']:+.0f}°). "
-            f"That's {rel['forward_m']:.2f} m in front of me and "
-            f"{abs(rel['left_m']):.2f} m to my "
-            f"{'left' if rel['left_m'] >= 0 else 'right'} "
-            f"— left and right from the robot's own point of view, so they are "
-            f"mirrored if you are facing it.")
+    # Coordinates, said as coordinates. The robot frame (REP-103): +x forward,
+    # +y left, origin at base_link. These are the same two numbers as the plain
+    # sentence below and are given both ways on purpose -- "x +1.27, y +0.76"
+    # is what gets asked for, "1.27 m in front of me" is what gets understood
+    # when it is read aloud over Telegram or TTS.
+    #
+    # Robot frame, NOT odom. odom's origin is wherever ./rover fused started
+    # and says nothing about left or right; printing it beside these misled a
+    # user on 2026-09-10 into reading a correct answer as wrong.
+    return (
+        f"{description.capitalize()}: {dist:.2f} m away, {where} "
+        f"({rel['bearing_deg']:+.0f}°).\n"
+        f"Coordinates relative to me: x {fwd:+.2f} m, y {lft:+.2f} m "
+        f"(+x forward, +y left, measured from the robot's centre).\n"
+        f"In words: {abs(fwd):.2f} m "
+        f"{'in front of' if fwd >= 0 else 'behind'} me and {abs(lft):.2f} m to "
+        f"my {'left' if lft >= 0 else 'right'} — left/right are the robot's "
+        f"own, so they swap if you are facing it."
+    )

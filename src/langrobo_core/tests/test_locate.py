@@ -73,10 +73,47 @@ def test_bearing_sign_convention_matches_the_jetson():
 def test_reports_a_measured_distance_and_direction(monkeypatch):
     _patch(monkeypatch)
     out = locate_object.invoke({"description": "chair", "state": dict(VOICE_STATE)})
-    assert "1.5 m away" in out              # hypot(1.36, 0.58) = 1.48
+    assert "1.48 m away" in out             # hypot(1.36, 0.58)
     assert "slightly to my left" in out
     assert "1.36 m in front of me" in out
     assert "0.58 m to my left" in out
+
+
+def test_gives_the_numbers_as_coordinates(monkeypatch):
+    """The literal ask: coordinates relative to the robot. +x forward,
+    +y left, REP-103, origin base_link — signed, so the sign carries the
+    side and nothing has to be inferred from prose."""
+    _patch(monkeypatch)
+    out = locate_object.invoke({"description": "chair", "state": dict(VOICE_STATE)})
+    assert "x +1.36 m" in out
+    assert "y +0.58 m" in out
+    assert "+x forward, +y left" in out
+
+
+def test_coordinate_signs_flip_for_a_right_hand_object(monkeypatch):
+    _patch(monkeypatch, reply={
+        "ok": True, "depth_m": 1.36,
+        "goal": {"x": -0.028, "y": 0.546, "yaw": 2.73},
+        "object": {"x": -0.44, "y": 0.727},
+        "relative": {"forward_m": 1.53, "left_m": -0.85, "bearing_deg": -28.9}})
+    out = locate_object.invoke({"description": "box", "state": dict(VOICE_STATE)})
+    assert "x +1.53 m" in out
+    assert "y -0.85 m" in out
+
+
+def test_an_object_behind_reads_as_behind(monkeypatch):
+    """Nothing in view is behind the robot, but ground_pixel is fed by TF and
+    a stale/odd pose could produce it. Negative x must not print as "in front
+    of me"."""
+    _patch(monkeypatch, reply={
+        "ok": True, "depth_m": 1.0,
+        "goal": {"x": 0.0, "y": 0.0, "yaw": 0.0},
+        "object": {"x": 0.0, "y": 0.0},
+        "relative": {"forward_m": -1.20, "left_m": 0.30, "bearing_deg": 166.0}})
+    out = locate_object.invoke({"description": "thing", "state": dict(VOICE_STATE)})
+    assert "x -1.20 m" in out
+    assert "1.20 m behind me" in out
+    assert "in front of" not in out
 
 
 def test_says_whose_left_it_means(monkeypatch):
@@ -85,8 +122,8 @@ def test_says_whose_left_it_means(monkeypatch):
     rather than expecting the reader to supply it."""
     _patch(monkeypatch)
     out = locate_object.invoke({"description": "chair", "state": dict(VOICE_STATE)})
-    assert "robot's own point of view" in out
-    assert "mirrored" in out
+    assert "robot's own" in out
+    assert "swap if you are facing it" in out
 
 
 def test_never_reports_odom_coordinates(monkeypatch):
@@ -107,8 +144,8 @@ def test_distance_comes_from_relative_not_the_standoff_goal(monkeypatch):
     unnoticed. hypot(0.255, 0.463) = 0.53 — nothing like the real 1.48."""
     _patch(monkeypatch)
     out = locate_object.invoke({"description": "chair", "state": dict(VOICE_STATE)})
-    assert "1.5 m away" in out
-    assert "0.5 m away" not in out
+    assert "1.48 m away" in out
+    assert "0.53 m away" not in out
 
 
 def test_distance_is_measured_from_base_link_not_the_camera(monkeypatch):
@@ -116,8 +153,8 @@ def test_distance_is_measured_from_base_link_not_the_camera(monkeypatch):
     base_link, so the answer must come from `relative`, never from depth_m."""
     _patch(monkeypatch)
     out = locate_object.invoke({"description": "chair", "state": dict(VOICE_STATE)})
-    assert "1.5 m away" in out
-    assert "1.2 m away" not in out          # depth_m 1.19 would give this
+    assert "1.48 m away" in out
+    assert "1.19 m away" not in out         # depth_m would give this
 
 
 def test_right_hand_side_object_says_right(monkeypatch):
