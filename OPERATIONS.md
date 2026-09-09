@@ -13,9 +13,59 @@ Deploy, run, observe, and troubleshoot the Pi5 brain.
 | Foreground | `ros2 launch langrobo_ros brain_launch.py` | attended testing (micro-ROS included) |
 | Dev / Studio | `./scripts/dev.sh` | LangGraph Studio UI + micro-ROS agent |
 | Dev + voice | `./scripts/dev_voice.sh` | all of the above **plus** STT/TTS — talk to the graph while stepping it |
+| Studio, brain live | `./scripts/start_studio.sh` | inspect the graph **while `agent_node` keeps running** — see the caveat below |
 
 Never run two modes at once — both drive `/cmd_vel` and bind micro-ROS UDP 8888.
 Stop production first: `sudo systemctl stop langrobo-brain langrobo-microros`.
+
+### Studio against a live brain (`start_studio.sh`)
+
+`dev.sh` is the right tool when the brain is **stopped** and Studio owns the
+robot. `start_studio.sh` is the deliberate exception: the brain stays up and
+Studio attaches beside it, for inspecting the graph on a running robot.
+
+| | `dev.sh` | `start_studio.sh` |
+|---|---|---|
+| micro-ROS agent | starts one (UDP 8888) | none — assumes one is up |
+| discovery | `ROS_DISCOVERY_SERVER=127.0.0.1:11811` | plain SUBNET, matching a running `agent_node` |
+| episodic memory | default store — **starts empty if the brain holds it** | its own `~/.langrobo/qdrant_studio` |
+| written for | brain stopped | brain running |
+
+**It knowingly breaks the "never two modes at once" rule above, for `/cmd_vel`
+only.** With `agent_node` up you get `/studio_bridge` beside it and two
+publishers that can both command the wheels. It does not touch micro-ROS, so
+there is no UDP 8888 conflict. A `navigate` turn typed into the Studio browser
+box **moves the real robot** — a human watches, and MANUAL on the teleop is the
+stop.
+
+Two things it gets right that are easy to get wrong by hand:
+
+- **`LANGROBO_MEMORY_PATH` is set in the script, never in `.env`.** `agent_node`
+  reads the same `.env`, so putting it there would repoint the *robot's* memory.
+  Embedded Qdrant is single-process, so without a separate path Studio starts
+  with no episodic memory at all.
+- **No `set -u`.** ROS's `setup.bash` references unset variables and aborts the
+  script the instant it is sourced — silently, if stderr is going to /dev/null.
+
+Start it detached and poll; it takes 30-60 s:
+
+```bash
+setsid nohup ./scripts/start_studio.sh > /tmp/langgraph_dev.log 2>&1 < /dev/null &
+curl -s http://127.0.0.1:2024/ok        # {"ok":true} when ready
+```
+
+Reach the UI by tunnelling from the machine with the browser, then opening
+Studio against `127.0.0.1` — an HTTPS page cannot call `http://<pi5-ip>:2024`,
+browsers block it as mixed content with no visible error:
+
+```bash
+ssh -N -L 2024:localhost:2024 rakhi24@192.168.1.16
+# then: https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024
+```
+
+Stop it with `pkill -f "langgrap[h] dev"`. **The brackets are not a typo** —
+`pkill -f "langgraph dev"` matches its own command line over ssh and kills its
+own session: exit 255, no output, nothing killed.
 
 ### Voice in dev mode (Studio)
 
