@@ -150,6 +150,13 @@ def approach_described_object(description: str,
     except ImportError:
         Twist = None                    # Studio/tests — forward check only
 
+    # Checked before the search, not after: locating the object costs a VLM
+    # round trip per step (10-40 s each) and the search ROTATES the base. Both
+    # are wasted if the wheels are being zeroed by teleop anyway.
+    refusal = _mv.blocked_by_manual()
+    if refusal:
+        return refusal
+
     uv = None
     for step in range(_SEARCH_STEPS):
         if bridge.motion_interrupted():

@@ -88,6 +88,13 @@ def locate_object(description: str,
     Only sees what is in the current camera view; it will not turn to search.
     Never state a distance that did not come from this tool: the camera image
     alone cannot tell you how far away anything is.
+
+    For the distance BETWEEN two objects, call this once per object and
+    subtract the coordinates: with (x1, y1) and (x2, y2), the gap between them
+    is sqrt((x1-x2)^2 + (y1-y2)^2). Both are in the same robot frame, so this
+    is valid arithmetic on measured values -- not a guess. (On 2026-09-10 the
+    robot answered "I cannot tell you the distance between them" while holding
+    both coordinate pairs; they were 1.05 m apart.)
     """
     bridge = _bridge.get()
 

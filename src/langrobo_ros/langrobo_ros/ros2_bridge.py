@@ -595,6 +595,18 @@ class ROS2Bridge:
         self._node.get_logger().info(
             f"nav done: success={success} listener={'yes' if cb else 'NONE'} "
             f"msg={message!r}")
+        if cb is None:
+            # Not a curiosity: this is a navigation that finished and told
+            # nobody. It happened for two sessions on 2026-09-10 because
+            # LangGraph Studio was running beside the brain, polling the same
+            # Telegram bot, and its /studio_bridge ran the goal -- only
+            # agent_node registers this callback. The rover drove, failed, and
+            # the user waited for a message that had already been discarded.
+            self._node.get_logger().error(
+                "nav done with NO listener — this completion is being thrown "
+                "away and nobody will be told. If LangGraph Studio is running "
+                "next to the brain, stop it: `pkill -f 'langgrap[h] dev'`, "
+                "then check `ros2 node list | grep studio` is empty.")
         if cb:
             try:
                 cb(success, message)

@@ -272,6 +272,54 @@ def get_last_nav_requester() -> dict | None:
     return _last_nav_requester
 
 
+# ── Teleop MANUAL guard ─────────────────────────────────────────────────────
+#
+# teleop_web.py holds a MANUAL/AUTO switch. In MANUAL it publishes zeros to
+# /cmd_vel at 10 Hz, which cancel out everything Nav2 sends: the rover sits
+# still, Nav2 eventually aborts, and it looks exactly like a controller or
+# planner fault. On 2026-09-10 a user left it in MANUAL, asked the robot to
+# drive, got "On my way", and nothing moved -- and the model then claimed it
+# had "switched back to automatic mode", which it cannot do and did not do.
+#
+# So: read the switch before promising to drive, and never claim to have
+# changed it. Only the phone page or /mode?manual=off can change it.
+_TELEOP_MODE_URL = os.environ.get("LANGROBO_TELEOP_MODE_URL",
+                                  "http://127.0.0.1:8091/mode")
+_TELEOP_TIMEOUT_S = 0.7    # a slow teleop must never stall a conversation turn
+
+
+def teleop_is_manual() -> bool | None:
+    """True if teleop holds MANUAL, False if AUTO, None if it cannot be read.
+
+    None is deliberately distinct from False: "the switch says AUTO" and "I
+    could not find the switch" must not lead to the same message."""
+    try:
+        import json as _json
+        import urllib.request
+        with urllib.request.urlopen(_TELEOP_MODE_URL,
+                                    timeout=_TELEOP_TIMEOUT_S) as r:
+            return bool(_json.load(r).get("manual"))
+    except Exception:
+        return None
+
+
+_MANUAL_REFUSAL = (
+    "I can't drive right now — the teleop switch is in MANUAL, so it is "
+    "publishing stop commands that cancel everything Nav2 sends. Nothing I do "
+    "can override that and I cannot change the switch myself. Set it to AUTO "
+    "on the teleop page (the phone page on port 8091), then ask me again."
+)
+
+
+def blocked_by_manual() -> str | None:
+    """The refusal message if teleop is in MANUAL, else None.
+
+    Unreachable teleop returns None -- driving is allowed. A teleop that is
+    down is not publishing the zeros that cause the problem, so refusing then
+    would ground the robot for the wrong reason."""
+    return _MANUAL_REFUSAL if teleop_is_manual() is True else None
+
+
 @tool
 def navigate_to_pose(location: str,
                      state: Annotated[dict, InjectedState]) -> str:
@@ -285,6 +333,10 @@ def navigate_to_pose(location: str,
 
     Returns immediately — the robot drives in the background. A system message
     arrives when it gets there, or fails."""
+    refusal = blocked_by_manual()
+    if refusal:
+        return refusal
+
     bridge = _bridge.get()
     ensure_head_centred(bridge)   # a panned head skews Nav2's start pose
 

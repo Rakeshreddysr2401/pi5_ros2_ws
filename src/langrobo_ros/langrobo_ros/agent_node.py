@@ -164,6 +164,7 @@ class AgentNode(Node):
 
         # Register navigation completion callback
         self._bridge.register_nav_done_callback(self._on_nav_done)
+        self._warn_if_competing_bridge()
         # Let pure-zone tools inject [SYSTEM] turns into the worker queue.
         self._bridge.register_system_turn_callback(self._enqueue_system)
 
@@ -285,6 +286,39 @@ class AgentNode(Node):
         self._start_cache_warm()
 
     # ── Navigation done callback (background nav thread → worker) ─────────
+
+    def _warn_if_competing_bridge(self) -> None:
+        """Say so if another graph is on the bus driving the same robot.
+
+        LangGraph Studio raises /studio_bridge beside /agent_node, runs the
+        same graph, polls the same Telegram bot and publishes the same
+        /cmd_vel. Whichever picks up a request runs it -- and Studio's bridge
+        registers no nav-done callback, so navigations it takes finish
+        silently. From the Telegram side the two are indistinguishable until a
+        report goes missing, which is exactly how 2026-09-10 was spent.
+
+        Advisory only. Studio is a legitimate thing to run; it just must not
+        run at the same time as this, and the log should say which one it is.
+        """
+        # NAMED, not a "*_bridge" wildcard. The first version of this check
+        # matched any node ending in _bridge and immediately fired on
+        # /image_bridge -- the Jetson's JPEG publisher, a required part of the
+        # vlm layer and no threat to anything. A warning that fires on every
+        # healthy boot is worse than no warning, because it trains you to
+        # scroll past the one time it is real. Only graph-running bridges
+        # belong here; add a name when a new one is written.
+        _COMPETING = {"studio_bridge"}
+        try:
+            others = [n for n in self.get_node_names() if n in _COMPETING]
+        except Exception:
+            return
+        if others:
+            self.get_logger().error(
+                f"another bridge is live on this bus: {', '.join(others)}. It "
+                f"runs the same graph and polls the same Telegram bot, and a "
+                f"navigation it picks up will finish with no listener and "
+                f"report to nobody. Stop it before driving from Telegram: "
+                f"pkill -f 'langgrap[h] dev'")
 
     def _on_nav_done(self, success: bool, message: str) -> None:
         """Called by bridge when Nav2 goal finishes. Injects system message.
