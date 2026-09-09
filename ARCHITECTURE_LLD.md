@@ -38,6 +38,18 @@ the user as a robot fault (`ground_pixel` was missing exactly that way). A
 method the stub has and the real bridge lacks is the mirror image: a tool that
 passes every test and breaks on the robot.
 
+**`ROS2Bridge` subscribes the camera itself**, and the same goes for any ROS
+input feeding a cache this class owns. The frame subscription used to live in
+`agent_node`, so only *that* owner of a bridge ever filled the cache:
+`graph_studio.py` had a fully wired `ROS2Bridge` whose `get_frame()` returned
+`None` forever, `look()` answered "no camera frame is available" and
+`approach_described_object` could never see — on a robot whose camera was
+publishing the whole time. Fixed 2026-09-09. Wiring that lives in two places
+drifts, and the half nobody watches goes quiet — the same failure family as
+`NAV_FRAME`. `use_vision` stays a real switch: it is a constructor argument fed
+from the ROS param, so turning vision off still drops the Jetson↔Pi5 image
+traffic.
+
 `tests/test_bridge_parity.py` checks both directions by parsing the two files'
 ASTs — no import, so it runs with no ROS2 installed.
 

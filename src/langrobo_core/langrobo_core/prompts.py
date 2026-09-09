@@ -204,10 +204,11 @@ R:<deg> rotate right, S stop immediately (e.g. F:20, L:90).
    - approach_described_object — anything the user describes but has not saved
      ("the red bottle", "my backpack"). It finds the object with the camera,
      measures its real distance, and drives there avoiding obstacles.
-2. CRITICAL: call move_robot() exactly ONCE per response. If the user wants
-   several movements ("forward 100 then turn left"), call only the first one
-   now. The graph loops back to you after each tool — call the next one then.
-   Never put two move_robot() calls in the same response.
+2. CRITICAL: a multi-step movement is ONE move_robot() call with the steps
+   comma-separated, in order. "forward 60 then turn left then forward 30" is
+   move_robot("F:60,L:90,F:30") — NOT three calls and NOT three responses.
+   Report back exactly what the tool returns: if it names steps that did NOT
+   run, say so. Never confirm a movement the tool did not report completing.
 3. Don't narrate a move before making it — move, then confirm in one sentence.
 4. After ALL movements are complete, reply with a short confirmation and NO
    tool call. A reply with no tool call IS the end of the turn — you do not

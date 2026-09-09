@@ -13,6 +13,7 @@ Deploy, run, observe, and troubleshoot the Pi5 brain.
 | Foreground | `ros2 launch langrobo_ros brain_launch.py` | the same, in your terminal |
 | Dev (Studio) | `./scripts/dev.sh` | micro-ROS + `langgraph dev` on :2024 — **draws the graph**, and lets you step a turn node by node |
 | Voice | `ros2 launch pi5_voice_pkg voice_launch.py` | CPU-only STT + TTS on the Pi 5 (see PI5_VOICE.md) |
+| Studio, brain live | `./scripts/start_studio.sh` | inspect the graph **while `agent_node` keeps running** — see the caveat below |
 
 **Never run two brains at once** — both drive `/cmd_vel` and micro-ROS UDP 8888.
 
@@ -22,6 +23,51 @@ agents share and evict each other's cached prompt prefix, which
 costs ~18-50s of re-prefill per turn. agent_node probes the server at boot and
 logs `KV slot map (one per agent): {...}` — or a warning naming the shortfall.
 See ARCHITECTURE_LLD.md §4.1.
+
+### Studio against a live brain (`start_studio.sh`)
+
+`dev.sh` is the right tool when the brain is **stopped** and Studio owns the
+robot. `start_studio.sh` is the deliberate exception: the brain stays up and
+Studio attaches beside it, for inspecting the graph on a running robot.
+
+| | `dev.sh` | `start_studio.sh` |
+|---|---|---|
+| micro-ROS agent | starts one (UDP 8888) | none — assumes one is up |
+| discovery | `ROS_DISCOVERY_SERVER=127.0.0.1:11811` | plain SUBNET, matching a running `agent_node` |
+| written for | brain stopped | brain running |
+
+**It knowingly breaks the "never two modes at once" rule above, for `/cmd_vel`
+only.** With `agent_node` up you get `/studio_bridge` beside it and two
+publishers that can both command the wheels. It does not touch micro-ROS, so
+there is no UDP 8888 conflict. A `navigate` turn typed into the Studio browser
+box **moves the real robot** — a human watches, and MANUAL on the teleop is the
+stop.
+
+One thing it gets right that is easy to get wrong by hand:
+
+- **No `set -u`.** ROS's `setup.bash` references unset variables and aborts the
+  script the instant it is sourced — silently, if stderr is going to /dev/null.
+
+Start it detached and poll; it takes 30-60 s:
+
+```bash
+setsid nohup ./scripts/start_studio.sh > /tmp/langgraph_dev.log 2>&1 < /dev/null &
+curl -s http://127.0.0.1:2024/ok        # {"ok":true} when ready
+```
+
+Reach the UI by tunnelling from the machine with the browser, then opening
+Studio against `127.0.0.1` — an HTTPS page cannot call `http://<pi5-ip>:2024`,
+browsers block it as mixed content with no visible error:
+
+```bash
+ssh -N -L 2024:localhost:2024 rakhi24@192.168.1.16
+# then: https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024
+```
+
+Stop it with `pkill -f "langgrap[h] dev"`. **The brackets are not a typo** —
+`pkill -f "langgraph dev"` matches its own command line over ssh and kills its
+own session: exit 255, no output, nothing killed.
+
 
 ## Health API
 

@@ -140,47 +140,124 @@ def _drive_for_duration(bridge, twist, dur: float) -> bool:
     return not interrupted
 
 
+# How many steps one move_robot call may carry. A sequence runs BLIND -- nothing
+# re-plans between steps -- so this is a safety bound, not a parser limit. Real
+# requests ("forward, left, forward") are two to four steps.
+_MAX_SEQUENCE_STEPS = 6
+
+
+def _parse_step(step: str) -> tuple[str, float]:
+    """One 'F:60' -> ('F', 60.0). Raises ValueError with a message worth showing.
+
+    Every rejection here used to be a silent success. An unknown direction left
+    the Twist at zero, `dur` at 0.0, and returned "Movement done" for a move that
+    never happened. A negative value made `_duration()` negative, which skipped
+    the timed drive and published a twist NOBODY EVER STOPPED -- the wheels ran
+    on until the 500 ms watchdog caught them.
+    """
+    parts = step.strip().upper().split(":")
+    cmd = parts[0].strip()
+    if cmd not in ("F", "B", "L", "R", "S"):
+        raise ValueError(f"unknown direction {cmd!r} in {step.strip()!r}")
+    if cmd == "S":
+        return cmd, 0.0
+    if len(parts) < 2 or not parts[1].strip():
+        raise ValueError(f"{cmd} needs a value, e.g. {cmd}:20")
+    try:
+        val = float(parts[1])
+    except ValueError:
+        raise ValueError(f"{parts[1].strip()!r} is not a number in {step.strip()!r}")
+    if val < 0:
+        raise ValueError(
+            f"negative value in {step.strip()!r} -- use B: to go back, R: to turn right")
+    return cmd, val
+
+
+def _label(cmd: str, val: float) -> str:
+    return cmd if cmd == "S" else f"{cmd}:{val:g}"
+
+
+def _report_partial(labels: list, at: int, why: str) -> str:
+    """One honest sentence about a sequence that did not finish.
+
+    The bug this exists for: move_robot ran step 1 of "forward 60, left, forward
+    30", the model said "I have moved forward sixty centimetres", and nothing
+    anywhere mentioned the two steps that never happened.
+    """
+    done = ", ".join(labels[:at]) if at else "nothing"
+    rest = ", ".join(labels[at:])
+    return (f"Movement {why} {labels[at]} -- completed: {done}; "
+            f"did NOT run: {rest}. The robot is stopped.")
+
+
 @tool
 def move_robot(command: str) -> str:
-    """Send a short, precise movement command directly to the wheels via /cmd_vel.
+    """Send short, precise movement commands directly to the wheels via /cmd_vel.
 
-    Use for fine adjustments — aligning, nudging, short scans.
-    Do NOT use for room-to-room navigation — use navigate_to_pose() instead.
+    Use for fine adjustments - aligning, nudging, short scans.
+    Do NOT use for room-to-room navigation - use navigate_to_pose() instead.
 
-    Format — DIRECTION:VALUE  or  'S' to stop:
+    Format - DIRECTION:VALUE  or  'S' to stop:
       F:20   forward 20 cm
       B:10   backward 10 cm
       L:90   rotate left 90 degrees
       R:45   rotate right 45 degrees
-      S      stop immediately"""
+      S      stop immediately
+
+    For several movements, put them ALL in ONE call, comma-separated. They run
+    in order, and the reply says exactly which ones completed:
+      F:60,L:90,F:30   forward 60 cm, then turn left 90 deg, then forward 30 cm
+    """
     bridge = _bridge.get()
-    bridge.clear_motion_stop()   # this is a deliberate move — start with a clean slate
-    parts = command.upper().split(":")
-    cmd = parts[0]
-    val = float(parts[1]) if len(parts) > 1 else 0.0
+
+    raw = [s for s in command.split(",") if s.strip()]
+    if not raw:
+        return "No movement command given -- expected e.g. F:20, or F:60,L:90,F:30."
+    if len(raw) > _MAX_SEQUENCE_STEPS:
+        return (f"Too many steps ({len(raw)}) -- {_MAX_SEQUENCE_STEPS} is the most "
+                f"one command may carry, because a sequence runs without looking. "
+                f"Nothing was moved; send fewer steps.")
+
+    # Parse the WHOLE sequence before moving anything. A bad step 3 must not
+    # leave the robot stopped halfway through a move the user believes never
+    # started.
+    try:
+        steps = [_parse_step(s) for s in raw]
+    except ValueError as e:
+        return f"Bad movement command ({e}). Nothing was moved."
+
+    labels = [_label(c, v) for c, v in steps]
+    bridge.clear_motion_stop()   # this is a deliberate move - start with a clean slate
 
     from geometry_msgs.msg import Twist
-    twist = Twist()
+    for i, (cmd, val) in enumerate(steps):
+        twist = Twist()
+        if cmd == "F":
+            twist.linear.x = _LINEAR_VEL_MS
+        elif cmd == "B":
+            twist.linear.x = -_LINEAR_VEL_MS
+        elif cmd == "L":
+            twist.angular.z = _ANGULAR_VEL_RS
+        elif cmd == "R":
+            twist.angular.z = -_ANGULAR_VEL_RS
+        elif cmd == "S":
+            pass  # zero Twist = stop
 
-    if cmd == "F":
-        twist.linear.x = _LINEAR_VEL_MS
-    elif cmd == "B":
-        twist.linear.x = -_LINEAR_VEL_MS
-    elif cmd == "L":
-        twist.angular.z = _ANGULAR_VEL_RS
-    elif cmd == "R":
-        twist.angular.z = -_ANGULAR_VEL_RS
-    elif cmd == "S":
-        pass  # zero Twist = stop
+        dur = _duration(cmd, val)
+        if dur > 0:
+            if not _drive_for_duration(bridge, twist, dur):
+                # Name what did NOT happen. Reporting only the finished steps is
+                # exactly how a truncated sequence reads as a completed one.
+                return _report_partial(labels, i, "interrupted during")
+        else:
+            bridge.publish_twist(twist)
 
-    dur = _duration(cmd, val)
-    if dur > 0:
-        if not _drive_for_duration(bridge, twist, dur):
-            return f"Movement interrupted: {command}"
-    else:
-        bridge.publish_twist(twist)
+        if cmd == "S" and i + 1 < len(steps):
+            # An explicit stop ends the sequence. Carrying on would be the exact
+            # opposite of what the word means.
+            return _report_partial(labels, i + 1, "stopped before")
 
-    return f"Movement done: {command}"
+    return "Movement done: " + ", ".join(labels)
 
 
 # Origin of the most recent navigate_to_pose request. The Nav2 result lands
