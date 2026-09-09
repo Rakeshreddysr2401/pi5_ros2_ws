@@ -523,7 +523,14 @@ class ROS2Bridge:
             self._fire_nav_done(False, f"Navigation error: {e}")
 
     def _fire_nav_done(self, success: bool, message: str) -> None:
+        # Logged unconditionally, and says whether a listener existed. A silent
+        # arrival is indistinguishable from a nav that never finished unless
+        # this line is in the log (2026-09-10: a goal failed after 44 s of
+        # follow_path aborts and nothing anywhere recorded that it had).
         cb = self._nav_done_callback
+        self._node.get_logger().info(
+            f"nav done: success={success} listener={'yes' if cb else 'NONE'} "
+            f"msg={message!r}")
         if cb:
             try:
                 cb(success, message)

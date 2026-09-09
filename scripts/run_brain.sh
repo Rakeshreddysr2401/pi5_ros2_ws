@@ -17,6 +17,12 @@ source /opt/ros/jazzy/setup.bash
 source ~/ros2_ws/install/setup.bash
 set -u
 
+# Python block-buffers stdout when it is a pipe, which systemd's journal
+# is. Startup logs appeared (big first flush) and then NOTHING for 17
+# minutes across a full conversation and a failed navigation — the
+# rover was undiagnosable while it was actually driving. Line-buffer it.
+export PYTHONUNBUFFERED=1
+
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 # MULTICAST, not the discovery server (changed 2026-07-16): the Jetson

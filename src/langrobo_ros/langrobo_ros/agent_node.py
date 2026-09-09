@@ -300,6 +300,9 @@ class AgentNode(Node):
             routing = (f" (This navigation was requested by {req.get('sender')} "
                        f"over Telegram — send this report to them with "
                        f"send_telegram_message instead of saying it aloud.)")
+        self.get_logger().info(
+            f"nav report queued -> channel={req.get('channel') or 'voice'} "
+            f"sender={req.get('sender') or '-'} routed={bool(routing)}")
         self._enqueue_system(f"[SYSTEM] {status}: {message}{routing}")
 
     # ── Two-slot queue (spin thread → worker thread) ──────────────────────
