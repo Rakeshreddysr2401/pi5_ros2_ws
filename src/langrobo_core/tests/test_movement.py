@@ -103,3 +103,137 @@ def test_commanded_speeds_stay_inside_the_chassis_envelope():
     saturates and the commanded yaw stops meaning anything."""
     assert 0 < movement._LINEAR_VEL_MS <= 0.22
     assert 0 < movement._ANGULAR_VEL_RS <= 5.06
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# move_robot — sequences, validation, and honest partial reports
+#
+# The bug these pin down: asked to "move 60 cm front and take left then move
+# 30 cm", the robot ran F:60 and stopped, and the reply was "I have moved
+# forward sixty centimeters" — true about step 1, silent about the two steps
+# that never happened. Nothing in the system knew there were three.
+# ══════════════════════════════════════════════════════════════════════════════
+
+from langrobo_core.tools.movement import move_robot, _parse_step, _label
+
+
+@pytest.fixture
+def fake_twist(monkeypatch):
+    """move_robot imports geometry_msgs at call time and ROS is not on the path
+    off-robot, so stand one in. Twist needs only the fields the tool sets."""
+    import sys
+    import types
+    class Twist:
+        def __init__(self):
+            self.linear = types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            self.angular = types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+    mod = types.ModuleType("geometry_msgs")
+    msg = types.ModuleType("geometry_msgs.msg")
+    msg.Twist = Twist
+    mod.msg = msg
+    monkeypatch.setitem(sys.modules, "geometry_msgs", mod)
+    monkeypatch.setitem(sys.modules, "geometry_msgs.msg", msg)
+    return Twist
+
+
+@pytest.fixture
+def legs(monkeypatch):
+    """Record each timed drive instead of running it — no real sleeps, and the
+    test decides which leg gets interrupted."""
+    calls = []
+    plan = {"fail_at": None}          # 1-based index of the leg that is cut short
+    def fake_drive(bridge, twist, dur):
+        calls.append(dur)
+        return not (plan["fail_at"] == len(calls))
+    monkeypatch.setattr(movement, "_drive_for_duration", fake_drive)
+    return calls, plan
+
+
+# ── parsing ──────────────────────────────────────────────────────────────────
+
+def test_parse_step_reads_a_normal_command():
+    assert _parse_step("F:60") == ("F", 60.0)
+    assert _parse_step(" l:90 ") == ("L", 90.0)
+    assert _parse_step("S") == ("S", 0.0)
+
+
+@pytest.mark.parametrize("bad", ["X:10", "F", "F:", "F:abc"])
+def test_parse_step_rejects_what_used_to_pass_silently(bad):
+    # An unknown direction left the Twist at zero and still returned
+    # "Movement done" — a move that never happened, reported as success.
+    with pytest.raises(ValueError):
+        _parse_step(bad)
+
+
+def test_parse_step_rejects_negatives():
+    # A negative made _duration() negative, which skipped the timed drive and
+    # published a twist nothing ever stopped: the wheels ran until the 500 ms
+    # watchdog caught them.
+    with pytest.raises(ValueError):
+        _parse_step("F:-20")
+
+
+def test_label_is_what_the_user_sees():
+    assert _label("F", 60.0) == "F:60"
+    assert _label("L", 90.5) == "L:90.5"
+    assert _label("S", 0.0) == "S"
+
+
+# ── nothing moves unless the whole sequence is valid ─────────────────────────
+
+def test_a_bad_step_moves_nothing_at_all(fake_twist, legs):
+    calls, _ = legs
+    out = move_robot.invoke({"command": "F:60,X:90,F:30"})
+    assert "Nothing was moved" in out
+    assert calls == [], "a bad step 2 must not leave the robot moved by step 1"
+
+
+def test_empty_command_moves_nothing(fake_twist, legs):
+    calls, _ = legs
+    assert "No movement command" in move_robot.invoke({"command": "  "})
+    assert calls == []
+
+
+def test_too_many_steps_moves_nothing(fake_twist, legs):
+    calls, _ = legs
+    out = move_robot.invoke({"command": ",".join(["F:10"] * 9)})
+    assert "Too many steps" in out and "Nothing was moved" in out
+    assert calls == []
+
+
+# ── the actual fix ───────────────────────────────────────────────────────────
+
+def test_one_call_runs_every_step_in_order(fake_twist, legs):
+    calls, _ = legs
+    out = move_robot.invoke({"command": "F:60,L:90,F:30"})
+    assert out == "Movement done: F:60, L:90, F:30"
+    assert len(calls) == 3, "all three legs must actually run"
+
+
+def test_single_command_still_reads_the_same(fake_twist, legs):
+    assert move_robot.invoke({"command": "F:60"}) == "Movement done: F:60"
+
+
+def test_interruption_names_the_steps_that_did_not_run(fake_twist, legs):
+    calls, plan = legs
+    plan["fail_at"] = 2                       # cut the robot off during the turn
+    out = move_robot.invoke({"command": "F:60,L:90,F:30"})
+    assert "completed: F:60" in out
+    assert "did NOT run: L:90, F:30" in out   # <- the whole point
+    assert "Movement done" not in out
+    assert len(calls) == 2, "must stop, not carry on to step 3"
+
+
+def test_interruption_on_the_first_step_says_nothing_completed(fake_twist, legs):
+    calls, plan = legs
+    plan["fail_at"] = 1
+    out = move_robot.invoke({"command": "F:60,L:90"})
+    assert "completed: nothing" in out
+    assert "did NOT run: F:60, L:90" in out
+
+
+def test_stop_in_a_sequence_abandons_the_rest(fake_twist, legs):
+    calls, _ = legs
+    out = move_robot.invoke({"command": "F:60,S,F:30"})
+    assert "did NOT run: F:30" in out
+    assert len(calls) == 1, "'S' means stop — the third leg must never run"

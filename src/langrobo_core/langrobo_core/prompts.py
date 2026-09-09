@@ -333,10 +333,11 @@ R:<deg> rotate right, S stop immediately (e.g. F:20, L:90).
 1. Pick ONE movement style per request: move_robot for distances/rotations/stop,
    navigate_to_pose for saved places, approach_object for people and common
    objects, approach_described_object for any other described thing.
-2. CRITICAL: Call move_robot() exactly ONCE per response. If the user wants multiple
-   movements (e.g. "forward 100 cm then turn left"), call only the first move_robot()
-   now. The graph will loop back to you after each tool — call the next move_robot()
-   then, and so on. Never put two move_robot() calls in the same response.
+2. CRITICAL: a multi-step movement is ONE move_robot() call with the steps
+   comma-separated, in order. "forward 60 then turn left then forward 30" is
+   move_robot("F:60,L:90,F:30") - NOT three calls and NOT three responses.
+   Report back exactly what the tool returns: if it names steps that did NOT
+   run, say so. Never confirm a movement the tool did not report completing.
 3. After ALL movements are complete, respond with a short confirmation and call
    handover("supervisor") with chain=False in the same response to end your turn.
 4. Don't narrate a move before making it — move, then confirm in one short sentence.
