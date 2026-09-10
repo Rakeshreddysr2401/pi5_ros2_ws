@@ -46,7 +46,7 @@ pi5_stt_node:
     # Acoustic wake word (openWakeWord). While asleep the node transcribes NOTHING
     # until it hears the wake word, then listens for follow_up_window_s. Set
     # wake_detector: transcript_alias to disable it and use the legacy name-in-text gate.
-    wake_detector: openwakeword          # openwakeword | transcript_alias  (acoustic gate ON, hey_jarvis stand-in until hey_chotu.onnx)
+    wake_detector: transcript_alias        # wake word disabled for now (was openwakeword/hey_jarvis)
     wake_word: hey_jarvis                # bundled stand-in until the custom rakhi.onnx is trained
     wake_model_path: ""                  # set to a custom .onnx (e.g. rakhi) to override wake_word
     # Measured live 2026-09-06 through the boAt Stone's HFP mic (8-16kHz
@@ -63,7 +63,7 @@ pi5_stt_node:
     # true = only transcripts containing a wake alias become turns. Essential
     # with a room mic: with it open, ambient noise the recogniser hallucinated
     # into sentences was answered as if spoken (observed 2026-09-05).
-    require_wake: true
+    require_wake: false      # wake word disabled for now -- every transcript forwards to the brain
     stop_words: ["stop"]
     # Noise gate before the cloud call — see vad_gate.py. 0.05 clears the
     # measured Bluetooth-mic noise floor (~0.029) with margin; the old 0.012
