@@ -47,7 +47,11 @@ def _extract_handover_context(state: AgentState) -> tuple[str, str, bool, str]:
     return next_agent, reason, chain, ai_content
 
 
-def _last_user_query(state: AgentState) -> str:
+def last_user_query(state: AgentState) -> str:
+    """The text of this turn's real user message -- the last HumanMessage in
+    history, regardless of how many handover hops came after it. Public: also
+    used by graph/build.py's vision-question backstop, which needs the same
+    "what did the person actually ask" signal outside a handover."""
     for msg in reversed(state["messages"]):
         if isinstance(msg, HumanMessage):
             c = msg.content
@@ -64,7 +68,7 @@ class _Resolution(NamedTuple):
 
 def _resolve(state: AgentState, raw_next: str, reason: str) -> _Resolution:
     current = state.get("active_agent", "chat")
-    user_query = _last_user_query(state)
+    user_query = last_user_query(state)
 
     # Routing notes are PERMANENT history: the projection keeps every historical
     # SystemMessage so cached prompt prefixes never diverge mid-history (see
@@ -115,7 +119,7 @@ def handle_handover(state: AgentState) -> Command[Literal[ROUTABLE]] | dict:  # 
             bridge_messages=[SystemMessage(content=(
                 f"[Routing note] A handover requested a non-existent agent "
                 f"({next_agent[:60]!r}). Control passed to 'chat' to answer the "
-                f"user directly: \"{_last_user_query(state)}\""
+                f"user directly: \"{last_user_query(state)}\""
             ))],
         )
         chain, ai_content = True, ""
@@ -132,7 +136,7 @@ def handle_handover(state: AgentState) -> Command[Literal[ROUTABLE]] | dict:  # 
             bridge_messages=[SystemMessage(content=(
                 f"[Routing note] The '{current}' agent handed over to itself. "
                 f"For this request it must NOT call handover again — it answers the "
-                f"user directly in plain text now: \"{_last_user_query(state)}\""
+                f"user directly in plain text now: \"{last_user_query(state)}\""
             ))],
         )
         chain, ai_content = True, ""
