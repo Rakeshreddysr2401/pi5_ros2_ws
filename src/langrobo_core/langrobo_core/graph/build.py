@@ -59,10 +59,20 @@ _MAX_AGENT_RUNS_PER_TURN = 8
 # model's free-form reply -- parsing what the model claims to have seen is
 # exactly the kind of pattern-matching a 12B model is already failing at, and
 # the user's intent is fixed text regardless of how the agent responds to it.
-# Deliberately excludes "take/send a photo" phrasing: chat legitimately owns
-# send_telegram_photo (which grabs a genuinely fresh frame, see its docstring)
-# and correctly answers those with a tool call -- this backstop only fires on
-# a NO-tool-call ending, so a real send_telegram_photo turn never reaches it.
+# Deliberately excludes "take/send a photo" phrasing: "please take a new fresh
+# image and send it" does not match any alternative below, so chat's own
+# correct tool call for it (send_telegram_photo, which grabs a genuinely fresh
+# frame -- see its docstring) is never in this backstop's path to begin with.
+#
+# FIRST VERSION (2026-09-10 evening) only checked "spoke with no tool call at
+# all" -- and missed a second shape of the SAME bug the same evening: asked
+# "now what are you looking at" with navigate sticky, the model called
+# scan_surroundings() -- a real 360-degree physical rotation -- instead of
+# handing over. That is not the agent doing its job; nothing in "what are you
+# looking at" asked it to move. So the check below is keyed on the one tool
+# call that IS always correct here -- handover -- not on "any tool call is
+# fine": anything else (move_robot, navigate_to_pose, scan_surroundings,
+# approach_described_object, or plain unrouted text) is the same failure.
 _VISION_QUESTION = re.compile(
     r"\b(what (are you|do you|can you) (currently )?(looking at|see|seeing)"
     r"|what.?s? in front of (you|it)"
@@ -75,26 +85,36 @@ _VISION_QUESTION = re.compile(
 
 def _vision_backstop(agent_name: str, state: AgentState, out: dict) -> Command | None:
     """None if nothing is wrong; a Command chaining to local_agent if this
-    agent just answered a vision question it should have handed off instead.
+    agent just tried to handle a vision question itself instead of handing it
+    off -- by speaking, or by calling any tool OTHER than handover.
 
-    Fires only when ALL of: this agent is not local_agent; it is about to END
-    the turn by speaking (its own AIMessage carries no tool call); local_agent
-    has not already run this turn (so a real answer from it is never
-    overridden, and this cannot re-trigger on local_agent's own reply); and
-    the user's own last message matches _VISION_QUESTION.
+    Fires only when ALL of: this agent is not local_agent; its AIMessage this
+    step does not call handover (a handover call is always the correct thing
+    here and must pass through untouched); it did SOMETHING (spoke, or called
+    some other tool -- an AIMessage with neither is not a completed step and
+    is left alone); local_agent has not already run this turn (so a real
+    answer from it, or a real look() already in flight, is never overridden);
+    and the user's own last message matches _VISION_QUESTION.
 
-    The wrong AIMessage is NOT removed -- utils/message_utils' append-only
-    cache invariant applies here exactly as it does to a stale image, and
-    besides, agent_node only speaks the FINAL message once the graph reaches
-    END, so this one is never sent to the user. A routing note is appended
-    after it, worded the same way handle_handover's notes are (a past event,
-    not a standing instruction), and local_agent runs next in the SAME turn.
+    Whatever the agent proposed -- spoken text, or a tool call -- is NOT
+    executed and NOT added to history: returning a Command here replaces `out`
+    entirely, so a proposed scan_surroundings/move_robot/etc. never reaches
+    its ToolNode and the robot never physically moves because of it. A
+    routing note is appended instead, worded the same way handle_handover's
+    notes are (a past event, not a standing instruction), and local_agent runs
+    next in the SAME turn. agent_node only speaks the FINAL message once the
+    graph reaches END, so nothing wrong is ever said or driven to the user.
     """
     if agent_name == "local_agent":
         return None
     msgs = out.get("messages") or []
     last = msgs[-1] if msgs else None
-    if not (isinstance(last, AIMessage) and not last.tool_calls and last.content):
+    if not isinstance(last, AIMessage):
+        return None
+    tool_calls = last.tool_calls or []
+    if any(tc.get("name") == "handover" for tc in tool_calls):
+        return None
+    if not tool_calls and not last.content:
         return None
     if (state.get("agent_run_counts") or {}).get("local_agent", 0) > 0:
         return None
@@ -102,14 +122,15 @@ def _vision_backstop(agent_name: str, state: AgentState, out: dict) -> Command |
     if not _VISION_QUESTION.search(query):
         return None
 
+    attempted = ", ".join(tc.get("name", "?") for tc in tool_calls) or "answered directly"
     logger.warning(
-        "Vision backstop: '%s' answered a vision question without handing "
-        "over -- forcing local_agent (query: %r)", agent_name, query[:80])
+        "Vision backstop: '%s' %s instead of handing over -- forcing "
+        "local_agent (query: %r)", agent_name, attempted, query[:80])
     note = SystemMessage(content=(
         f"[Routing note] Control passed to the 'local_agent' agent because: "
-        f"the '{agent_name}' agent answered a visual question without "
-        f"looking. The user said: {query!r}. Call look() and answer from "
-        f"the real image \u2014 do not repeat what was already said."
+        f"the '{agent_name}' agent tried to handle a visual question itself "
+        f"({attempted}) instead of handing it over. The user said: "
+        f"{query!r}. Call look() and answer from the real image."
     ))
     return Command(goto="local_agent", update={
         "active_agent": "local_agent",
