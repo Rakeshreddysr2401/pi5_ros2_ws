@@ -113,6 +113,15 @@ Robot state files: `~/.langrobo/` — `locations.json` (spots saved with
 `telegram_deferred.json` (quiet-hours queue). Back this directory up; delete a
 file to reset that memory.
 
+`locations.json` entries are stamped with the odom origin's `origin_epoch`
+(from `/fusion/status`, 2026-09-10). The rover has no persistent map, so a
+restart of the Jetson's pose layer — container restart, `./rover pose`,
+a cuVSLAM divergence recovery — starts a new origin, and every location
+stamped with the old one is silently dropped from `get_known_locations()`
+(`ros2_bridge.py:_rebuild_known_locations`) rather than served against
+coordinates that no longer mean anything. The file itself is untouched;
+re-run `save_location` to make a spot usable again this session.
+
 ## Telegram channel
 
 Full setup + usage guide: **TELEGRAM.md**. Short version: create a bot with

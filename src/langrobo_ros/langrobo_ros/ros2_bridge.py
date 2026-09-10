@@ -57,21 +57,46 @@ class ROS2Bridge:
         # so the real robot's behaviour never changes unless sim is requested.
         self._robot_body = robot_body
 
-        # Named map locations: {name: (x, y, yaw_deg)} — populated from nav_params
-        self._known_locations: dict = known_locations or {}
+        # Named map locations: {name: (x, y, yaw_deg)} — populated from nav_params.
+        # This is the BASE set; _rebuild_known_locations() layers fresh saved
+        # locations on top of it and reassigns _known_locations wholesale, so
+        # keep the config-declared set around under its own name.
+        self._config_locations: dict = dict(known_locations or {})
+        self._known_locations: dict = dict(self._config_locations)
+
+        # The odom origin THIS process currently believes is live, from
+        # /fusion/status's origin_epoch (None until the first message arrives).
+        # Every saved location is stamped with the epoch it was measured
+        # under; one stamped with a DIFFERENT epoch was measured from a
+        # physical spot this session has no relationship to (see NAV_FRAME
+        # above) and must not be served, or navigate_to_pose would silently
+        # drive to the wrong place. See _on_fusion_status / _rebuild_known_locations.
+        self._origin_epoch = None
+        self._warned_stale_locations = False
 
         # Locations saved at runtime (save_location tool) persist across
-        # restarts and shadow yaml defaults on name collision.
+        # restarts and shadow config defaults on name collision -- but ONLY
+        # once their stamped epoch matches the live one; see above.
         self._locations_file = os.path.expanduser("~/.langrobo/locations.json")
-        self._saved_locations: dict = {}
+        self._saved_locations: dict = {}   # {name: (x, y, yaw_deg, origin_epoch)}
         try:
             with open(self._locations_file) as f:
-                self._saved_locations = {k: tuple(v) for k, v in json.load(f).items()}
-            self._known_locations.update(self._saved_locations)
+                raw = json.load(f)
+            for k, v in raw.items():
+                # 4 fields = post-epoch format. 3 = a file from before this
+                # existed; treat as unstamped so it never gets reloaded silently
+                # (it may well be from a now-gone odom origin).
+                self._saved_locations[k] = tuple(v) if len(v) == 4 else (*v, None)
         except FileNotFoundError:
             pass
         except Exception as e:
             node.get_logger().warning(f"Could not load saved locations: {e}")
+        # NOT merged into _known_locations yet: that happens in
+        # _rebuild_known_locations, gated on origin_epoch actually being
+        # known, so a stale entry is never served even in the few seconds
+        # before the first /fusion/status message arrives.
+
+        node.create_subscription(String, "/fusion/status", self._on_fusion_status, 10)
 
         # TF buffer for get_current_pose() (map -> base_link)
         from tf2_ros import Buffer, TransformListener
@@ -227,6 +252,34 @@ class ROS2Bridge:
     def get_known_locations(self) -> dict:
         return self._known_locations
 
+    def _rebuild_known_locations(self) -> None:
+        """Recompute _known_locations from config + only the saved locations
+        whose stamped epoch matches the currently-live odom origin. Called
+        whenever origin_epoch changes -- including mid-session, e.g. a
+        cuVSLAM divergence recovery (./rover pose) restarts the odom origin
+        without the Pi 5 process ever restarting."""
+        fresh = {k: v[:3] for k, v in self._saved_locations.items()
+                 if v[3] == self._origin_epoch}
+        stale = sorted(set(self._saved_locations) - set(fresh))
+        if stale and not self._warned_stale_locations:
+            self._warned_stale_locations = True
+            self._node.get_logger().warning(
+                f"{len(stale)} saved location(s) are from a different odom "
+                f"origin and will not be served until re-saved: {stale}")
+        self._known_locations = {**self._config_locations, **fresh}
+
+    def _on_fusion_status(self, msg) -> None:
+        try:
+            data = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError):
+            return
+        epoch = data.get("origin_epoch")
+        if epoch is None or epoch == self._origin_epoch:
+            return
+        self._origin_epoch = epoch
+        self._warned_stale_locations = False   # a new origin deserves its own warning
+        self._rebuild_known_locations()
+
     def get_current_pose(self) -> tuple | None:
         """Robot pose as (x, y, yaw_deg) in NAV_FRAME; None if TF has no fix."""
         import rclpy.time
@@ -241,9 +294,13 @@ class ROS2Bridge:
         return (t.transform.translation.x, t.transform.translation.y, yaw)
 
     def add_known_location(self, name: str, x: float, y: float, yaw_deg: float) -> None:
-        """Add/overwrite a named location and persist it across restarts."""
+        """Add/overwrite a named location for THIS odom session, and persist it
+        to disk stamped with the current origin_epoch. It will only be served
+        again after a restart (or a mid-session pose reset) if that same
+        origin is still the live one -- see _rebuild_known_locations. Usable
+        immediately either way, for the rest of the current session."""
         self._known_locations[name] = (x, y, yaw_deg)
-        self._saved_locations[name] = (x, y, yaw_deg)
+        self._saved_locations[name] = (x, y, yaw_deg, self._origin_epoch)
         os.makedirs(os.path.dirname(self._locations_file), exist_ok=True)
         with open(self._locations_file, "w") as f:
             json.dump({k: list(v) for k, v in self._saved_locations.items()}, f, indent=2)

@@ -430,7 +430,13 @@ def save_location(name: str) -> str:
     """Save the robot's CURRENT position under a name, so the user can send the
     robot back later with navigate_to_pose(name). Use when the user says
     "remember this spot as X", "save this location as the charging dock", etc.
-    Survives restarts.
+
+    Good for the rest of this power-on. It's written to disk and reloaded on
+    a restart too, but only stays usable if the robot's odom origin is still
+    the same one it was saved under — a container restart, a re-run of the
+    pose layer, or a cuVSLAM divergence recovery all start a fresh origin,
+    which silently retires every location saved before it (list_saved_locations
+    will just stop naming it). Re-save it once that happens.
 
     name: short lowercase identifier, e.g. 'table_5' or 'charging_dock'."""
     bridge = _bridge.get()

@@ -269,7 +269,7 @@ E4B would roughly meet the ≤2s first-audio budget).
 
 | Path | Contents |
 |---|---|
-| `~/.langrobo/locations.json` | spots saved with `save_location` |
+| `~/.langrobo/locations.json` | spots saved with `save_location` — each stamped with the odom origin it was measured under; one from a since-reset origin is dropped rather than served (OPERATIONS.md §"Robot state files") |
 | `~/.langrobo/telegram_offset` | inbound cursor — exactly-once across restarts |
 | `~/.langrobo/telegram_deferred.json` | messages queued during quiet hours |
 | `~/ros2_ws/.env` | keys + service settings (validated at boot) |
