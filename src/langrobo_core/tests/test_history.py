@@ -2,12 +2,16 @@
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from langrobo_core.utils.history import has_image, trim_history
+from langrobo_core.utils.history import CAMERA_VIEW_MARKER, has_image, trim_history
+from langrobo_core.utils.pose_stamp import view_label
 
 
 def _frame(i=0):
+    # The real label look() writes -- a pose stamp, not the word "current".
+    # Building it through view_label() is what keeps this test honest if the
+    # stamp's wording changes again: is_camera_frame() has to keep matching it.
     return HumanMessage(content=[
-        {"type": "text", "text": "[Current camera view]"},
+        {"type": "text", "text": view_label((1.0 + i, 0.5, 30.0 * i))},
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,FRAME{i}"}},
     ])
 
@@ -51,7 +55,7 @@ def test_trim_never_starts_at_camera_frame():
     assert changed
     assert isinstance(out[0], HumanMessage)
     assert not has_image(out[0])
-    assert "[Current camera view]" not in str(out[0].content)
+    assert CAMERA_VIEW_MARKER not in str(out[0].content)
 
 
 def test_frame_eviction_keeps_newest_two():

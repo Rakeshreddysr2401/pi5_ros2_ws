@@ -6,6 +6,7 @@ from typing import Annotated
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
+from ..utils import pose_stamp
 from . import _bridge
 
 # ── Fine-movement Twist parameters (direct /cmd_vel, bypasses Nav2) ──────────
@@ -179,24 +180,55 @@ def _label(cmd: str, val: float) -> str:
 
 # Appended to every tool result that MOVED the robot.
 #
-# WHY THIS IS A STRING AND NOT A HISTORY EDIT. look() injects the frame as a
-# HumanMessage labelled "[Current camera view]" which stays in the conversation,
-# and local_agent keeps images, so a follow-up question asked after a drive was
-# being answered from a photo of somewhere the robot no longer is.
+# WHY THIS IS A STRING AND NOT A HISTORY EDIT. The obvious fix -- strip stale
+# images when the base moves -- breaks the APPEND-ONLY cache invariant at the
+# top of utils/message_utils.py: an image present in turn N and gone in turn N+1
+# diverges the cached prompt prefix and re-prefills everything after it. (The
+# cost is the text that REMAINS after the removed image, so removing the newest
+# frame is cheaper than 86e0b08 claimed and removing one with another image
+# after it is far worse -- but it is unmeasured on this stack, and stamping is
+# free, so it stays untried. PERCEPTION_STATE.md in the rover repo has the
+# reasoning.)
 #
-# The obvious fix -- strip stale images when the base moves -- breaks the
-# APPEND-ONLY cache invariant documented at the top of utils/message_utils.py:
-# an image present in turn N and gone in turn N+1 diverges the cached prompt
-# prefix and re-prefills everything after it. That is worst exactly where it
-# would bite, on local_agent's slot with a camera frame already in it.
-#
-# Saying it in the tool result is append-only by construction, costs a few
-# tokens, and reaches the model at the moment the movement is reported.
+# THIS NOTE IS THE SECOND SIGNAL, NOT THE FIRST. On its own it lost: it is one
+# sentence in a ToolMessage, written during a `navigate` turn, competing with a
+# numbered rule in local_agent's own system prompt telling it not to look again.
+# The first signal is now the pose stamp on the frame itself and on every user
+# turn (utils/pose_stamp) -- data the model compares rather than an instruction
+# it has to obey. This note stays because it is nearly free and it reaches the
+# model at the exact moment the movement is reported.
 _VIEW_STALE_NOTE = (
     " The robot has MOVED, so the camera view has changed: any photo earlier in "
     "this conversation shows where it used to be. Do not answer questions about "
     "the surroundings from it -- call look() for a fresh view first."
 )
+
+
+def view_stale_note() -> str:
+    """_VIEW_STALE_NOTE, plus the measured displacement when it is knowable.
+
+    A number the model can check against the frame's own stamp is worth more
+    than an adjective: "0.90 m and 180 degrees from where that photo was taken"
+    lines up with the pose in the label, and "the view has changed" does not.
+
+    Degrades to the bare sentence whenever the distance cannot be measured --
+    no look() yet this conversation, or TF has no odom->base_link fix. It never
+    returns "", so a move always says something about the view.
+    """
+    last, _ = pose_stamp.last_view()
+    if last is None:
+        return _VIEW_STALE_NOTE
+    try:
+        now = _bridge.get().get_current_pose()
+    except Exception:
+        # A tool result must not fail because telemetry did. The note is the
+        # point; the measurement is a bonus.
+        return _VIEW_STALE_NOTE
+    moved = pose_stamp.describe_delta(last, now)
+    if not moved:
+        return _VIEW_STALE_NOTE
+    return (_VIEW_STALE_NOTE +
+            f" It is now {moved} from where that photo was taken.")
 
 
 def _moved(steps: list) -> bool:
@@ -218,7 +250,7 @@ def _report_partial(labels: list, at: int, why: str, moved: bool = True) -> str:
     # `moved` comes from the caller, which knows the parsed steps. It is NOT
     # `at > 0`: a sequence interrupted DURING its first step still drove the
     # base part of the way, and "completed: nothing" would have hidden that.
-    return msg + (_VIEW_STALE_NOTE if moved else "")
+    return msg + (view_stale_note() if moved else "")
 
 
 @tool
@@ -291,7 +323,7 @@ def move_robot(command: str) -> str:
                                    moved=_moved(steps[:i + 1]))
 
     out = "Movement done: " + ", ".join(labels)
-    return out + (_VIEW_STALE_NOTE if _moved(steps) else "")
+    return out + (view_stale_note() if _moved(steps) else "")
 
 
 # Origin of the most recent navigate_to_pose request. The Nav2 result lands
@@ -390,7 +422,7 @@ def navigate_to_pose(location: str,
     x, y, yaw_deg = known[loc]
     bridge.start_nav_to_pose(x, y, yaw_deg, label=loc)
     return (f"Navigation started: heading to '{location}' ({x:.1f}, {y:.1f}). "
-            f"I will report when I arrive." + _VIEW_STALE_NOTE)
+            f"I will report when I arrive." + view_stale_note())
 
 
 @tool

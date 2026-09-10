@@ -8,7 +8,7 @@ as cheap as possible:
 
 - Append-only within the cap: under `max_len` the list is returned untouched.
 - Cuts land only on a real user HumanMessage — never a look()-injected camera
-  frame (a conversation must not open with a dangling "[Current camera view]")
+  frame (a conversation must not open with a dangling camera-view message)
   and never between an AIMessage's tool_call and its ToolMessage.
 - Frame eviction piggybacks on the trim: since the suffix re-prefills anyway,
   that is the free moment to drop old camera frames (the most expensive tokens
@@ -18,7 +18,7 @@ as cheap as possible:
 
 from langchain_core.messages import HumanMessage
 
-CAMERA_VIEW_MARKER = "[Current camera view]"
+from .pose_stamp import CAMERA_VIEW_MARKER  # noqa: F401  (re-exported)
 
 # Camera frames kept (newest first) when a trim fires. Two covers "compare with
 # what you saw before" follow-ups; older scenes are stale by the time a trim

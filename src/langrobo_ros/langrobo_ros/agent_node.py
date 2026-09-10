@@ -34,6 +34,7 @@ from langrobo_core.tools import _bridge as bridge_module
 from langrobo_core import registry
 from langrobo_core.graph import build_graph
 from langrobo_core.utils import timing
+from langrobo_core.utils import pose_stamp
 from langrobo_core.utils.history import trim_history
 from langrobo_core.utils.utterance import join_utterances, looks_incomplete
 from langrobo_core.utils.speech_stream import SpeechStreamHandler
@@ -641,9 +642,24 @@ class AgentNode(Node):
             # Telegram turns are framed with the sender so the model knows who
             # is talking and from where — plain text, append-only, cache-safe.
             turn_text = text
-            turn_msg = None
             if telegram:
                 turn_text = self._frame_telegram_turn(telegram, text)
+
+            # Body state. A camera view in the conversation is stamped with the
+            # pose it was taken FROM; this stamps the turn with where the robot
+            # is NOW, so a photo of somewhere the robot has left is visibly of
+            # somewhere else instead of being labelled "current" forever.
+            # Returns None until a look() has happened -- before the first frame
+            # there is nothing to compare against and a pose on "what's the
+            # weather" is noise. See langrobo_core.utils.pose_stamp, including
+            # why this goes at the TAIL of the message list and never into the
+            # system prompt.
+            stamp = pose_stamp.turn_stamp(self._bridge.get_current_pose())
+            if stamp:
+                turn_text = f"{stamp} {turn_text}"
+
+            turn_msg = None
+            if telegram:
                 if telegram.photo:
                     # Same shape look() uses: images ride in user-role messages
                     # (llama.cpp honours them only there) and persist in the

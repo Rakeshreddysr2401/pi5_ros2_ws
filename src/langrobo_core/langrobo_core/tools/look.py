@@ -6,21 +6,28 @@ servers, including llama.cpp, only honour images in user-role messages), so it
 persists in the conversation and stays available for follow-up questions about
 the same scene without re-querying.
 
-THAT REUSE IS ONLY VALID WHILE THE ROBOT HAS NOT MOVED. The frame keeps its
-"[Current camera view]" label for the rest of the conversation, so after a drive
-or a turn the model was answering "what is in front of you" from a photo of
-somewhere the robot no longer is. Every tool that moves the base now appends
-movement._VIEW_STALE_NOTE to its result saying so; see the reasoning there for
-why the history is not edited instead.
+THAT REUSE IS ONLY VALID WHILE THE ROBOT HAS NOT MOVED, and the frame's label
+is what says so. It used to read "[Current camera view]" — written once, never
+rewritten, so after a drive the model was answering "what is in front of you"
+from a photo of somewhere the robot no longer is, while the label still claimed
+the photo was current.
+
+The label now carries the POSE THE FRAME WAS TAKEN FROM instead of an assertion
+that it is current (utils/pose_stamp), and every user turn carries where the
+robot is now. Nothing has to expire a stamp: two poses that disagree are the
+evidence. Tools that move the base still append a note as a second signal — see
+movement.view_stale_note.
 """
 
 import base64
+import time
 from typing import Annotated
 
 from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.types import Command
 
+from ..utils import pose_stamp
 from ._bridge import get
 
 
@@ -34,11 +41,10 @@ def look(tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
     scene, so you do NOT need to call look() again for a follow-up about the
     SAME view.
 
-    YOU MUST call look() again if the robot has moved since the last one --
-    any drive, turn, scan or navigation. An earlier photo shows where the robot
-    used to be, and answering from it describes a place it has left. When a
-    movement result says the view has changed, treat every earlier photo as out
-    of date.
+    Each captured view is labelled with the pose it was taken FROM, and each
+    turn is labelled with where the robot is NOW. If those two poses differ the
+    robot has moved, the earlier photo shows a place it has left, and you MUST
+    call look() again before saying anything about the surroundings.
     """
     bridge = get()
     # Reject frames older than this: the camera publishes continuously, so a
@@ -59,11 +65,19 @@ def look(tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
             )
         ]})
 
+    # Stamp the frame with where it was taken from, and remember that pose so
+    # the next turn can say how far the robot has moved from it. Recorded only
+    # on a SUCCESSFUL capture: a failed look() puts no photo in the
+    # conversation, so there is nothing for a later turn to be stale against.
+    pose = bridge.get_current_pose()
+    when = time.time()
+    pose_stamp.record_view(pose, when)
+
     b64 = base64.b64encode(frame).decode()
     return Command(update={"messages": [
         ToolMessage("Captured the current camera view.", tool_call_id=tool_call_id),
         HumanMessage(content=[
-            {"type": "text", "text": "[Current camera view]"},
+            {"type": "text", "text": pose_stamp.view_label(pose, when)},
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
         ]),
     ]})

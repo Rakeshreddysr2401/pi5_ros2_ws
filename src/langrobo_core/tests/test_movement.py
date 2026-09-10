@@ -280,3 +280,32 @@ def test_a_partial_sequence_still_warns_about_what_did_run(fake_twist, legs):
     out = move_robot.invoke({"command": "F:60,L:90,F:30"})
     assert "did NOT run" in out
     assert "call look()" in out
+
+
+# ── ...and says HOW FAR, when that is knowable ──────────────────────────────
+#
+# The note alone lost once already: one sentence in a ToolMessage against a
+# numbered rule in local_agent's system prompt. A measured displacement is
+# something the model can line up against the pose printed on the frame itself.
+
+def test_the_note_measures_the_distance_from_the_looked_at_pose(fake_twist, legs):
+    from langrobo_core.utils import pose_stamp
+    bridge = _bridge.get()
+    pose_stamp.record_view((0.0, 0.0, 0.0))
+    bridge.pose = (0.9, 0.0, 180.0)
+    try:
+        out = move_robot.invoke({"command": "F:90"})
+        assert "0.90 m" in out and "180" in out
+    finally:
+        pose_stamp.forget_view()
+        del bridge.pose
+
+
+def test_the_note_survives_having_nothing_to_measure(fake_twist, legs):
+    """No look() yet, or TF has no fix: the bare sentence still goes out. A
+    movement must never report silently that the view is fine."""
+    from langrobo_core.utils import pose_stamp
+    pose_stamp.forget_view()
+    out = move_robot.invoke({"command": "F:30"})
+    assert "call look()" in out
+    assert " m " not in out.split("MOVED")[-1].replace("0.90 m", "")
