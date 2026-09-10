@@ -213,12 +213,13 @@ def test_too_many_steps_moves_nothing(fake_twist, legs):
 def test_one_call_runs_every_step_in_order(fake_twist, legs):
     calls, _ = legs
     out = move_robot.invoke({"command": "F:60,L:90,F:30"})
-    assert out == "Movement done: F:60, L:90, F:30"
+    assert out.startswith("Movement done: F:60, L:90, F:30")
+    assert "call look()" in out, "a move must tell the model its view is stale"
     assert len(calls) == 3, "all three legs must actually run"
 
 
 def test_single_command_still_reads_the_same(fake_twist, legs):
-    assert move_robot.invoke({"command": "F:60"}) == "Movement done: F:60"
+    assert move_robot.invoke({"command": "F:60"}).startswith("Movement done: F:60")
 
 
 def test_interruption_names_the_steps_that_did_not_run(fake_twist, legs):
@@ -244,3 +245,38 @@ def test_stop_in_a_sequence_abandons_the_rest(fake_twist, legs):
     out = move_robot.invoke({"command": "F:60,S,F:30"})
     assert "did NOT run: F:30" in out
     assert len(calls) == 1, "'S' means stop — the third leg must never run"
+
+
+# ── The camera view goes stale when the base moves ──────────────────────────
+#
+# look() leaves the frame in the conversation labelled "[Current camera view]"
+# for good, and local_agent keeps images, so a question asked after a drive was
+# answered from a photo of somewhere the robot had left. The history cannot be
+# edited to fix it -- message_utils' projection is append-only on purpose -- so
+# the movement result has to carry the news itself.
+
+def test_a_move_says_the_view_is_now_stale(fake_twist, legs):
+    out = move_robot.invoke({"command": "F:30"})
+    assert "MOVED" in out and "call look()" in out
+
+
+def test_a_turn_says_it_too(fake_twist, legs):
+    out = move_robot.invoke({"command": "L:180"})
+    assert "call look()" in out
+
+
+def test_a_bare_stop_does_not_claim_the_view_changed(fake_twist, legs):
+    """'S' moves nothing, so the frame in the conversation is still valid.
+    Crying stale here would burn a 10-40 s look for no reason."""
+    out = move_robot.invoke({"command": "S"})
+    assert "call look()" not in out
+
+
+def test_a_partial_sequence_still_warns_about_what_did_run(fake_twist, legs):
+    """Interrupted DURING the first leg: the base still drove part of the way,
+    so the view is stale even though "completed: nothing"."""
+    calls, cfg = legs
+    cfg["fail_at"] = 1
+    out = move_robot.invoke({"command": "F:60,L:90,F:30"})
+    assert "did NOT run" in out
+    assert "call look()" in out

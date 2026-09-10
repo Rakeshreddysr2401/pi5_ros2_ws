@@ -209,7 +209,7 @@ def approach_described_object(description: str,
                              round(math.degrees(goal["yaw"]), 1),
                              label=f"near the {description}")
     return (f"I can see the {description} — about {res['depth_m']:.1f} m away. "
-            f"On my way; I'll say when I'm there.")
+            f"On my way; I'll say when I'm there." + _mv._VIEW_STALE_NOTE)
 
 
 @tool
@@ -239,7 +239,8 @@ def scan_surroundings() -> str:
             if bridge.motion_interrupted():
                 return "Scan stopped."
             time.sleep(0.05)
-    return "Scan complete — I turned a full circle, so the map now covers all around me."
+    return ("Scan complete — I turned a full circle, so the map now covers "
+            "all around me." + _mv._VIEW_STALE_NOTE)
 
 
 @tool

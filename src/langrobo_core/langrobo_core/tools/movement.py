@@ -177,7 +177,34 @@ def _label(cmd: str, val: float) -> str:
     return cmd if cmd == "S" else f"{cmd}:{val:g}"
 
 
-def _report_partial(labels: list, at: int, why: str) -> str:
+# Appended to every tool result that MOVED the robot.
+#
+# WHY THIS IS A STRING AND NOT A HISTORY EDIT. look() injects the frame as a
+# HumanMessage labelled "[Current camera view]" which stays in the conversation,
+# and local_agent keeps images, so a follow-up question asked after a drive was
+# being answered from a photo of somewhere the robot no longer is.
+#
+# The obvious fix -- strip stale images when the base moves -- breaks the
+# APPEND-ONLY cache invariant documented at the top of utils/message_utils.py:
+# an image present in turn N and gone in turn N+1 diverges the cached prompt
+# prefix and re-prefills everything after it. That is worst exactly where it
+# would bite, on local_agent's slot with a camera frame already in it.
+#
+# Saying it in the tool result is append-only by construction, costs a few
+# tokens, and reaches the model at the moment the movement is reported.
+_VIEW_STALE_NOTE = (
+    " The robot has MOVED, so the camera view has changed: any photo earlier in "
+    "this conversation shows where it used to be. Do not answer questions about "
+    "the surroundings from it -- call look() for a fresh view first."
+)
+
+
+def _moved(steps: list) -> bool:
+    """True if any step actually drove the base. A lone 'S' moves nothing."""
+    return any(cmd != "S" for cmd, _ in steps)
+
+
+def _report_partial(labels: list, at: int, why: str, moved: bool = True) -> str:
     """One honest sentence about a sequence that did not finish.
 
     The bug this exists for: move_robot ran step 1 of "forward 60, left, forward
@@ -186,8 +213,12 @@ def _report_partial(labels: list, at: int, why: str) -> str:
     """
     done = ", ".join(labels[:at]) if at else "nothing"
     rest = ", ".join(labels[at:])
-    return (f"Movement {why} {labels[at]} -- completed: {done}; "
-            f"did NOT run: {rest}. The robot is stopped.")
+    msg = (f"Movement {why} {labels[at]} -- completed: {done}; "
+           f"did NOT run: {rest}. The robot is stopped.")
+    # `moved` comes from the caller, which knows the parsed steps. It is NOT
+    # `at > 0`: a sequence interrupted DURING its first step still drove the
+    # base part of the way, and "completed: nothing" would have hidden that.
+    return msg + (_VIEW_STALE_NOTE if moved else "")
 
 
 @tool
@@ -248,16 +279,19 @@ def move_robot(command: str) -> str:
             if not _drive_for_duration(bridge, twist, dur):
                 # Name what did NOT happen. Reporting only the finished steps is
                 # exactly how a truncated sequence reads as a completed one.
-                return _report_partial(labels, i, "interrupted during")
+                return _report_partial(labels, i, "interrupted during",
+                                       moved=_moved(steps[:i + 1]))
         else:
             bridge.publish_twist(twist)
 
         if cmd == "S" and i + 1 < len(steps):
             # An explicit stop ends the sequence. Carrying on would be the exact
             # opposite of what the word means.
-            return _report_partial(labels, i + 1, "stopped before")
+            return _report_partial(labels, i + 1, "stopped before",
+                                   moved=_moved(steps[:i + 1]))
 
-    return "Movement done: " + ", ".join(labels)
+    out = "Movement done: " + ", ".join(labels)
+    return out + (_VIEW_STALE_NOTE if _moved(steps) else "")
 
 
 # Origin of the most recent navigate_to_pose request. The Nav2 result lands
@@ -355,7 +389,8 @@ def navigate_to_pose(location: str,
 
     x, y, yaw_deg = known[loc]
     bridge.start_nav_to_pose(x, y, yaw_deg, label=loc)
-    return f"Navigation started: heading to '{location}' ({x:.1f}, {y:.1f}). I will report when I arrive."
+    return (f"Navigation started: heading to '{location}' ({x:.1f}, {y:.1f}). "
+            f"I will report when I arrive." + _VIEW_STALE_NOTE)
 
 
 @tool

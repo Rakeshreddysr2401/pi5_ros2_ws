@@ -5,6 +5,13 @@ injected as a HumanMessage image block (NOT a ToolMessage — OpenAI-compatible
 servers, including llama.cpp, only honour images in user-role messages), so it
 persists in the conversation and stays available for follow-up questions about
 the same scene without re-querying.
+
+THAT REUSE IS ONLY VALID WHILE THE ROBOT HAS NOT MOVED. The frame keeps its
+"[Current camera view]" label for the rest of the conversation, so after a drive
+or a turn the model was answering "what is in front of you" from a photo of
+somewhere the robot no longer is. Every tool that moves the base now appends
+movement._VIEW_STALE_NOTE to its result saying so; see the reasoning there for
+why the history is not edited instead.
 """
 
 import base64
@@ -24,8 +31,14 @@ def look(tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
     Call this when you need fresh visual information and don't already have a
     recent frame in the conversation. The captured image is added to the
     conversation and remains available for follow-up questions about the same
-    scene, so you do NOT need to call look() again for follow-ups unless the
-    scene may have changed.
+    scene, so you do NOT need to call look() again for a follow-up about the
+    SAME view.
+
+    YOU MUST call look() again if the robot has moved since the last one --
+    any drive, turn, scan or navigation. An earlier photo shows where the robot
+    used to be, and answering from it describes a place it has left. When a
+    movement result says the view has changed, treat every earlier photo as out
+    of date.
     """
     bridge = get()
     # Reject frames older than this: the camera publishes continuously, so a
