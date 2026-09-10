@@ -217,6 +217,32 @@ catches the degenerate case an agent re-calling its own tools forever — a path
 that never reaches `handle_handover`, so the handover visit counter cannot see
 it.
 
+### 3.6 Vision-question backstop (`graph/build.py`, added 2026-09-10)
+
+CHAT_PROMPT and NAVIGATE_PROMPT both say, as a numbered rule, to hand a
+question about what the robot sees to `local_agent` — the only agent with
+`look()`. Both are *instructions*. Two real transcripts the same evening
+showed the 12B model ignoring them: once by just answering in plain text with
+`navigate` sticky ("I am looking at the area around the chair", no `look()`,
+no image anywhere in the turn), and once — because the first backstop only
+checked "spoke with no tool call" — by proposing `scan_surroundings()`, a real
+360° rotation nobody asked for, instead of a handover.
+
+The fix lives in the SAME loop-guard wrapper as §3.5, not in either prompt: on
+every agent step, before the graph's normal routing runs, check whether the
+step is (a) not `local_agent`, (b) NOT a `handover` tool call, (c) `local_agent`
+has not already answered this turn, and (d) the user's own last message
+matches a narrow vision-question pattern (`_VISION_QUESTION`, matched against
+the user's fixed words, never the model's free-form reply). On a hit, the
+proposed reply or tool call is discarded — never executed, never added to
+history — and a `Command(goto="local_agent")` carries a routing note instead,
+chaining in the same turn. `agent_node` only speaks the final message once the
+graph reaches `END`, so nothing wrong is ever said or driven.
+
+Deliberately keyed on `handover` being present, not on `tool_calls` being
+empty: the first version's "any tool call is fine" exemption is what let the
+`scan_surroundings()` case through. Tests: `tests/test_vision_backstop.py`.
+
 ---
 
 ## 4. Latency: where the seconds go, and what buys them back
@@ -274,6 +300,13 @@ A prefix is only cached while it is byte-identical. Four rules protect that:
 3. **Message projection is append-only** (`utils/message_utils.py`). Never
    drop or reorder mid-history messages.
 4. **History trims only at `HumanMessage` boundaries** (`utils/history.py`).
+5. **Per-turn state (a pose, a distance) goes at the TAIL of the message
+   list, never into the system prompt** (`utils/pose_stamp.py`, added
+   2026-09-10). The system prompt is the cached prefix — per-turn text there
+   re-prefills the whole conversation, every turn, on every agent. `look()`
+   stamps its frame with the pose it was taken FROM; `agent_node` stamps each
+   user turn with where the robot is NOW; both ride on messages that were
+   being appended anyway.
 
 ### 4.3 The cache warmer
 
@@ -306,7 +339,7 @@ spoken: a markdown list is read aloud bullet characters and all. That is why
 | `registry.py` | **one `AgentSpec` per agent.** Prompt, tools, KV slot, sticky, keep_images. The file to read first. |
 | `prompts.py` | every system prompt, in one file. Read top to bottom to see everything the robot is told to be. |
 | `agents/factory.py` | builds a node from a spec. **Every** agent is this function — there are no hand-written nodes. |
-| `graph/build.py` | the StateGraph. Derived entirely from `registry.SPECS`; adding an agent needs no edit here. |
+| `graph/build.py` | the StateGraph. Derived entirely from `registry.SPECS`; adding an agent needs no edit here. Also the loop guard (§3.5) and the vision-question backstop (§3.6). |
 | `graph/turn_entry.py` | which agent a turn enters: the sticky one, or chat. |
 | `graph/handover_resolver.py` | executes a handover; guards against loops. |
 | `graph/state.py` | `AgentState` — messages, active agent, per-turn counters, sender identity. |

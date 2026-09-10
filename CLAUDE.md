@@ -210,6 +210,17 @@ change both repos together or neither.
   `--jinja --parallel 3` (one slot per agent: chat/local_agent/navigate).
 - Pi5↔Jetson clocks drift ~1.5s (chrony peering pending) — latency_replay
   flags negative deltas.
+- **A prompt rule the model has to follow is not a fix — it is a thing to
+  measure.** CHAT_PROMPT and NAVIGATE_PROMPT both said, in as many words, "a
+  vision question is not yours to answer, hand it to local_agent." The 12B
+  model ignored that instruction on real hardware, twice, in two different
+  shapes (spoke directly with no tool call; then, once that was caught,
+  proposed `scan_surroundings()` — a real 360° rotation — instead of handing
+  over). The actual fix is `graph/build.py`'s vision-question backstop
+  (ARCHITECTURE_LLD.md §3.6): a deterministic check on the graph, matched
+  against the user's own words, not another sentence in a prompt. Any new
+  "agent X must never do Y" rule is the same shape of untrustworthy until
+  it's been driven on the robot, not just read.
 
 ## Simulation laptop (rover_sim) — the second body
 
