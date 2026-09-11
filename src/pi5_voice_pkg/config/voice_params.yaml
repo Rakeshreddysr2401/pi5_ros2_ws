@@ -34,6 +34,12 @@ pi5_stt_node:
   ros__parameters:
     input_device: Blackwire
     bt_mac: "D6:AA:BB:59:EF:B6"        # boAt Stone 650
+    # Software gain on the HFP mic, re-applied on every reconnect (PipeWire
+    # resets it). Measured 2026-09-11: at 1.0 this speaker delivered speech at
+    # rms ~0.024 and ambient ~0.0008 — every utterance fell under the 0.05
+    # min_utterance_rms gate and NOTHING reached the brain. 4.0 puts speech
+    # clear of the gate while ambient stays well under it.
+    bt_mic_gain: 4.0
     bt_profile: hfp   # Stone mic in use; a2dp would kill it
     # Mic stays muted this long after TTS stops. 0.5 suits the USB headset;
     # A2DP buffers 100-250ms on top, so raise to ~1.2 with a Bluetooth speaker

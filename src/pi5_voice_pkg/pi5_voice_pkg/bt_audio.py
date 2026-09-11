@@ -24,6 +24,7 @@ returns a status dict, never an exception (CLAUDE.md hard rule 4).
 import re
 import shutil
 import subprocess
+import time
 
 DEFAULT_TIMEOUT_S = 8.0
 
@@ -183,9 +184,28 @@ def set_default(node_id: int) -> tuple[bool, str]:
     return (rc == 0), out.strip()
 
 
+def set_volume(node_id: int, gain: float) -> tuple[bool, str]:
+    """Set a node's volume. Gains above 1.0 are software amplification.
+
+    The HFP mic comes back at its own level every time the speaker reconnects,
+    so this has to run on each `ensure`, not once by hand.
+    """
+    rc, out = _run(["wpctl", "set-volume", str(node_id), f"{gain:.2f}"])
+    return (rc == 0), out.strip()
+
+
+def _await_bt_node(section: str, mac: str, timeout_s: float = 4.0) -> dict | None:
+    deadline = time.monotonic() + timeout_s
+    while True:
+        node = find_bt_node(wpctl_status(), section, mac)
+        if node or time.monotonic() >= deadline:
+            return node
+        time.sleep(0.3)
+
+
 # ── The one call the nodes make ─────────────────────────────────────────────
 
-def ensure(mac: str, profile: str = "a2dp") -> dict:
+def ensure(mac: str, profile: str = "a2dp", mic_gain: float = 1.0) -> dict:
     """Connect the speaker and point PipeWire at it.
 
     Returns a status dict describing exactly how far it got — the caller logs
@@ -223,10 +243,17 @@ def ensure(mac: str, profile: str = "a2dp") -> dict:
         result["notes"].append("no PipeWire sink for this device yet")
 
     if profile == "hfp":
-        source = find_bt_node(status, "Sources", mac)
+        # The source node appears a moment after the profile switch, so a single
+        # status read right after it often misses the mic entirely — and then
+        # neither the default nor the gain gets set.
+        source = _await_bt_node("Sources", mac)
         if source:
             set_default(source["id"])
             result["source"] = source["name"]
+            if mic_gain != 1.0:
+                ok, msg = set_volume(source["id"], mic_gain)
+                result["notes"].append(
+                    f"mic gain {mic_gain:.2f}: {'ok' if ok else msg}")
         else:
             result["notes"].append("no PipeWire source — is the card in HFP?")
 

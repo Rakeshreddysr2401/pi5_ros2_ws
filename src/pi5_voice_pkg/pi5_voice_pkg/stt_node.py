@@ -86,6 +86,10 @@ class STTNode(Node):
         # and this node keeps using the wired mic.
         self.declare_parameter('bt_mac', '')
         self.declare_parameter('bt_profile', 'a2dp')
+        # PipeWire resets the HFP mic to its own level on every reconnect, and
+        # this speaker's is far below what min_utterance_rms expects — see
+        # voice_params.yaml. Re-applied inside bt_audio.ensure(), not by hand.
+        self.declare_parameter('bt_mic_gain', 1.0)
         # How long to keep the mic muted after TTS stops. Was a hardcoded 0.5s
         # tuned for a USB headset. A2DP buffers 100-250ms and _play returns when
         # the last sample is WRITTEN, not heard — so over Bluetooth the speaker
@@ -160,7 +164,8 @@ class STTNode(Node):
         bt_mac = self.get_parameter('bt_mac').value
         bt_profile = self.get_parameter('bt_profile').value
         if bt_mac:
-            bt = bt_audio.ensure(bt_mac, bt_profile)
+            bt = bt_audio.ensure(bt_mac, bt_profile,
+                                 float(self.get_parameter('bt_mic_gain').value))
             for note in bt['notes']:
                 self.get_logger().info(f'bluetooth: {note}')
             if bt_profile == 'hfp' and bt['source']:
