@@ -184,6 +184,14 @@ class STTNode(Node):
 
         self._in_device = self._find_device(device_hint)
         self.get_logger().info(f'input device: {self._in_device}')
+
+        # tts_node runs the same ensure() ~100ms later, and its HFP profile
+        # switch re-creates the PipeWire source with a fresh volume — wiping
+        # the gain set above. Re-apply once both nodes have settled, against
+        # whatever source is default by then.
+        self._mic_gain = float(self.get_parameter('bt_mic_gain').value)
+        if bt_mac and self._mic_gain != 1.0:
+            self._gain_timer = self.create_timer(5.0, self._reapply_mic_gain)
         # [diag 2026-09-04] full enumeration — arecord and sounddevice number devices
         # from different backends, so log the whole table to catch index drift.
         self.get_logger().info('audio devices:\n' + '\n'.join(
@@ -563,6 +571,12 @@ class STTNode(Node):
             return
 
         self.get_logger().info(f'not addressed to me — ignored: {text!r}')
+
+    def _reapply_mic_gain(self) -> None:
+        self._gain_timer.cancel()
+        ok, msg = bt_audio.set_default_source_volume(self._mic_gain)
+        self.get_logger().info(
+            f'mic gain {self._mic_gain:.2f} re-applied: {"ok" if ok else msg}')
 
     def _forward(self, text: str) -> None:
         """Send a turn to the brain and hold the follow-up window open."""

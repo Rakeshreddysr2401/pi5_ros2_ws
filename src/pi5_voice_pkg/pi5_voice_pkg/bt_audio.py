@@ -194,6 +194,16 @@ def set_volume(node_id: int, gain: float) -> tuple[bool, str]:
     return (rc == 0), out.strip()
 
 
+def set_default_source_volume(gain: float) -> tuple[bool, str]:
+    """Set the gain on whichever source is default right now.
+
+    By id is not enough: the HFP profile switch re-creates the source node, so
+    an id captured moments earlier no longer exists.
+    """
+    rc, out = _run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SOURCE@", f"{gain:.2f}"])
+    return (rc == 0), out.strip()
+
+
 def _await_bt_node(section: str, mac: str, timeout_s: float = 4.0) -> dict | None:
     deadline = time.monotonic() + timeout_s
     while True:
