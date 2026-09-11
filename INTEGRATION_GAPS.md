@@ -170,12 +170,34 @@ without a rebuild: `LANGROBO_LINEAR_VEL_MS`, `LANGROBO_PHYSICAL_VEL_MS`,
 in the rover repo produce the numbers. Three tests now fail if the commanded
 speed and the speed used to compute durations ever disagree again.
 
-⬜ **Still open:** Nav2's `velocity_smoother` caps angular at 1.5 rad/s
-(`phase3/config/nav2.yaml`). If 2.0 rad/s cannot pivot this chassis, 1.5
-certainly cannot — so Nav2's in-place rotations are likely curving too, which
-would explain heading error that survives a good position fix. Worth one
-measurement: command a pure rotation through Nav2 and watch whether the base
-translates.
+⬜ **Still open, and now load-bearing on the rover side.** Nav2's
+`velocity_smoother` caps angular at 1.5 rad/s (`phase3/config/nav2.yaml`). If
+2.0 rad/s cannot pivot this chassis, 1.5 certainly cannot — so Nav2's in-place
+rotations are likely curving too, which would explain heading error that
+survives a good position fix.
+
+**2026-09-11 — rover repo TODO 40 restored the Spin recovery**, and Spin now
+commands 1.5 rad/s: the same suspect number. The two repos' measurements still
+conflict and the conflict is exactly the open question here:
+
+| source | date | claim at wz ≈ 2.0 |
+|---|---|---|
+| `phase1/teleop/teleop_web.py` | 2026-08-22 | 47% duty, **cannot break four tyres loose** — a pivot becomes a curve |
+| `phase3/config/nav2.yaml` sweep | 2026-08-23 | commanded 2.0 → **0.59 rad/s measured** on `/odom` |
+
+These may both be right. The sweep read **yaw rate off `/odom`, which cannot
+tell a pivot from an arc** — a curving turn produces the same yaw rate. And
+rover TODO 14 measured a true pivot needing ~93% duty, which is wz ≈ 4.7, not
+2.0. If that reading is correct then Nav2 has never pivoted, only curved, and:
+
+- Spin at 1.5 rad/s (25% duty/wheel) will **translate while it turns** — worse
+  than no Spin in the narrow gaps TODO 40 is trying to get through.
+- It is a candidate cause of rover **TODO 37** (rotation-induced x,y drift,
+  still unverified) and of the timed-turn error in **TODO 36**.
+
+**The one measurement that settles it** — command a pure rotation through Nav2
+and log `/odom` x,y as well as yaw. Yaw alone proves nothing. This is test 2 of
+rover TODO 40, and until it runs, treat the Spin recovery as unproven.
 
 ---
 
