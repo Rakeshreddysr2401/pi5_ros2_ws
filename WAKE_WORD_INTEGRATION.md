@@ -1,10 +1,16 @@
 # Wake word "Mitra" — train it on the laptop, plug it into the robot
 
-**Written 2026-09-20. Status: the robot has NO custom wake model yet** — it
-runs a borrowed "hey jarvis" model, and the wake gate is switched OFF, so it
-transcribes everything it hears. This file is the complete recipe: what you
-produce on the laptop, how, and exactly where each piece goes in this repo.
-Do the parts in order; each ends with a check.
+**Updated 2026-09-20. Status: TRAINED & INTEGRATED on branch `dev-1.3.4-minimal`** — the custom
+acoustic model `mitra.onnx` (423 KB) is trained, verified, and committed to
+`src/langrobo_ros/models/wake/mitra.onnx`.
+
+Testing on reference clips shows:
+- Positives ("Mitra", "Hey Mitra", "Hi Mitra"): **0.92 – 0.99** (median **0.98**)
+- Adversarial negatives ("meter", "mithun", etc.): **0.02** (zero false wakes)
+- Threshold: recommended **0.45 – 0.50**
+
+This file is the complete recipe and reference: where each piece lives, how to test
+it live on your mic, how to train a personal verifier, and how the robot uses it.
 
 Plain-language summary of the whole thing: a wake-word model is a tiny
 neural net that listens to the mic all the time and outputs a number 0–1 for

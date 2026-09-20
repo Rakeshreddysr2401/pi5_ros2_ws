@@ -173,13 +173,12 @@ independent of Phase 0 except for threshold tuning. Model training is offline
 work and can start while Phase 0 is being measured.
 
 **Tasks**
-- [ ] **Train the real wake model** — the owner does this on the laptop.
-  The complete recipe (synthetic data + own recordings + personal verifier +
-  where every file goes + threshold tuning + exit test) is
-  **WAKE_WORD_INTEGRATION.md**. Helpers shipped 2026-09-20:
-  `scripts/wake_record_clips.py`, `scripts/wake_score.py`; the detector
-  takes an optional `wake_verifier_path`; `.gitignore` un-ignores
-  `models/wake/` so `mitra.onnx` is committed.
+- [x] **Train the real wake model** — COMPLETED 2026-09-20 on branch `dev-1.3.4-minimal`.
+  `mitra.onnx` (423 KB) is trained, verified (0.92–0.99 peak on positives, 0.02
+  on negatives), and committed at `src/langrobo_ros/models/wake/mitra.onnx`.
+  Live mic scorer `scripts/wake_live_score.py`, verifier trainer `scripts/wake_train_verifier.py`,
+  and Colab trainer notebook `notebooks/train_mitra_wakeword.ipynb` are all in place.
+  See **WAKE_WORD_INTEGRATION.md**.
 - [ ] **Re-enable acoustic gating:** `wake_detector: openwakeword`,
   `require_wake: true`. Re-tune `wake_threshold` from the `[diag] asleep
   peak_wake_score` log on the mic Phase 0 settled on. Keep `transcript_alias`
