@@ -227,16 +227,17 @@ def main():
 
     print("\n2. Augmenting positive & negative training windows...")
     X_pos_audio = []
-    # Augment Positives: 3 temporal shifts (near end of window where openWakeWord looks)
+    # Augment Positives: cover both end and center alignments, soft to loud gains (0.75 to 1.2)
     for (v, p, r), pcm in synth_results.items():
         is_pos = (p in pos_telugu_native) or (p in pos_transliterated)
         if is_pos:
-            for s in [-3000, 0, 3000]:
-                for g in [0.9, 1.1]:
-                    X_pos_audio.append(make_window_clip(pcm, offset_mode="end", shift=s, gain=g, noise_std=0.0))
+            for mode in ["end", "center"]:
+                for s in [-3000, 0, 3000]:
+                    for g in [0.75, 1.0, 1.2]:
+                        X_pos_audio.append(make_window_clip(pcm, offset_mode=mode, shift=s, gain=g, noise_std=0.0))
 
     X_neg_audio = []
-    # Augment Negatives: ensure short negative words and sentences heavily outnumber positives
+    # Augment Negatives: ensure diverse alignments across short words and sentences
     for (v, p, r), pcm in synth_results.items():
         is_neg = (p not in pos_telugu_native) and (p not in pos_transliterated)
         if is_neg:
@@ -302,8 +303,8 @@ def main():
         nn.Sigmoid()
     ).to(device)
 
-    # Asymmetric loss function: 4.0x penalty on false positives to eliminate accidental wakes
-    FP_WEIGHT = 4.0
+    # Asymmetric loss function: 2.5x penalty on false positives (balances high recall with zero false wakes)
+    FP_WEIGHT = 2.5
 
     def asymmetric_bce(pred, target):
         loss_pos = -target * torch.log(pred.clamp(min=1e-6))
