@@ -19,10 +19,10 @@ similar to how Siri works — production grade, not messy."* Concretely:
 |---|---|---|
 | T1 | Listens **only when called** by name — nothing is transcribed (or sent to a cloud STT) otherwise | Phase 1 |
 | T2 | Acknowledges the call instantly ("haan boss?") when you pause after the name; stays silent if you keep talking | Phase 1 |
-| T3 | **Never** hears or answers its own voice | Phase 0 + 2 |
-| T4 | Keeps listening **while it speaks** — you can cut it off by name or with "stop" | Phase 0 + 2 |
+| T3 | **Never** hears or answers its own voice | Phase 0 (done) |
+| T4 | Listens after the wake word, and again after each reply (follow-up window). **Owner clarified 2026-09-20: it does NOT need to hear you while it is talking** — "on wake word, or after it responds, it listens is my idea" | Phase 1 + 2 |
 | T5 | Feels realtime: first audio well under 2 s on a warm turn, no double-speak, no dead air, no stuck mic | Phase 3 + 4 |
-| T6 | Plays songs, and still hears its name over the music | Phase 5 (needs 0) |
+| T6 | Plays songs. (Hearing its name *over* the music is not possible on the Stone — see Phase 0b findings — so pausing needs Telegram/a button, or a device that keeps its mic open) | Phase 5 |
 | T7 | Places a phone call ("call mom") through its own speaker and mic | Phase 6 (needs 0) |
 | T8 | The **Bluetooth** speaker + mic (boAt Stone) is the audio device, and it just works — no reconnect ritual, no profile fights, no two nodes undoing each other's settings | Phase 0 |
 
@@ -80,7 +80,7 @@ Measured from the code on `dev-1.3.3-minimal`, not from memory:
 
 ---
 
-## Phase 0 — Bluetooth audio done right (one owner + AEC) `[0a done 2026-09-20]`
+## Phase 0 — Bluetooth audio done right (one owner + AEC) `[DONE 2026-09-20]`
 
 **Why first:** T8 is the floor everything stands on, and T3/T4/T6/T7 all need
 the mic live while the speaker is loud (echo cancellation) on *this* Bluetooth
@@ -132,32 +132,36 @@ connected, ready, mic reopened, speaker back in ~1 s; a second sentence played
 cleanly. Zero commands typed. Boot half of the test still pending the unit
 install (sudo).
 
-### 0b — Echo cancellation on the Bluetooth path
+### 0b — Echo cancellation on the Bluetooth path — MEASURED, NOT NEEDED
 
-- [ ] Enable `libpipewire-module-echo-cancel` (WebRTC AEC, **already
-  installed** at `/usr/lib/aarch64-linux-gnu/pipewire-0.3/`) via
-  `~/.config/pipewire/pipewire.conf.d/`, with the Stone as its source and
-  sink; `bt_audio_node` makes the AEC virtual nodes the defaults, so the two
-  voice nodes still just open `pipewire`.
-- [ ] Measure first whether the Stone's HFP mode already cancels echo in
-  firmware (many hands-free devices do) — if it does, software AEC may be
-  unnecessary or may even fight it.
-- [ ] Write `scripts/aec_probe.py`: play a 10 s reference (speech, then
-  music) through the sink while recording the mic; report residual RMS and
-  the VAD-positive ratio during playback, for: no AEC / Stone-only /
-  PipeWire AEC / both. Keep it — it is the regression test for every later
-  audio change.
-- [ ] Tune the AEC filter length for HFP's latency (Bluetooth adds 100–250 ms;
-  the module's `filter_length_ms` must cover it or it cancels nothing).
-- [ ] Record the numbers in this file and the chosen configuration in
-  PI5_VOICE.md.
+`scripts/aec_probe.py` (kept as the regression check for any audio-path
+change): records the mic for 3 s of silence, then while the robot speaks a
+real sentence through the real TTS path, then 3 s after; reports RMS, the
+VAD "speech" ratio and the leak in dB; `--save` keeps the "robot talks"
+segment so it can be transcribed with local Whisper.
 
-**Exit test (0b):** with the robot playing a sentence at normal volume, the
-wake detector's score on the robot's own speech stays under the idle noise
-floor, and a person saying the wake word over it fires ≥ 8/10. If HFP jitter
-leaves the residual too high after two days of tuning, the fallback *within
-the Bluetooth constraint* is: Stone in **A2DP** (wideband, speaker only) + a
-second small Bluetooth or USB mic for capture — still no wired speakerphone.
+**Measured 2026-09-20 (quiet room, mic gain 4×):**
+
+| device (HFP) | silence rms | robot talks rms | VAD during | owner talking over it | verdict |
+|---|---|---|---|---|---|
+| boAt Stone 650 (CVSD 8 kHz) | 0.0073 | 0.0035 | 2% | **95–99% exact-zero samples**, Whisper hears nothing (at 100% and at 40% volume) | firmware **mutes its mic while it plays** (half-duplex). Zero echo; also zero owner. |
+| OnePlus Buds Z2 (mSBC 16 kHz) | 0.0013 | 0.0012 | 3% | 6% zeros, −0.9 dB leak | real echo cancellation in the earbud |
+
+Conclusions:
+- **No software AEC.** `libpipewire-module-echo-cancel` is not enabled and
+  nothing is inserted into the audio path — the owner's transcripts stay
+  exactly what the device delivers ("previously something made me all wrong
+  words" — this is why the measurement came first).
+- The robot cannot hear itself on either device, so T3 holds by hardware.
+  `stt_node`'s mute-while-speaking + `tts_tail_mute_s` stay as belt and
+  braces (they cost nothing on a device that mutes anyway).
+- On the Stone the robot **cannot hear anyone while it plays sound**. The
+  owner's design does not need that (T4), so this is accepted, not fixed.
+  It rules out voice barge-in mid-sentence and the wake word over music on
+  the Stone; those need a device that keeps its mic open (the Buds do) or a
+  non-voice pause (Telegram, a button).
+- Stone negotiated CVSD (8 kHz). `[ ]` still worth checking whether it
+  offers mSBC (`pactl list cards` while connected) and pinning it if so.
 
 ---
 
@@ -220,36 +224,34 @@ cue, command reaches the brain intact (check the pre-roll is not clipped).
 
 ---
 
-## Phase 2 — Listen while speaking (full-duplex barge-in) `[ ]`
+## Phase 2 — Conversation flow (listen after wake, listen after each reply) `[ ]`
 
-**Why:** T3 + T4 together. Replaces the hard mute with selective listening.
-**Blocked on Phase 0.**
+**Why:** T4 as the owner actually wants it. Full-duplex barge-in was dropped
+in Phase 0b (the Stone mutes its mic while playing; the design does not need
+it). What is left is making the *turn-taking* feel right.
 
-**Design (do not build until Phase 0 says which mic):**
-- While `/voice/tts_speaking` is true, `stt_node` runs **only** the wake
-  detector and a local stop-word spotter on the (AEC-cleaned) mic. No VAD
-  segmentation, no transcription — the robot's own residual must never reach
-  an STT. The muted branch in `_on_audio` becomes this "speaking" branch.
-- **"stop" becomes local and instant.** Second openWakeWord model (or a
-  keyword-spotting head) for "stop"/"aagu" so a halt is a ~50 ms local event,
-  not a 1 s Sarvam round-trip. The existing transcript-based
-  `_is_stop_command()` stays as the path for stops heard while idle.
-- Wake word during speech = barge-in: `stt_node` publishes `/voice/tts_stop`
-  tagged `[wake:…]` (already special-cased in `agent_node._on_tts_stop` to
-  halt TTS only, not the wheels), opens the listening window, and the next
-  utterance goes through the normal path.
-- `agent_node` on `_turn_interrupt`: also publish a stop to `tts_node` so the
-  abandoned turn's *queued* sentences are dropped, not just the marker sent.
-  Today `interrupted` → `publish_speech_end()` only, and the old answer keeps
-  playing under the new one. Extend the bridge with `publish_speech_stop()`
-  (stub.py must mirror it).
-- `tts_tail_mute_s` shrinks to the AEC's measured convergence time (should be
-  ≤ 200 ms with hardware AEC).
+- [ ] **Follow-up window** (`follow_up_window_s`, restarted when the robot
+  stops talking): tune the length on the robot with real conversations —
+  long enough for "…and what about tomorrow?", short enough that the room's
+  next unrelated sentence is not answered. Measure, don't guess.
+- [ ] **"stop" fast and local when idle**: today it is a cloud STT
+  round-trip (~1 s + an API call). A second openWakeWord model for
+  "stop"/"aagu" makes a halt a ~50 ms local event. (While the robot is
+  talking on the Stone nothing can be heard anyway; the wheels are stopped
+  by any new utterance the moment the robot goes quiet.)
+- [ ] **Abandoned turn must go quiet**: on `_turn_interrupt` `agent_node`
+  publishes only the EOU today, so sentences already queued in `tts_node`
+  keep playing under the new answer. Add `publish_speech_stop()` to the
+  bridge (stub.py mirrors it) and call it on interrupt.
+- [ ] `tts_tail_mute_s` (1.2 s): re-measure per device with `aec_probe.py`
+  — the Stone's own mute may make most of it unnecessary; the Buds need it
+  even less. Clipping the start of the owner's reply is the failure to
+  watch for (the pre-roll ring fix in `stt_node` exists because of it).
 
-**Exit test:** the robot reads a 20 s paragraph; saying "Rakhi" at 5 s stops
-it within 300 ms and the follow-up command is answered; saying "stop" while
-it is driving *and* talking halts wheels and speech; 10 paragraphs played with
-nobody speaking → 0 self-triggers, 0 transcriptions.
+**Exit test:** a 5-turn conversation ("Rakhi, what time is it" / "and the
+date" / "set a reminder" / "for six" / "thanks") with the name said once;
+"stop" while driving halts the wheels within 300 ms when the robot is quiet;
+a 20-minute idle room with the TV on → 0 turns.
 
 ---
 
@@ -414,5 +416,6 @@ it → the robot is listening again.
 | 2026-09-20 | Roadmap written; phase order 0→6 agreed to be worked strictly in sequence | owner |
 | 2026-09-20 | **Bluetooth speaker + mic (boAt Stone) stays** as the audio device; no wired speakerphone. AEC is done on the Bluetooth path (Stone firmware and/or PipeWire) | owner |
 | 2026-09-20 | Calling route = **VoIP** (follows from the above: one BT adapter, one HFP link) | derived |
-| — | HFP codec: mSBC available on the Stone? | pending Phase 0a check |
-| — | AEC source: Stone firmware / PipeWire / both | pending Phase 0b numbers |
+| 2026-09-20 | **No software AEC** — measured: Stone mutes its mic during playback, Buds cancel echo themselves; nothing inserted into the audio path | measured |
+| 2026-09-20 | **Full-duplex barge-in dropped.** Owner: "on wake word, or after it responds, it listens" — the robot need not hear anyone while it talks | owner |
+| — | HFP codec: mSBC available on the Stone? (Buds: yes, negotiated) | pending |
