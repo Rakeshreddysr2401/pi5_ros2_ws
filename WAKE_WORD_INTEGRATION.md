@@ -1,22 +1,21 @@
-# Wake word "Mitra" — train it on the laptop, plug it into the robot
+# Wake Word Models ("Mitra" & "Rakhi") — Train on Laptop, Deploy to Robot
 
-**Updated 2026-09-20. Status: TRAINED & INTEGRATED on branch `dev-1.3.4-minimal`** — the custom
-acoustic model `mitra.onnx` (423 KB) is trained, verified, and committed to
-`src/langrobo_ros/models/wake/mitra.onnx`.
+**Updated 2026-09-20. Status: TRAINED & INTEGRATED on branch `dev-1.3.4-minimal`** — two custom
+acoustic wake-word models are trained, verified, and committed to `src/langrobo_ros/models/wake/`:
 
-Testing on reference clips shows:
-- Positives ("Mitra", "Hey Mitra", "Hi Mitra"): **0.92 – 0.99** (median **0.98**)
-- Adversarial negatives ("meter", "mithun", etc.): **0.02** (zero false wakes)
-- Threshold: recommended **0.45 – 0.50**
+1. **`rakhi.onnx` (414 KB)** — Telugu household specialized ("Rakhi", "రాఖీ", "ఏయ్ రాఖీ", "హలో రాఖీ", "హాయ్ రాఖీ"):
+   - Native Telugu Positives ("రాఖీ", "ఏయ్ రాఖీ"): **0.996 – 1.000**
+   - Transliterated Positives ("Rakhi", "Hey Rakhi"): **1.000**
+   - Telugu Adversarial Negatives ("రాకీ" / rocky, "చెప్పు", "ఆగు", "సరే", "వద్దు"): **0.001 – 0.013**
+   - Recommended Threshold: **0.45 – 0.55**
+
+2. **`mitra.onnx` (414 KB)** — Sanskrit/Hindi ("Mitra", "Hey Mitra", "Hi Mitra"):
+   - Positives ("Mitra", "Hey Mitra", "Hi Mitra"): **0.92 – 0.99** (median **0.98**)
+   - Adversarial Negatives ("meter", "mithun", etc.): **0.02**
+   - Recommended Threshold: **0.45 – 0.50**
 
 This file is the complete recipe and reference: where each piece lives, how to test
-it live on your mic, how to train a personal verifier, and how the robot uses it.
-
-Plain-language summary of the whole thing: a wake-word model is a tiny
-neural net that listens to the mic all the time and outputs a number 0–1 for
-"did I just hear *Mitra*?". We train it from (a) hundreds of synthetic
-recordings of the word in many voices, and (b) a few dozen recordings of
-**you** saying it, then tell the robot to use it.
+live on your mic, how to train a personal verifier, and how the robot uses it.
 
 ---
 
@@ -24,9 +23,10 @@ recordings of the word in many voices, and (b) a few dozen recordings of
 
 | File | What it is | Where it goes in this repo |
 |---|---|---|
-| `mitra.onnx` | the wake-word model (~0.3–1 MB) | `src/langrobo_ros/models/wake/mitra.onnx` — **tracked in git** (the `.gitignore` has an exception for `models/wake/`) |
-| `mitra_verifier.pkl` | *optional* "personal verifier": a small classifier trained on YOUR voice, run only when the base model already thinks it heard the word. Cuts false wakes from other people/TV. | `src/langrobo_ros/models/wake/mitra_verifier.pkl` — tracked |
-| your clips | `mitra_pos/` (you saying "Mitra") and `mitra_neg/` (you saying other things) | keep them outside the repo (they are personal audio); back them up — you will retrain when the mic changes |
+| `rakhi.onnx` | Telugu-specialized wake-word model (~414 KB) | `src/langrobo_ros/models/wake/rakhi.onnx` — **tracked in git** |
+| `mitra.onnx` | "Mitra" wake-word model (~414 KB) | `src/langrobo_ros/models/wake/mitra.onnx` — **tracked in git** |
+| `*_verifier.pkl` | *optional* personal verifiers (e.g. `rakhi_verifier.pkl` or `mitra_verifier.pkl`) | `src/langrobo_ros/models/wake/` — tracked |
+| your clips | `rakhi_pos/` and `rakhi_neg/` (or `mitra_pos/`) | keep outside repo; back them up — used for personal verifier fine-tuning |
 
 How the robot uses them (already implemented — nothing to code):
 
