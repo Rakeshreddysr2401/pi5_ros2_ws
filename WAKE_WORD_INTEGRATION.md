@@ -66,9 +66,10 @@ macOS, do not fight it: run **Part B only** in Google Colab (the notebook is
 built for it, free GPU, ~30 min), download `mitra.onnx`, and do Parts C–E on
 the Mac.
 
-The notebook: `~/openWakeWord/notebooks/automatic_model_training.ipynb`
-(there is also a `*_simple` variant with fewer knobs — start with that).
-Open with `jupyter notebook`, or upload to Colab.
+The notebook: pre-configured for "Mitra" right in this repo at
+`notebooks/train_mitra_wakeword.ipynb` (or upload to Google Colab, or use the
+community trainer at https://colab.research.google.com/drive/1zzKpSnqVkUDD3FyZ-Yxw3grF7L0R1rlk).
+Open with `jupyter notebook`, or upload to Google Colab and click "Run all".
 
 **Check:** `python3 -c "import openwakeword, torch; print('ok')"` prints ok.
 
