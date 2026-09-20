@@ -1,19 +1,34 @@
+# ── The one owner of the speaker + mic ────────────────────────────────────
+# Nothing else touches Bluetooth or PipeWire defaults. It connects whichever
+# paired/trusted Bluetooth audio device is switched on (bt_devices only says
+# who to prefer when several are), uses its mic over HFP, applies the mic
+# gain, reconnects on its own when the device drops, and tells the two voice
+# nodes via /voice/audio_ready. Pair a new speaker/headphones ONCE with
+# `./scripts/bt_speaker.sh pair <MAC>` and it is a candidate from then on.
+pi5_audio_device:
+  ros__parameters:
+    bt_devices: ["D6:AA:BB:59:EF:B6"]   # boAt Stone 650 — preferred, not required
+    # Use the Bluetooth device's own mic (HFP, 8-16kHz call audio). false =
+    # A2DP playback only; the mic then comes from wired_fallback.
+    bt_prefer_mic: true
+    # Software gain on the HFP mic, re-applied every time PipeWire re-creates
+    # it. Measured 2026-09-11 on the Stone: at 1.0 speech arrived at rms ~0.024,
+    # under the 0.05 min_utterance_rms gate, so NOTHING reached the brain; 4.0
+    # clears the gate while ambient (~0.008 amplified) stays well under it.
+    bt_mic_gain: 4.0
+    # Substring of a wired sink/source to use when no Bluetooth device is up.
+    wired_fallback: "Blackwire"
+    poll_period_s: 3.0
+    connect_retry_s: 10.0
+
 pi5_tts_node:
   ros__parameters:
     model_path: /home/rakhi24/ros2_ws/src/langrobo_ros/models/kokoro/kokoro-v1.0.onnx
     voices_path: /home/rakhi24/ros2_ws/src/langrobo_ros/models/kokoro/voices-v1.0.bin
     voice: af_heart
     speed: 1.0
-    output_device: Blackwire
-    # ── Bluetooth speaker (Boat Stone etc.) ───────────────────────────────
-    # Pair once:  ./scripts/bt_speaker.sh scan   then   ./scripts/bt_speaker.sh pair <MAC>
-    # Then put the MAC here; both nodes connect it at startup and route audio
-    # through PipeWire. Empty = wired audio only.
-    bt_mac: "D6:AA:BB:59:EF:B6"        # boAt Stone 650
-    # a2dp = speaker only, full quality (recommended — the wired mic stays).
-    # hfp  = the speaker's call mic too, 8-16kHz mono: worse recognition AND
-    #        worse playback. Needs pulseaudio-utils for the profile switch.
-    bt_profile: hfp   # Stone mic in use; a2dp would kill it
+    # pipewire = whatever pi5_audio_device made the default speaker.
+    output_device: pipewire
     threads: 4
     # local | sarvam | soniox — see PI5_VOICE.md. Local Kokoro measured RTF ~1.8
     # (slower than real time); both cloud options publish sub-second/streaming
@@ -32,15 +47,8 @@ pi5_tts_node:
 
 pi5_stt_node:
   ros__parameters:
-    input_device: Blackwire
-    bt_mac: "D6:AA:BB:59:EF:B6"        # boAt Stone 650
-    # Software gain on the HFP mic, re-applied on every reconnect (PipeWire
-    # resets it). Measured 2026-09-11: at 1.0 this speaker delivered speech at
-    # rms ~0.024 and ambient ~0.0008 — every utterance fell under the 0.05
-    # min_utterance_rms gate and NOTHING reached the brain. 4.0 puts speech
-    # clear of the gate while ambient stays well under it.
-    bt_mic_gain: 4.0
-    bt_profile: hfp   # Stone mic in use; a2dp would kill it
+    # pipewire = whatever pi5_audio_device made the default mic.
+    input_device: pipewire
     # Mic stays muted this long after TTS stops. 0.5 suits the USB headset;
     # A2DP buffers 100-250ms on top, so raise to ~1.2 with a Bluetooth speaker
     # or the robot transcribes the tail of its own reply.

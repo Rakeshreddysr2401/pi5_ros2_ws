@@ -1,0 +1,28 @@
+# Pi5 voice: audio_device_node (owns the Bluetooth/wired speaker + mic),
+# tts_node, stt_node. Starts at boot so turning the speaker on is the only
+# human step — the device node pairs/connects/routes it and reconnects when
+# it drops.
+#
+# A USER unit, not a system one: PipeWire and WirePlumber run in the user
+# session, so wpctl/pactl only work there. Installed + enabled by
+# scripts/install_systemd.sh, which also enables lingering so the user
+# session (and therefore this unit) comes up at boot without a login.
+#
+#   systemctl --user status langrobo-voice
+#   journalctl --user -u langrobo-voice -f -o cat
+
+[Unit]
+Description=LangRobo Pi5 voice (audio device owner + STT + TTS)
+After=bluetooth.target pipewire.service wireplumber.service
+Wants=pipewire.service wireplumber.service
+
+[Service]
+Type=exec
+ExecStart=%h/ros2_ws/scripts/run_voice.sh
+Restart=always
+RestartSec=5
+# Bluetooth + PipeWire need a moment after the session starts.
+ExecStartPre=/bin/sleep 3
+
+[Install]
+WantedBy=default.target

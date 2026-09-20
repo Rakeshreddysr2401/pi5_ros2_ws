@@ -26,9 +26,9 @@ import rclpy
 import sounddevice as sd
 from dotenv import load_dotenv
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, String
 
-from . import bt_audio
 from .tts_providers import REGISTRY, ProviderUnavailable
 from .tts_providers.local_kokoro import LocalKokoroProvider
 
@@ -37,6 +37,9 @@ PREFETCH_SENTENCES = 2
 
 SPEECH_EOU = "<|eou|>"  # must match langrobo_core/utils/speech_stream.py
 CHUNK_FRAMES_S = 0.1    # playback granularity for fast stop, in seconds of audio
+# How long to wait for audio_device_node before playing to the system default
+# anyway (running this node alone, e.g. run_tts.sh, must still work).
+AUDIO_READY_TIMEOUT_S = 15.0
 
 
 class TTSNode(Node):
@@ -48,7 +51,9 @@ class TTSNode(Node):
         self.declare_parameter('voices_path', '')
         self.declare_parameter('voice', 'af_heart')
         self.declare_parameter('speed', 1.0)
-        self.declare_parameter('output_device', 'Blackwire')
+        # 'pipewire' = whatever audio_device_node made the default speaker
+        # (Bluetooth or wired). A wired name (e.g. 'Blackwire') bypasses it.
+        self.declare_parameter('output_device', 'pipewire')
         self.declare_parameter('threads', 4)
         self.declare_parameter('tts_provider', 'local')   # local | sarvam | sarvam_translate | soniox
         self.declare_parameter('tts_language', 'en')
@@ -57,11 +62,6 @@ class TTSNode(Node):
         # Only used by tts_provider=sarvam_translate (English text -> Telugu speech).
         self.declare_parameter('tts_translate_from', 'en')
         self.declare_parameter('tts_translate_to', 'te')
-        # Bluetooth speaker (e.g. a Boat Stone). Empty = wired audio only.
-        # a2dp = speaker only, full quality. hfp = the speaker's call mic too,
-        # 8-16kHz mono — worse for both legs, so it is opt-in.
-        self.declare_parameter('bt_mac', '')
-        self.declare_parameter('bt_profile', 'a2dp')
 
         model_path = self.get_parameter('model_path').value
         voices_path = self.get_parameter('voices_path').value
@@ -71,24 +71,6 @@ class TTSNode(Node):
         threads = int(self.get_parameter('threads').value)
         provider_name = self.get_parameter('tts_provider').value
         language = self.get_parameter('tts_language').value
-
-        # A Bluetooth speaker is a PipeWire node, not an ALSA card, so
-        # sounddevice cannot address it directly: connect it, make it the
-        # default sink, and play through the `pipewire` ALSA device. Idempotent
-        # — stt_node runs the same call and neither depends on the other's
-        # ordering. Failure just leaves the wired hint in place.
-        bt_mac = self.get_parameter('bt_mac').value
-        if bt_mac:
-            bt = bt_audio.ensure(bt_mac, self.get_parameter('bt_profile').value)
-            for note in bt['notes']:
-                self.get_logger().info(f'bluetooth: {note}')
-            if bt['sink']:
-                device_hint = 'pipewire'
-                self.get_logger().info(
-                    f"bluetooth sink {bt['sink']!r} is default — output via pipewire")
-            else:
-                self.get_logger().warning(
-                    f'bluetooth speaker unavailable; falling back to {device_hint!r}')
 
         self._out_device = self._find_device(device_hint)
         self.get_logger().info(f'output device: {self._out_device}')
@@ -157,6 +139,18 @@ class TTSNode(Node):
         # robot change voice mid-reply and then change back, which sounds like
         # a fault even though both halves worked.
         self._forced_fallback = False
+        # Speaker availability, owned by audio_device_node. While it is down a
+        # sentence is dropped (with the EOU protocol kept intact, so the mic
+        # is never left muted) rather than played into a missing sink. If no
+        # such node is running (this node started alone), assume the system
+        # default after a short wait.
+        self._audio_ready = False
+        self._dropped_this_utterance = False
+        self.create_subscription(
+            Bool, '/voice/audio_ready', self._on_audio_ready,
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                       durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        self._ready_fallback = self.create_timer(AUDIO_READY_TIMEOUT_S, self._assume_ready)
         self._synth_thread = threading.Thread(target=self._synth_loop, daemon=True)
         self._play_thread = threading.Thread(target=self._play_loop, daemon=True)
         self._synth_thread.start()
@@ -188,6 +182,27 @@ class TTSNode(Node):
 
     def _on_speech(self, msg: String):
         self._q.put(msg.data)
+
+    def _on_audio_ready(self, msg: Bool):
+        self._ready_fallback.cancel()
+        ready = bool(msg.data)
+        if ready == self._audio_ready:
+            return
+        self._audio_ready = ready
+        if ready:
+            self.get_logger().info('audio ready — speaker available')
+        else:
+            self.get_logger().warning('audio not ready — dropping speech until the speaker is back')
+            # The sink is gone; the open stream points at nothing.
+            self._close_stream()
+
+    def _assume_ready(self):
+        self._ready_fallback.cancel()
+        if not self._audio_ready:
+            self.get_logger().warning(
+                f'no /voice/audio_ready after {AUDIO_READY_TIMEOUT_S:.0f}s — is '
+                'audio_device_node running? Playing to the system default anyway.')
+            self._audio_ready = True
 
     def _on_stop(self, msg: String):
         """Abandon everything queued and playing, right now."""
@@ -278,7 +293,13 @@ class TTSNode(Node):
                     time.sleep(drain)
                 self._close_stream()      # let the speaker idle between turns
                 self._forced_fallback = False
+                self._dropped_this_utterance = False
                 self._set_speaking(False)
+                continue
+            if not self._audio_ready:
+                if not self._dropped_this_utterance:
+                    self._dropped_this_utterance = True
+                    self.get_logger().warning('no speaker — this reply will not be heard')
                 continue
             self._set_speaking(True)
             try:

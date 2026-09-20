@@ -13,6 +13,8 @@ from launch_ros.actions import Node
 def generate_launch_description():
     params = os.path.join(get_package_share_directory('pi5_voice_pkg'), 'config', 'voice_params.yaml')
     return LaunchDescription([
+        Node(package='pi5_voice_pkg', executable='audio_device_node', name='pi5_audio_device',
+             parameters=[params], output='screen'),
         Node(package='pi5_voice_pkg', executable='tts_node', name='pi5_tts_node',
              parameters=[params], output='screen'),
         Node(package='pi5_voice_pkg', executable='stt_node', name='pi5_stt_node',

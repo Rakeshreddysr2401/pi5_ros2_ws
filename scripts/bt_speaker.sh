@@ -1,26 +1,29 @@
 #!/usr/bin/env bash
 # Bluetooth speaker for the Pi5 voice pair (e.g. a Boat Stone).
 #
-#   ./scripts/bt_speaker.sh scan              # 20s discovery — find the MAC
-#   ./scripts/bt_speaker.sh pair AA:BB:..     # pair + trust + connect (once)
+#   ./scripts/bt_speaker.sh pair              # GUIDED: add a new speaker/headphones
+#   ./scripts/bt_speaker.sh scan              # 20s discovery — find a MAC by hand
+#   ./scripts/bt_speaker.sh pair AA:BB:..     # pair + trust + connect a known MAC
 #   ./scripts/bt_speaker.sh connect [MAC]     # connect + make it the default sink
 #   ./scripts/bt_speaker.sh disconnect [MAC]
 #   ./scripts/bt_speaker.sh profile a2dp|hfp [MAC]
 #   ./scripts/bt_speaker.sh status
 #
-# MAC defaults to LANGROBO_BT_MAC, else bt_mac in voice_params.yaml, so the
-# speaker is configured in exactly one place.
+# MAC defaults to LANGROBO_BT_MAC, else the first entry of bt_devices in
+# voice_params.yaml.
 #
 # Pairing is a ONE-TIME human step: put the speaker in pairing mode first
 # (Boat Stone: hold the multifunction button until the LED blinks fast).
-# After `pair`, the device is trusted and reconnects on its own.
+# After `pair`, the device is trusted and audio_device_node (see
+# PI5_VOICE.md) connects it, routes it and reconnects it on its own from
+# then on — `connect`/`profile` below are only for poking at it by hand.
 
 set -uo pipefail
 PARAMS="$HOME/ros2_ws/src/pi5_voice_pkg/config/voice_params.yaml"
 
 mac_from_config() {
     [ -n "${LANGROBO_BT_MAC:-}" ] && { echo "$LANGROBO_BT_MAC"; return; }
-    grep -oE "bt_mac:[[:space:]]*['\"]?([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}" "$PARAMS" 2>/dev/null \
+    grep -A1 -E "bt_devices:" "$PARAMS" 2>/dev/null \
         | grep -oE "([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}" | head -1
 }
 
@@ -30,22 +33,6 @@ need_daemon() {
         echo "    sudo systemctl enable --now bluetooth"
         exit 1
     fi
-}
-
-# BlueZ's DBus policy (/usr/share/dbus-1/system.d/bluetooth.conf) grants pairing
-# to root and to the `bluetooth` group only. Pairing as an unprivileged user
-# outside that group fails with an unhelpful org.freedesktop.DBus.Error.
-# Connecting and audio routing afterwards need no privileges — only the initial
-# pair/trust writes to /var/lib/bluetooth.
-need_pair_rights() {
-    [ "$(id -u)" = "0" ] && return 0
-    id -nG | grep -qw bluetooth && return 0
-    echo "Pairing needs privileges: you are not root and not in the 'bluetooth' group."
-    echo "Either run this once with sudo:"
-    echo "    sudo $0 pair ${1:-<MAC>}"
-    echo "or join the group (needs a fresh login to take effect):"
-    echo "    sudo usermod -aG bluetooth $USER"
-    return 1
 }
 
 default_sink_for() {   # $1 = MAC -> make its PipeWire node the default sink
@@ -73,17 +60,18 @@ case "$CMD" in
       ;;
   pair)
       need_daemon
-      MAC="${1:-$(mac_from_config)}"
-      [ -z "$MAC" ] && { echo "usage: $0 pair AA:BB:CC:DD:EE:FF"; exit 2; }
-      need_pair_rights "$MAC" || exit 1
+      # No address = the guided flow: scan, pick the new device by name, pair.
+      [ -z "${1:-}" ] && exec python3 "$(dirname "$0")/bt_pair.py"
+      MAC="$1"
       bluetoothctl --timeout 15 scan on >/dev/null 2>&1
       bluetoothctl pair "$MAC"
       bluetoothctl trust "$MAC"      # trust = reconnect without asking again
       bluetoothctl connect "$MAC"
       default_sink_for "$MAC"
       echo
-      echo "Now set it in $PARAMS:"
-      echo "    bt_mac: \"$MAC\""
+      echo "audio_device_node will pick it up on its own. To PREFER it over"
+      echo "other paired devices, add it first in $PARAMS:"
+      echo "    bt_devices: [\"$MAC\"]"
       ;;
   connect)
       need_daemon

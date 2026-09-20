@@ -53,9 +53,9 @@ import sounddevice as sd
 import webrtcvad
 from dotenv import load_dotenv
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, String
 
-from . import bt_audio
 from .addressing import strip_alias
 from .vad_gate import GateConfig, evaluate as gate_utterance
 from .stt_providers import REGISTRY, ProviderUnavailable
@@ -73,6 +73,9 @@ MIN_UTTERANCE_FRAMES = 10  # ~300ms — drop blips shorter than this
 STT_QUEUE_DEPTH = 3
 STALE_UTTERANCE_S = 15.0
 TTS_TAIL_MUTE_S = 0.5      # keep muting briefly after TTS stops (speaker echo tail)
+# How long to wait for audio_device_node before opening the mic anyway
+# (running this node alone, e.g. run_stt.sh, must still work).
+AUDIO_READY_TIMEOUT_S = 15.0
 
 
 class STTNode(Node):
@@ -80,16 +83,9 @@ class STTNode(Node):
         super().__init__('pi5_stt_node')
         load_dotenv(os.path.expanduser(os.getenv('LANGROBO_ENV_FILE', '~/ros2_ws/.env')))
 
-        self.declare_parameter('input_device', 'Blackwire')
-        # Bluetooth. Only bt_profile=hfp gives a MIC over Bluetooth (8-16kHz
-        # mono — Whisper accuracy drops); with a2dp the speaker is output-only
-        # and this node keeps using the wired mic.
-        self.declare_parameter('bt_mac', '')
-        self.declare_parameter('bt_profile', 'a2dp')
-        # PipeWire resets the HFP mic to its own level on every reconnect, and
-        # this speaker's is far below what min_utterance_rms expects — see
-        # voice_params.yaml. Re-applied inside bt_audio.ensure(), not by hand.
-        self.declare_parameter('bt_mic_gain', 1.0)
+        # 'pipewire' = whatever audio_device_node made the default mic
+        # (Bluetooth or wired). A wired name (e.g. 'Blackwire') bypasses it.
+        self.declare_parameter('input_device', 'pipewire')
         # How long to keep the mic muted after TTS stops. Was a hardcoded 0.5s
         # tuned for a USB headset. A2DP buffers 100-250ms and _play returns when
         # the last sample is WRITTEN, not heard — so over Bluetooth the speaker
@@ -161,37 +157,8 @@ class STTNode(Node):
         tgt_lang = self.get_parameter('stt_target_language').value
 
         self._tail_mute_s = float(self.get_parameter('tts_tail_mute_s').value)
-        bt_mac = self.get_parameter('bt_mac').value
-        bt_profile = self.get_parameter('bt_profile').value
-        if bt_mac:
-            bt = bt_audio.ensure(bt_mac, bt_profile,
-                                 float(self.get_parameter('bt_mic_gain').value))
-            for note in bt['notes']:
-                self.get_logger().info(f'bluetooth: {note}')
-            if bt_profile == 'hfp' and bt['source']:
-                device_hint = 'pipewire'
-                self.get_logger().info(
-                    f"bluetooth source {bt['source']!r} is default — mic via pipewire")
-            elif bt_profile == 'hfp':
-                self.get_logger().warning(
-                    f'bluetooth mic unavailable; falling back to {device_hint!r}')
-            if self._tail_mute_s < 1.0:
-                # The exact failure this causes is the robot answering itself.
-                self.get_logger().warning(
-                    f'tts_tail_mute_s={self._tail_mute_s}s is short for Bluetooth '
-                    '(A2DP buffers 100-250ms) — the mic may catch the tail of '
-                    'the robot\'s own speech. ~1.2 is safer.')
-
         self._in_device = self._find_device(device_hint)
         self.get_logger().info(f'input device: {self._in_device}')
-
-        # tts_node runs the same ensure() ~100ms later, and its HFP profile
-        # switch re-creates the PipeWire source with a fresh volume — wiping
-        # the gain set above. Re-apply once both nodes have settled, against
-        # whatever source is default by then.
-        self._mic_gain = float(self.get_parameter('bt_mic_gain').value)
-        if bt_mac and self._mic_gain != 1.0:
-            self._gain_timer = self.create_timer(5.0, self._reapply_mic_gain)
         # [diag 2026-09-04] full enumeration — arecord and sounddevice number devices
         # from different backends, so log the whole table to catch index drift.
         self.get_logger().info('audio devices:\n' + '\n'.join(
@@ -275,12 +242,66 @@ class STTNode(Node):
         self._worker = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker.start()
 
-        self._stream = sd.InputStream(
-            samplerate=SAMPLE_RATE, channels=1, dtype='int16',
-            blocksize=FRAME_SAMPLES, device=self._in_device,
-            callback=self._on_audio,
-        )
-        self._stream.start()
+        # The mic is opened when audio_device_node says the audio path is up,
+        # and closed when it drops — re-opening is what binds the stream to a
+        # speaker that just reconnected. If no such node is running (this node
+        # started alone), open the system default after a short wait instead.
+        self._stream = None
+        self._stream_lock = threading.Lock()
+        self._audio_ready = False
+        self.create_subscription(
+            Bool, '/voice/audio_ready', self._on_audio_ready,
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                       durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        self._ready_fallback = self.create_timer(AUDIO_READY_TIMEOUT_S, self._open_without_owner)
+
+    def _on_audio_ready(self, msg: Bool):
+        self._ready_fallback.cancel()
+        if bool(msg.data) == self._audio_ready:
+            return
+        self._audio_ready = bool(msg.data)
+        if self._audio_ready:
+            self.get_logger().info('audio ready — opening mic')
+            self._open_input()
+        else:
+            self.get_logger().warning('audio not ready — mic closed until the device is back')
+            self._close_input()
+
+    def _open_without_owner(self):
+        self._ready_fallback.cancel()
+        if self._stream is None:
+            self.get_logger().warning(
+                f'no /voice/audio_ready after {AUDIO_READY_TIMEOUT_S:.0f}s — is '
+                'audio_device_node running? Opening the system default mic anyway.')
+            self._open_input()
+
+    def _open_input(self):
+        with self._stream_lock:
+            self._close_input_locked()
+            self._reset_capture()
+            try:
+                self._stream = sd.InputStream(
+                    samplerate=SAMPLE_RATE, channels=1, dtype='int16',
+                    blocksize=FRAME_SAMPLES, device=self._in_device,
+                    callback=self._on_audio,
+                )
+                self._stream.start()
+            except Exception:
+                self._stream = None
+                self.get_logger().error(f'could not open the mic\n{traceback.format_exc()}')
+
+    def _close_input(self):
+        with self._stream_lock:
+            self._close_input_locked()
+
+    def _close_input_locked(self):
+        stream, self._stream = self._stream, None
+        if stream is not None:
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:
+                self.get_logger().debug('closing the mic stream failed')
 
     def _build_provider(self, name: str, params: dict):
         cls = REGISTRY.get(name)
@@ -571,12 +592,6 @@ class STTNode(Node):
             return
 
         self.get_logger().info(f'not addressed to me — ignored: {text!r}')
-
-    def _reapply_mic_gain(self) -> None:
-        self._gain_timer.cancel()
-        ok, msg = bt_audio.set_default_source_volume(self._mic_gain)
-        self.get_logger().info(
-            f'mic gain {self._mic_gain:.2f} re-applied: {"ok" if ok else msg}')
 
     def _forward(self, text: str) -> None:
         """Send a turn to the brain and hold the follow-up window open."""

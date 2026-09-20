@@ -73,38 +73,148 @@ def test_parsing_survives_junk():
     assert bt_audio.parse_status("not\nwpctl\noutput") == {}
 
 
+# ── bluez discovery + which device wins ─────────────────────────────────────
+
+DEVICES = """Device D2:66:3D:F3:53:24 ASUS KW100 Channel 1
+Device D6:AA:BB:59:EF:B6 boAt Stone 650
+Device 11:22:33:44:55:66 Sony WH-1000XM4
+"""
+
+# `bluetoothctl info` on the Stone after a reboot: trusted, link key gone.
+INFO_STONE = """Device D6:AA:BB:59:EF:B6 (public)
+	Name: boAt Stone 650
+	Alias: boAt Stone 650
+	Class: 0x00240414
+	Paired: no
+	Bonded: no
+	Trusted: yes
+	Blocked: no
+	Connected: no
+	UUID: Audio Sink                (0000110b-0000-1000-8000-00805f9b34fb)
+	UUID: Handsfree                 (0000111e-0000-1000-8000-00805f9b34fb)
+"""
+
+INFO_KEYBOARD = """Device D2:66:3D:F3:53:24 (public)
+	Name: ASUS KW100 Channel 1
+	Paired: yes
+	Trusted: yes
+	Connected: yes
+	UUID: Human Interface Device    (00001812-0000-1000-8000-00805f9b34fb)
+"""
+
+
+def test_device_lines_are_parsed():
+    devs = bt_audio.parse_devices(DEVICES)
+    assert [d["mac"] for d in devs] == [
+        "D2:66:3D:F3:53:24", "D6:AA:BB:59:EF:B6", "11:22:33:44:55:66"]
+    assert devs[1]["name"] == "boAt Stone 650"
+    assert bt_audio.parse_devices("") == []
+
+
+def test_info_reads_pairing_state_and_audio_roles():
+    stone = bt_audio.parse_info(INFO_STONE)
+    assert stone["name"] == "boAt Stone 650"
+    assert stone["paired"] is False and stone["trusted"] is True
+    assert stone["connected"] is False
+    assert stone["audio"] is True and stone["mic"] is True
+    kb = bt_audio.parse_info(INFO_KEYBOARD)
+    assert kb["audio"] is False and kb["mic"] is False
+
+
+# An unpaired device fresh from a scan: no UUIDs yet, only class + icon.
+INFO_SCANNED_BUDS = """Device 84:0F:2A:4C:CD:38 (public)
+\tName: OnePlus Buds Z2
+\tClass: 0x00240404 (2360324)
+\tIcon: audio-headset
+\tPaired: no
+\tTrusted: no
+\tConnected: no
+"""
+
+
+def test_a_scanned_but_unpaired_device_is_recognised_as_audio_by_its_class():
+    d = bt_audio.parse_info(INFO_SCANNED_BUDS)
+    assert d["audio"] is True and d["paired"] is False
+    phone = bt_audio.parse_info("\tName: Pixel\n\tClass: 0x005a020c (5898764)\n\tIcon: phone\n")
+    assert phone["audio"] is False
+
+
+def _dev(mac, name, connected=False, audio=True, mic=True):
+    return {"mac": mac, "name": name, "connected": connected,
+            "audio": audio, "mic": mic, "paired": True, "trusted": True}
+
+
+STONE = "D6:AA:BB:59:EF:B6"
+SONY = "11:22:33:44:55:66"
+KEYBOARD = "D2:66:3D:F3:53:24"
+
+
+def test_non_audio_devices_are_never_candidates():
+    ranked = bt_audio.rank_devices(
+        [_dev(KEYBOARD, "keyboard", connected=True, audio=False, mic=False),
+         _dev(STONE, "stone")], [])
+    assert [d["mac"] for d in ranked] == [STONE]
+
+
+def test_whatever_is_switched_on_beats_the_preferred_device_that_is_off():
+    """The owner said: 'not sure I always connect the boAt Stone, or some
+    other headphones' — a connected pair of headphones wins over an absent
+    preferred speaker."""
+    ranked = bt_audio.rank_devices(
+        [_dev(STONE, "stone", connected=False), _dev(SONY, "sony", connected=True)],
+        preferred=[STONE])
+    assert [d["mac"] for d in ranked] == [SONY, STONE]
+
+
+def test_preferred_order_breaks_ties_between_connected_devices():
+    ranked = bt_audio.rank_devices(
+        [_dev(SONY, "sony", connected=True), _dev(STONE, "stone", connected=True)],
+        preferred=[STONE])
+    assert [d["mac"] for d in ranked] == [STONE, SONY]
+
+
+def test_the_device_in_use_is_kept_while_it_stays_connected():
+    """Two headphones both on must not make the robot flap between them."""
+    ranked = bt_audio.rank_devices(
+        [_dev(SONY, "sony", connected=True), _dev(STONE, "stone", connected=True)],
+        preferred=[STONE], current=SONY)
+    assert ranked[0]["mac"] == SONY
+
+
+def test_a_disconnected_current_device_loses_its_hold():
+    ranked = bt_audio.rank_devices(
+        [_dev(SONY, "sony", connected=False), _dev(STONE, "stone", connected=True)],
+        preferred=[], current=SONY)
+    assert ranked[0]["mac"] == STONE
+
+
+def test_mac_matching_is_case_insensitive():
+    ranked = bt_audio.rank_devices(
+        [_dev(SONY, "sony"), _dev(STONE.lower(), "stone")], preferred=[STONE])
+    assert ranked[0]["mac"] == STONE.lower()
+
+
+@pytest.mark.parametrize("mic,prefer,expected", [
+    (True, True, "hfp"),      # has a mic and we want it
+    (True, False, "a2dp"),    # has a mic, owner prefers playback quality
+    (False, True, "a2dp"),    # no mic to switch to
+])
+def test_profile_follows_mic_availability_and_preference(mic, prefer, expected):
+    assert bt_audio.profile_for({"mic": mic}, prefer) == expected
+
+
+def test_known_devices_merges_paired_and_trusted(monkeypatch):
+    """The Stone after a reboot is Trusted but not Paired; it must still be
+    a candidate, and a device in both lists appears once."""
+    outputs = {"Paired": "Device 11:22:33:44:55:66 Sony WH-1000XM4\n",
+               "Trusted": DEVICES}
+    monkeypatch.setattr(bt_audio, "_run",
+                        lambda cmd, timeout=0: (0, outputs.get(cmd[-1], "")))
+    macs = [d["mac"] for d in bt_audio.known_devices()]
+    assert macs.count(SONY) == 1 and STONE in macs and KEYBOARD in macs
+
+
 # ── Degradation (hard rule 4) ───────────────────────────────────────────────
-
-def test_disabled_when_no_mac_configured():
-    r = bt_audio.ensure("")
-    assert r["enabled"] is False and r["connected"] is False
-
-
-def test_a_bad_mac_is_reported_not_raised(monkeypatch):
-    r = bt_audio.ensure("Blackwire")
-    assert r["connected"] is False
-    assert any("not a MAC" in n for n in r["notes"])
-
-
-def test_failed_connect_stops_before_touching_pipewire(monkeypatch):
-    calls = []
-    monkeypatch.setattr(bt_audio, "bt_connect", lambda mac: (False, "br-connection-profile-unavailable"))
-    monkeypatch.setattr(bt_audio, "wpctl_status", lambda: calls.append("wpctl") or {})
-    r = bt_audio.ensure("AA:BB:CC:DD:EE:FF")
-    assert r["connected"] is False and calls == []
-
-
-def test_successful_a2dp_sets_the_sink_as_default(monkeypatch):
-    defaults = []
-    monkeypatch.setattr(bt_audio, "bt_connect", lambda mac: (True, "connected"))
-    monkeypatch.setattr(bt_audio, "wpctl_status",
-                        lambda: bt_audio.parse_status(WPCTL.replace("boAt Stone 350",
-                                                                    "AA_BB_CC_DD_EE_FF")))
-    monkeypatch.setattr(bt_audio, "set_default", lambda i: defaults.append(i) or (True, ""))
-    monkeypatch.setattr(bt_audio.shutil, "which", lambda x: None)   # no pactl
-    r = bt_audio.ensure("AA:BB:CC:DD:EE:FF", "a2dp")
-    assert defaults == [57] and r["sink"] == "AA_BB_CC_DD_EE_FF"
-
 
 def test_hfp_without_pactl_says_which_package_is_missing(monkeypatch):
     monkeypatch.setattr(bt_audio.shutil, "which", lambda x: None)
@@ -112,13 +222,11 @@ def test_hfp_without_pactl_says_which_package_is_missing(monkeypatch):
     assert ok is False and "pulseaudio-utils" in msg
 
 
-def test_missing_sink_is_reported_rather_than_crashing(monkeypatch):
-    monkeypatch.setattr(bt_audio, "bt_connect", lambda mac: (True, "connected"))
-    monkeypatch.setattr(bt_audio, "wpctl_status", lambda: bt_audio.parse_status(WPCTL))
-    monkeypatch.setattr(bt_audio.shutil, "which", lambda x: None)
-    r = bt_audio.ensure("AA:BB:CC:DD:EE:FF")
-    assert r["sink"] is None
-    assert any("no PipeWire sink" in n for n in r["notes"])
+def test_a_refused_pairing_is_reported_not_raised(monkeypatch):
+    monkeypatch.setattr(bt_audio, "_run",
+                        lambda cmd, timeout=0: (1, "Failed to pair: org.bluez.Error.AuthenticationFailed"))
+    ok, msg = bt_audio.bt_pair(STONE)
+    assert ok is False and "AuthenticationFailed" in msg
 
 
 def test_a_missing_binary_never_raises(monkeypatch):

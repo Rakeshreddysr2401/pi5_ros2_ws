@@ -14,3 +14,12 @@ sudo cp src/langrobo_ros/systemd/langrobo-brain.service     /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now langrobo-discovery langrobo-microros langrobo-brain
 systemctl --no-pager status langrobo-discovery langrobo-microros langrobo-brain || true
+
+# Voice is a USER unit (PipeWire lives in the user session). Lingering makes
+# the user session — and so this unit — start at boot without a login.
+mkdir -p ~/.config/systemd/user
+cp src/langrobo_ros/systemd/langrobo-voice.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now langrobo-voice
+sudo loginctl enable-linger "$USER"
+systemctl --user --no-pager status langrobo-voice || true

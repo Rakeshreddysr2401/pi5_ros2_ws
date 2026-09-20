@@ -36,7 +36,7 @@ is CUDA-accelerated and faster).
 | VAD | `webrtcvad`, aggressiveness 2, 30ms frames, ~300ms pre-pad / ~600ms end-silence |
 | Noise gate | `vad_gate.py` — duration + energy + voiced-ratio, between the VAD and the recognizer. Exists because an idle room's VAD-positive noise got a cloud STT to invent a fluent sentence ("This is ₹11,800." from an empty room). `min_utterance_rms` shipped at 0.012 — **below** this file's own measured Bluetooth-mic noise floor of ~0.029 — so it did nothing on the mic actually in use; fixed to 0.05 (commit `d8379ba`, 2026-09-05) |
 | Wake gate | **`openwakeword`, acoustic, ON by default** (bundled `hey_jarvis` stand-in — the project's real wake word, "Rakhi"/"chotu", still needs a trained `.onnx`, see VOICE_QUALITY.md §4). While asleep, nothing is transcribed and nothing leaves the Pi5. `wake_detector: transcript_alias` (transcribe everything, gate on a name in the text) remains as a legacy fallback mode — see "Wake word" below for live-measured threshold tuning |
-| Mic/speaker | **boAt Stone 650 Bluetooth speaker, HFP profile** (call-quality mic at 8-16kHz narrowband, chosen so one device covers both legs — see `bt_audio.py` below). A wired USB headset (originally a Plantronics Blackwire) is the fallback path if `bt_mac` is unset |
+| Mic/speaker | **Any paired Bluetooth speaker/headphones, HFP profile** for the mic (8-16kHz call audio, so one device covers both legs) — the boAt Stone 650 is the preferred one, OnePlus Buds Z2 verified too. Owned by `audio_device_node` (see below); a wired USB headset (Plantronics Blackwire) is the fallback when nothing Bluetooth is reachable |
 | Confidence filter | drop segments where `no_speech_prob > 0.6 AND avg_logprob < -1.0` — the exact fix VOICE_QUALITY.md validated on the Jetson |
 
 Wire protocol (must match `langrobo_core/utils/speech_stream.py` exactly —
@@ -50,6 +50,8 @@ the brain is the other end of it):
 | `/voice/tts_stop` | `std_msgs/String` | `pi5_stt_node` → both (stop-word barge-in) |
 | `/voice/stt_meta` | `std_msgs/String` (JSON) | `pi5_stt_node` → `agent_node` — cost of the transcription that produced the next `/voice/user_input`: provider actually used, `fell_back`, latency, audio ms, RTF. **Observational only** |
 | `/voice/tts_meta` | `std_msgs/String` (JSON) | `pi5_tts_node` → `agent_node` — same for each synthesised sentence. **Observational only** |
+| `/voice/audio_ready` | `std_msgs/Bool`, latched | `pi5_audio_device` → both voice nodes — true when a speaker + mic are routed. stt_node opens the mic on true and closes it on false; tts_node drops speech (keeping the EOU protocol) while false. Additive; the Jetson nodes ignore it |
+| `/voice/audio_device` | `std_msgs/String` (JSON), latched | `pi5_audio_device` → anyone — which device is routed (`kind` bt/wired, `name`, `mac`, `profile`, sink/source names) |
 
 `agent_node._on_user_input` needed **zero changes** — it already subscribes
 to `/voice/user_input` by name; this package is just a second publisher on
@@ -65,29 +67,60 @@ feed the LangSmith trace of a turn — see OPERATIONS.md § LangSmith tracing.
 
 ---
 
-## Bluetooth audio (boAt Stone) — `bt_audio.py`
+## The speaker + mic have ONE owner — `audio_device_node`
 
-Both nodes address ALSA devices through `sounddevice`, but a Bluetooth speaker
-is a PipeWire node, not an ALSA card. `bt_audio.ensure(bt_mac, bt_profile)`
-(called independently by each node at startup — idempotent, order doesn't
-matter) does the glue: `bluetoothctl connect`, switch profile via `pactl`
-(`a2dp` = speaker only, full quality; `hfp` = adds the speaker's own call mic
-at 8-16kHz mono), make it PipeWire's default sink/source, then point the node
-at the `pipewire` ALSA device. Never raises — a missing tool, absent speaker,
-or refused connection returns a status dict the node logs and carries on with
-whatever device it already had (CLAUDE.md #4).
+**Since 2026-09-20 (VOICE_ROADMAP.md Phase 0a).** Before this, `stt_node` and
+`tts_node` each connected the Bluetooth speaker at startup and raced each
+other (tts_node's profile switch re-created the PipeWire mic ~90 ms after
+stt_node had set its gain, wiping it), pairing had to be redone by hand after
+every reboot, and a speaker that slept or wandered off was never reconnected.
 
-**After a reboot the pairing does not persist automatically** — `Paired: no`,
-`Connected: no` even though `Trusted: yes` survives. Reconnect manually before
-launching the voice pair:
-```bash
-bluetoothctl trust D6:AA:BB:59:EF:B6
-bluetoothctl pair D6:AA:BB:59:EF:B6
-bluetoothctl connect D6:AA:BB:59:EF:B6
-pactl set-card-profile bluez_card.D6_AA_BB_59_EF_B6 headset-head-unit   # for hfp
-```
-Confirm with `wpctl status` — both a Sink and a Source named "boAt Stone 650"
-should show under Audio, with `*` marking them default.
+Now `pi5_audio_device` is the only process that touches bluetoothctl / pactl /
+wpctl. Every few seconds it:
+
+1. lists every Bluetooth device bluez remembers as paired **or** trusted and
+   keeps the ones that advertise an audio sink — **any** speaker or headphones
+   you have paired once is a candidate. `bt_devices` in `voice_params.yaml`
+   only says who to prefer when several are switched on; whatever is on wins
+   over a preferred device that is off, and the device already in use is kept
+   while it stays connected (no flapping between two headphones that are both
+   on).
+2. connects it — re-pairing first if the link key was lost (the Stone does
+   this after a reboot; earbuds do it when they go back in the case). Verified
+   unattended with OnePlus Buds Z2: put back in pairing mode → re-paired,
+   connected, routed in ~1 s, no command typed.
+3. switches it to HFP when it has a mic and `bt_prefer_mic` is true, makes it
+   PipeWire's default sink **and** source, applies `bt_mic_gain`; and re-applies
+   defaults + gain whenever PipeWire re-creates the nodes.
+4. publishes `/voice/audio_ready` + `/voice/audio_device` (latched). Loss is
+   detected within one poll: stt_node closes the mic, tts_node drops speech
+   instead of playing into a missing sink, and both come back on the next
+   `true`.
+5. falls back to a wired device matching `wired_fallback` (e.g. `Blackwire`)
+   when no Bluetooth audio device is reachable.
+
+`stt_node` / `tts_node` just open the `pipewire` ALSA device (that is what
+`input_device: pipewire` / `output_device: pipewire` mean) and follow
+`/voice/audio_ready`. Run alone (`run_stt.sh`, `run_tts.sh`) they wait 15 s for
+the owner and then use the system default anyway.
+
+**Pairing a new speaker/headphones is the one human step, and it is guided:**
+`./scripts/bt_speaker.sh pair` (no address) shows what is already paired, asks
+you to put the new device in pairing mode, scans, lists only audio devices by
+name, pairs + trusts the one you pick, waits for the node to switch to it, and
+offers to make it the preferred device in `voice_params.yaml`. From then on
+the node handles it. `bt_speaker.sh scan/connect/profile` remain as hand tools
+for poking at the stack; nothing depends on them. A voice version ("Rakhi,
+connect my new earbuds") is planned — VOICE_ROADMAP.md Phase 1.
+
+Known earbud behaviour: OnePlus Buds Z2 hold one connection and drop the
+Pi's pairing when they reconnect to a phone — they need pairing mode again
+before the node can take them back. A speaker like the Stone does not do this.
+
+Boot: `langrobo-voice` is a **user** systemd unit (PipeWire lives in the user
+session) installed by `scripts/install_systemd.sh`, which also enables
+lingering so it starts without a login. `journalctl --user -u langrobo-voice
+-f -o cat` to watch it.
 
 ---
 
@@ -380,10 +413,9 @@ the real brain instead. Use `./scripts/dev.sh` to SEE the graph in Studio, and
 the real brain to TALK to it. Everything is in git on
 `dev-1.2.8-refactor-test` if you want it back.
 
-Not yet wired into `fleet.sh` or systemd — currently a manual `ros2 launch`.
-Once the live-mic test passes, promoting this to a `fleet.sh rover --voice`
-flag (or its own systemd unit, mirroring `langrobo-brain`) is the natural
-next step.
+Or as a service: `./scripts/install_systemd.sh` installs `langrobo-voice`
+(user unit, starts at boot); `./scripts/run_voice.sh` is the same thing in the
+foreground.
 
 ---
 

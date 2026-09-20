@@ -1,12 +1,15 @@
-"""Bluetooth audio routing for the Pi5 voice pair.
+"""Bluetooth audio plumbing for the Pi5 voice nodes.
 
-The nodes address ALSA devices through sounddevice, but a Bluetooth speaker is
-not an ALSA card — it is a PipeWire node. So the wiring is indirect: connect the
-speaker over bluez, make it PipeWire's default sink (and source, for HFP), and
-point the node at the `pipewire` ALSA device. This module is that glue.
+The voice nodes address ALSA devices through sounddevice, but a Bluetooth
+speaker is not an ALSA card — it is a PipeWire node. So the wiring is
+indirect: connect the device over bluez, make it PipeWire's default sink (and
+source, for HFP), and let the nodes open the `pipewire` ALSA device. This
+module is the glue; `audio_device_node` is the ONE process that calls it.
+stt_node and tts_node never touch Bluetooth state — they just wait for
+/voice/audio_ready (see PI5_VOICE.md).
 
 No rclpy, no sounddevice — just subprocess and parsing, so it is testable off
-the robot and importable from either node.
+the robot.
 
 Profiles
 --------
@@ -204,67 +207,152 @@ def set_default_source_volume(gain: float) -> tuple[bool, str]:
     return (rc == 0), out.strip()
 
 
-def _await_bt_node(section: str, mac: str, timeout_s: float = 4.0) -> dict | None:
+# ── bluez device discovery ─────────────────────────────────────────────────
+# What bluetoothctl prints for `devices`, `devices Paired` and `info <mac>`.
+
+_DEVICE_LINE = re.compile(r"^Device\s+(?P<mac>([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})\s+(?P<name>.*)$")
+_INFO_LINE = re.compile(r"^\s*(?P<key>[A-Za-z ]+?):\s*(?P<val>.*)$")
+
+# Service UUIDs a device advertises. A2DP sink = it can play; HFP/HSP = it
+# also has a call mic we can use over Bluetooth.
+UUID_AUDIO_SINK = "0000110b"
+UUID_HANDSFREE = "0000111e"
+UUID_HEADSET = "00001108"
+
+
+def parse_devices(text: str) -> list[dict]:
+    """`bluetoothctl devices [...]` -> [{mac, name}]."""
+    out = []
+    for line in (text or "").splitlines():
+        m = _DEVICE_LINE.match(line.strip())
+        if m:
+            out.append({"mac": m.group("mac").upper(), "name": m.group("name").strip()})
+    return out
+
+
+def parse_info(text: str) -> dict:
+    """`bluetoothctl info <mac>` -> {name, paired, trusted, connected, audio, mic}.
+
+    `audio` = advertises an A2DP sink (it is a speaker/headphone at all);
+    `mic` = advertises HFP or HSP (it has a mic we can switch to).
+    """
+    info = {"name": "", "paired": False, "trusted": False, "connected": False,
+            "audio": False, "mic": False}
+    for raw in (text or "").splitlines():
+        m = _INFO_LINE.match(raw)
+        if not m:
+            continue
+        key, val = m.group("key").strip(), m.group("val").strip()
+        if key == "Name":
+            info["name"] = val
+        elif key in ("Paired", "Trusted", "Connected"):
+            info[key.lower()] = val.lower() == "yes"
+        elif key == "Class":
+            # A device seen in a scan but never paired has no UUID list yet;
+            # its Class of Device (major class bits 8-12 == 0x04 Audio/Video)
+            # and Icon are what bluez knows before pairing.
+            try:
+                cod = int(val.split()[0], 16)
+                if (cod >> 8) & 0x1F == 0x04:
+                    info["audio"] = True
+            except ValueError:
+                pass
+        elif key == "Icon" and val.startswith("audio-"):
+            info["audio"] = True
+        elif key == "UUID":
+            low = val.lower()
+            if UUID_AUDIO_SINK in low:
+                info["audio"] = True
+            if UUID_HANDSFREE in low or UUID_HEADSET in low:
+                info["mic"] = True
+    return info
+
+
+def known_devices() -> list[dict]:
+    """Every device bluez remembers as paired OR trusted, de-duplicated.
+
+    Both lists matter: a speaker that dropped its link key shows Paired: no
+    but Trusted: yes (the boAt Stone does this after a reboot), and it is
+    still the device the owner wants.
+    """
+    seen: dict[str, dict] = {}
+    for scope in ("Paired", "Trusted"):
+        rc, out = _run(["bluetoothctl", "devices", scope])
+        if rc != 0:
+            continue
+        for d in parse_devices(out):
+            seen.setdefault(d["mac"], d)
+    if not seen:
+        # bluez < 5.66 has no `devices <filter>`; fall back to the old verb.
+        rc, out = _run(["bluetoothctl", "paired-devices"])
+        for d in parse_devices(out if rc == 0 else ""):
+            seen.setdefault(d["mac"], d)
+    return list(seen.values())
+
+
+def device_info(mac: str) -> dict:
+    rc, out = _run(["bluetoothctl", "info", mac])
+    info = parse_info(out if rc == 0 else "")
+    info["mac"] = (mac or "").upper()
+    return info
+
+
+def scan(seconds: float = 15.0) -> list[dict]:
+    """Discover nearby devices for `seconds`, then return everything bluez
+    currently lists ({mac, name}) — known devices included; callers filter."""
+    _run(["bluetoothctl", "--timeout", str(int(seconds)), "scan", "on"],
+         timeout=seconds + 10.0)
+    rc, out = _run(["bluetoothctl", "devices"])
+    return parse_devices(out if rc == 0 else "")
+
+
+def bt_trust(mac: str) -> tuple[bool, str]:
+    rc, out = _run(["bluetoothctl", "trust", mac])
+    return (rc == 0 and "succeeded" in out.lower()), out.strip()
+
+
+def bt_pair(mac: str) -> tuple[bool, str]:
+    """Re-pair a device that lost its link key. Needs the `bluetooth` group
+    (or root) — bluez's DBus policy refuses pairing to anyone else."""
+    rc, out = _run(["bluetoothctl", "pair", mac], timeout=30.0)
+    low = out.lower()
+    if rc == 0 and ("successful" in low or "already" in low):
+        return True, "paired"
+    return False, out.strip().splitlines()[-1] if out.strip() else f"rc={rc}"
+
+
+def rank_devices(devices: list[dict], preferred: list[str],
+                 current: str | None = None) -> list[dict]:
+    """Order audio devices by who should be tried first.
+
+    1. the device we are already using, if it is still connected (no flapping
+       between two headphones that are both on);
+    2. anything else already connected, preferred ones first;
+    3. everything else, preferred order, then by name.
+    Non-audio devices (keyboards, phones) never appear.
+    """
+    pref = [p.upper() for p in preferred]
+
+    def key(d):
+        mac = d["mac"].upper()
+        is_current = 0 if (current and mac == current.upper() and d.get("connected")) else 1
+        pref_idx = pref.index(mac) if mac in pref else len(pref)
+        return (is_current, 0 if d.get("connected") else 1, pref_idx, d.get("name", ""))
+
+    return sorted((d for d in devices if d.get("audio")), key=key)
+
+
+def profile_for(device: dict, prefer_mic: bool) -> str:
+    """hfp only when the device has a mic AND we want to use it."""
+    return "hfp" if (prefer_mic and device.get("mic")) else "a2dp"
+
+
+def await_bt_node(section: str, mac: str, timeout_s: float = 4.0) -> dict | None:
+    """Poll for the PipeWire node of `mac` — it appears a moment after a
+    connect or a profile switch, so a single status read often misses it."""
     deadline = time.monotonic() + timeout_s
     while True:
         node = find_bt_node(wpctl_status(), section, mac)
         if node or time.monotonic() >= deadline:
             return node
         time.sleep(0.3)
-
-
-# ── The one call the nodes make ─────────────────────────────────────────────
-
-def ensure(mac: str, profile: str = "a2dp", mic_gain: float = 1.0) -> dict:
-    """Connect the speaker and point PipeWire at it.
-
-    Returns a status dict describing exactly how far it got — the caller logs
-    it and carries on with whatever audio device it already had. Never raises.
-    """
-    result = {"enabled": bool(mac), "mac": mac, "profile": profile,
-              "connected": False, "sink": None, "source": None, "notes": []}
-    if not mac:
-        return result
-    if not is_mac(mac):
-        result["notes"].append(f"bt_mac {mac!r} is not a MAC address")
-        return result
-
-    ok, msg = bt_connect(mac)
-    result["connected"] = ok
-    result["notes"].append(f"connect: {msg}")
-    if not ok:
-        return result
-
-    if profile == "hfp":
-        ok, msg = set_profile(mac, "hfp")
-        result["notes"].append(f"profile: {msg}")
-    elif profile == "a2dp":
-        # WirePlumber already picks A2DP on connect; only correct it if pactl
-        # is around and something else got selected.
-        if shutil.which("pactl"):
-            set_profile(mac, "a2dp")
-
-    status = wpctl_status()
-    sink = find_bt_node(status, "Sinks", mac)
-    if sink:
-        set_default(sink["id"])
-        result["sink"] = sink["name"]
-    else:
-        result["notes"].append("no PipeWire sink for this device yet")
-
-    if profile == "hfp":
-        # The source node appears a moment after the profile switch, so a single
-        # status read right after it often misses the mic entirely — and then
-        # neither the default nor the gain gets set.
-        source = _await_bt_node("Sources", mac)
-        if source:
-            set_default(source["id"])
-            result["source"] = source["name"]
-            if mic_gain != 1.0:
-                ok, msg = set_volume(source["id"], mic_gain)
-                result["notes"].append(
-                    f"mic gain {mic_gain:.2f}: {'ok' if ok else msg}")
-        else:
-            result["notes"].append("no PipeWire source — is the card in HFP?")
-
-    return result
