@@ -57,6 +57,15 @@ cd ~/openWakeWord && pip install -e .[full]      # training deps (torch etc.)
 python3 -c "import openwakeword.utils as u; u.download_models()"
 ```
 
+**On a Mac (Apple Silicon — M1 or the M4 Mini):** same steps, with
+`brew install python@3.11` first and `pip install -e ".[full]"` quoted (zsh).
+Torch uses the Apple GPU (MPS) on its own. The M4 Mini is also the robot's
+LLM server — train when you are not talking to the robot. If the
+synthetic-clip generator (`piper-sample-generator`) fails to install on
+macOS, do not fight it: run **Part B only** in Google Colab (the notebook is
+built for it, free GPU, ~30 min), download `mitra.onnx`, and do Parts C–E on
+the Mac.
+
 The notebook: `~/openWakeWord/notebooks/automatic_model_training.ipynb`
 (there is also a `*_simple` variant with fewer knobs — start with that).
 Open with `jupyter notebook`, or upload to Colab.
