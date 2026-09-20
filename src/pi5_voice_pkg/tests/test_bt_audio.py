@@ -194,6 +194,12 @@ def test_mac_matching_is_case_insensitive():
     assert ranked[0]["mac"] == STONE.lower()
 
 
+def test_gain_overrides_are_per_device_and_forgiving():
+    g = bt_audio.parse_gain_overrides(["d6:aa:bb:59:ef:b6=4.0", "", "junk", "AA:BB:CC:DD:EE:FF=x", None])
+    assert g == {"D6:AA:BB:59:EF:B6": 4.0}
+    assert bt_audio.parse_gain_overrides(None) == {}
+
+
 @pytest.mark.parametrize("mic,prefer,expected", [
     (True, True, "hfp"),      # has a mic and we want it
     (True, False, "a2dp"),    # has a mic, owner prefers playback quality

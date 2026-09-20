@@ -45,7 +45,8 @@ running, and which known devices are on/off.
 | known device shows `Paired: no`, `Trusted: yes` | it forgot the Pi (Stone after reboot; earbuds after reconnecting to a phone) | put it in **pairing mode**; the node re-pairs by itself within ~10 s. Only if the log says "refused re-pairing" → `./scripts/bt_speaker.sh pair` |
 | `/voice/audio_ready` false, device connected | PipeWire never showed a sink | `journalctl --user -u langrobo-voice -n 50 -o cat`; usually the profile switch failed (`pactl` missing → `sudo apt install pulseaudio-utils`) |
 | default sink is right, no mic (`Sources` empty) | device has no HFP, or `bt_prefer_mic: false` | check `bluetoothctl info` for `Handsfree`; set `bt_prefer_mic: true` in `voice_params.yaml`, restart the service |
-| robot hears nothing but mic is routed | mic gain reset / too quiet | `wpctl status` source vol should show `4.00`; the node re-applies it — restart the service if not. Watch `/voice/debug_vad` |
+| robot hears nothing but mic is routed | mic gain reset / too quiet | `wpctl status` source vol should match the device's entry in `bt_mic_gains` (Stone 4.00; unlisted devices `bt_mic_gain`); the node re-applies it — restart the service if not. Watch `/voice/debug_vad` |
+| listener never goes quiet (`voiced=True` non-stop, "utterance hit the 20s cap") | mic gain too HIGH for this device, or steady room noise (cooler, fan) | add/lower the device's `bt_mic_gains` entry (Buds: 1.0); check idle rms with a 5 s `sd.rec` — must sit under `min_utterance_rms` 0.05 |
 | two devices both on, wrong one used | preference | `bt_devices:` order in `voice_params.yaml` (first = preferred); the one already in use is kept until it disconnects |
 | robot answers itself / double speech | Jetson voice also running | `./scripts/fleet.sh status`; stop one side |
 | want a NEW speaker/headphones | never paired | user runs `! ./scripts/bt_speaker.sh pair` and follows the prompts |
@@ -63,7 +64,7 @@ and ask them to say something. Done means: heard AND transcribed.
 ## Config reference
 
 `src/pi5_voice_pkg/config/voice_params.yaml` → `pi5_audio_device`:
-`bt_devices` (preference list), `bt_prefer_mic`, `bt_mic_gain`,
+`bt_devices` (preference list), `bt_prefer_mic`, `bt_mic_gain` + `bt_mic_gains` (per-device "MAC=gain"),
 `wired_fallback` (USB headset name when nothing Bluetooth is up),
 `poll_period_s`, `connect_retry_s`. Restart `langrobo-voice` after edits.
 Roadmap for what comes next (echo cancellation, wake word, pairing by

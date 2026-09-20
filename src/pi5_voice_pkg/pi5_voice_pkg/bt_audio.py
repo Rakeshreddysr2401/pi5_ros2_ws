@@ -342,6 +342,28 @@ def rank_devices(devices: list[dict], preferred: list[str],
     return sorted((d for d in devices if d.get("audio")), key=key)
 
 
+def parse_gain_overrides(entries) -> dict[str, float]:
+    """["AA:BB:CC:DD:EE:FF=4.0", ...] -> {"AA:BB:CC:DD:EE:FF": 4.0}.
+
+    Mic gain is per DEVICE: the boAt Stone's HFP mic needs 4x to clear the
+    noise gate, the same 4x pins a OnePlus Buds mic at full scale and turns
+    room hiss into 20 s "utterances" (measured 2026-09-20). Bad entries are
+    skipped, never raised.
+    """
+    out: dict[str, float] = {}
+    for e in entries or ():
+        if not e or "=" not in str(e):
+            continue
+        mac, _, gain = str(e).partition("=")
+        mac = mac.strip().upper()
+        try:
+            if is_mac(mac):
+                out[mac] = float(gain)
+        except ValueError:
+            continue
+    return out
+
+
 def profile_for(device: dict, prefer_mic: bool) -> str:
     """hfp only when the device has a mic AND we want to use it."""
     return "hfp" if (prefer_mic and device.get("mic")) else "a2dp"

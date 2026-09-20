@@ -12,10 +12,15 @@ pi5_audio_device:
     # A2DP playback only; the mic then comes from wired_fallback.
     bt_prefer_mic: true
     # Software gain on the HFP mic, re-applied every time PipeWire re-creates
-    # it. Measured 2026-09-11 on the Stone: at 1.0 speech arrived at rms ~0.024,
-    # under the 0.05 min_utterance_rms gate, so NOTHING reached the brain; 4.0
-    # clears the gate while ambient (~0.008 amplified) stays well under it.
-    bt_mic_gain: 4.0
+    # it. PER DEVICE — one number does not fit all mics:
+    #   Stone (2026-09-11): at 1.0 speech arrived at rms ~0.024, under the 0.05
+    #     min_utterance_rms gate, so NOTHING reached the brain; 4.0 clears it.
+    #   OnePlus Buds (2026-09-20): the same 4.0 pinned the mic at full scale
+    #     (idle rms 0.16, peak 1.00, VAD "speech" 100%) — every 20 s of room
+    #     hiss went to Sarvam as an utterance. 1.0 is right for them.
+    # Unlisted devices get bt_mic_gain.
+    bt_mic_gain: 1.0
+    bt_mic_gains: ["D6:AA:BB:59:EF:B6=4.0"]   # boAt Stone 650
     # Substring of a wired sink/source to use when no Bluetooth device is up.
     wired_fallback: "Blackwire"
     poll_period_s: 3.0

@@ -55,7 +55,10 @@ class AudioDeviceNode(Node):
         # A2DP (better playback) and leaves the mic to the wired fallback.
         self.declare_parameter('bt_prefer_mic', True)
         # Software gain on the HFP mic; PipeWire resets it on every reconnect.
+        # bt_mic_gain is the default; bt_mic_gains overrides it per device
+        # ("MAC=gain") — a gain that suits one mic pins another at full scale.
         self.declare_parameter('bt_mic_gain', 1.0)
+        self.declare_parameter('bt_mic_gains', [''])
         # Substring of a wired sink/source name to use when no Bluetooth
         # device is up ('' = none: stay not-ready until Bluetooth appears).
         self.declare_parameter('wired_fallback', '')
@@ -68,6 +71,7 @@ class AudioDeviceNode(Node):
                            if m and bt_audio.is_mac(m)]
         self._prefer_mic = bool(self.get_parameter('bt_prefer_mic').value)
         self._mic_gain = float(self.get_parameter('bt_mic_gain').value)
+        self._mic_gains = bt_audio.parse_gain_overrides(self.get_parameter('bt_mic_gains').value)
         self._wired = (self.get_parameter('wired_fallback').value or '').strip()
         self._poll_s = float(self.get_parameter('poll_period_s').value)
         self._retry_s = float(self.get_parameter('connect_retry_s').value)
@@ -86,7 +90,8 @@ class AudioDeviceNode(Node):
 
         self.get_logger().info(
             f'owning audio: prefer {self._preferred or "any paired device"}, '
-            f'mic via bluetooth={self._prefer_mic}, gain={self._mic_gain:.2f}, '
+            f'mic via bluetooth={self._prefer_mic}, gain={self._mic_gain:.2f} '
+            f'(per device: {self._mic_gains or "none"}), '
             f'wired fallback={self._wired or "none"}')
         threading.Thread(target=self._loop, daemon=True).start()
 
@@ -201,10 +206,11 @@ class AudioDeviceNode(Node):
     def _apply_source(self, source: dict, routed: dict) -> None:
         bt_audio.set_default(source['id'])
         routed['source'], routed['source_id'] = source['name'], source['id']
-        if self._mic_gain != 1.0:
-            ok, msg = bt_audio.set_volume(source['id'], self._mic_gain)
-            if not ok:
-                self.get_logger().warning(f'mic gain {self._mic_gain:.2f} failed: {msg}')
+        gain = self._mic_gains.get((routed.get('mac') or '').upper(), self._mic_gain)
+        routed['mic_gain'] = gain
+        ok, msg = bt_audio.set_volume(source['id'], gain)
+        if not ok:
+            self.get_logger().warning(f'mic gain {gain:.2f} failed: {msg}')
 
     def _reassert_bt(self, active: dict) -> bool:
         """The device is still connected — but PipeWire may have re-created

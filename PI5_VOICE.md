@@ -90,7 +90,8 @@ wpctl. Every few seconds it:
    unattended with OnePlus Buds Z2: put back in pairing mode → re-paired,
    connected, routed in ~1 s, no command typed.
 3. switches it to HFP when it has a mic and `bt_prefer_mic` is true, makes it
-   PipeWire's default sink **and** source, applies `bt_mic_gain`; and re-applies
+   PipeWire's default sink **and** source, applies the mic gain (`bt_mic_gains`
+   per device — Stone 4×, Buds 1×; `bt_mic_gain` for the rest); and re-applies
    defaults + gain whenever PipeWire re-creates the nodes.
 4. publishes `/voice/audio_ready` + `/voice/audio_device` (latched). Loss is
    detected within one poll: stt_node closes the mic, tts_node drops speech
