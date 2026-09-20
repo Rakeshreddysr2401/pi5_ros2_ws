@@ -139,15 +139,22 @@ clip is too quiet the script says so and skips it.
 
 ## Part D — Test the model on the laptop BEFORE the robot
 
-```bash
-python3 scripts/wake_score.py path/to/mitra.onnx ~/wake_data/mitra_pos ~/wake_data/mitra_neg
-```
+1. **Test against recorded clips:**
+   ```bash
+   python3 scripts/wake_score.py src/langrobo_ros/models/wake/mitra.onnx ~/wake_data/mitra_pos ~/wake_data/mitra_neg
+   ```
 
-It prints the peak score per clip and a summary. What you want:
-- `fired on 27/30` or better of your wake-word clips at threshold 0.5;
-- `false fires on 0/20` of the other clips;
-- the line "a safe threshold sits between X and Y" — remember Y, it is your
-  starting `wake_threshold` on the robot.
+   It prints the peak score per clip and a summary. What you want:
+   - `fired on 27/30` or better of your wake-word clips at threshold 0.5;
+   - `false fires on 0/20` of the other clips;
+   - the line "a safe threshold sits between X and Y" — remember Y, it is your
+     starting `wake_threshold` on the robot.
+
+2. **Test live on microphone (watch the score bar in real time):**
+   ```bash
+   python3 scripts/wake_live_score.py src/langrobo_ros/models/wake/mitra.onnx --threshold 0.5
+   ```
+   Speak "Mitra" into your laptop mic and watch the live visual score meter react.
 
 If positives score low (median under ~0.4): the TTS spelling did not match
 how you say it — go back to Part B with the other spelling. If negatives
@@ -162,20 +169,22 @@ model already scores above `wake_verifier_threshold`. It does not make the
 model hear you better; it makes it ignore other voices/TV saying similar
 things.
 
+Run the verifier training script (takes ~5–10s locally on Mac):
 ```bash
-python3 - <<'EOF'
-import glob
-from openwakeword.custom_verifier_model import train_custom_verifier
-train_custom_verifier(
-    positive_reference_clips=sorted(glob.glob("/home/YOU/wake_data/mitra_pos/*.wav")),
-    negative_reference_clips=sorted(glob.glob("/home/YOU/wake_data/mitra_neg/*.wav")),
-    output_path="/home/YOU/wake_data/mitra_verifier.pkl",
-    model_name="/path/to/mitra.onnx",
-)
-EOF
-# re-score WITH the verifier; positives should still fire, negatives less
-python3 scripts/wake_score.py mitra.onnx ~/wake_data/mitra_pos ~/wake_data/mitra_neg \
-        --verifier ~/wake_data/mitra_verifier.pkl
+python3 scripts/wake_train_verifier.py \
+    --model src/langrobo_ros/models/wake/mitra.onnx \
+    --pos ~/wake_data/mitra_pos \
+    --neg ~/wake_data/mitra_neg \
+    --out src/langrobo_ros/models/wake/mitra_verifier.pkl
+```
+
+Re-score WITH the verifier (clip score and live mic):
+```bash
+python3 scripts/wake_score.py src/langrobo_ros/models/wake/mitra.onnx ~/wake_data/mitra_pos ~/wake_data/mitra_neg \
+        --verifier src/langrobo_ros/models/wake/mitra_verifier.pkl
+
+python3 scripts/wake_live_score.py src/langrobo_ros/models/wake/mitra.onnx \
+        --verifier src/langrobo_ros/models/wake/mitra_verifier.pkl
 ```
 
 (The function takes **lists of file paths**, despite its docstring saying
