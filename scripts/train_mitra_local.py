@@ -214,7 +214,10 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=128, shuffle=False)
 
-    print("\n4. Training PyTorch neural network...")
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+    gpu_label = "Apple Silicon GPU (MPS)" if device.type == "mps" else ("Nvidia GPU" if device.type == "cuda" else "CPU")
+    print(f"\n4. Training PyTorch neural network on {gpu_label}...")
+
     # Standard openWakeWord DNN architecture
     net = nn.Sequential(
         nn.Flatten(),
@@ -226,7 +229,7 @@ def main():
         nn.ReLU(),
         nn.Linear(64, 1),
         nn.Sigmoid()
-    )
+    ).to(device)
 
     criterion = nn.BCELoss()
     optimizer = torch.optim.AdamW(net.parameters(), lr=1.5e-3, weight_decay=1e-4)
@@ -240,6 +243,7 @@ def main():
         net.train()
         train_loss = 0.0
         for bx, by in train_loader:
+            bx, by = bx.to(device), by.to(device)
             optimizer.zero_grad()
             pred = net(bx)
             loss = criterion(pred, by)
@@ -254,6 +258,7 @@ def main():
         total = 0
         with torch.no_grad():
             for bx, by in val_loader:
+                bx, by = bx.to(device), by.to(device)
                 pred = net(bx)
                 loss = criterion(pred, by)
                 val_loss += loss.item() * len(bx)
