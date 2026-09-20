@@ -130,6 +130,11 @@ class STTNode(Node):
         self.declare_parameter('wake_word', 'hey_jarvis')  # bundled stand-in until mitra.onnx
         self.declare_parameter('wake_model_path', '')      # explicit .onnx (custom Mitra) wins
         self.declare_parameter('wake_threshold', 0.5)
+        # Personal verifier trained on the owner's own clips (optional; see
+        # WAKE_WORD_INTEGRATION.md). Runs only on frames the base model
+        # already likes, and its score replaces the base score there.
+        self.declare_parameter('wake_verifier_path', '')
+        self.declare_parameter('wake_verifier_threshold', 0.3)
         self.declare_parameter('follow_up_window_s', 9.0)  # stay awake this long after each command
         # transcript_alias mode only: if False, forward EVERY transcript to the brain
         # (no name required in the text — the agent prompt knows its own name and judges
@@ -218,7 +223,9 @@ class STTNode(Node):
             self.get_parameter('wake_detector').value,
             {'wake_word': self.get_parameter('wake_word').value,
              'wake_model_path': self.get_parameter('wake_model_path').value,
-             'wake_threshold': self.get_parameter('wake_threshold').value},
+             'wake_threshold': self.get_parameter('wake_threshold').value,
+             'wake_verifier_path': self.get_parameter('wake_verifier_path').value,
+             'wake_verifier_threshold': self.get_parameter('wake_verifier_threshold').value},
         )
         self._acoustic = self._wake is not None
         self._awake = False

@@ -26,9 +26,12 @@ class OpenWakeWordDetector(WakeDetector):
             model_path=params.get('wake_model_path', ''),
             wake_word=params.get('wake_word', 'hey_jarvis'),
             threshold=float(params.get('wake_threshold', 0.5)),
+            verifier_path=params.get('wake_verifier_path', ''),
+            verifier_threshold=float(params.get('wake_verifier_threshold', 0.3)),
         )
 
-    def __init__(self, model_path: str = '', wake_word: str = 'hey_jarvis', threshold: float = 0.5):
+    def __init__(self, model_path: str = '', wake_word: str = 'hey_jarvis', threshold: float = 0.5,
+                 verifier_path: str = '', verifier_threshold: float = 0.3):
         try:
             import openwakeword
             from openwakeword.model import Model
@@ -44,8 +47,18 @@ class OpenWakeWordDetector(WakeDetector):
                     f'wake_model_path set')
             path = matches[0]
 
+        # Optional personal verifier (openwakeword.custom_verifier_model): a
+        # small classifier trained on the OWNER's own recordings of the word,
+        # run only on frames the base model already scores above
+        # verifier_threshold. Keyed by the base model's name = file stem.
+        import os
+        kwargs = {}
+        if verifier_path:
+            stem = os.path.splitext(os.path.basename(path))[0]
+            kwargs = {'custom_verifier_models': {stem: verifier_path},
+                      'custom_verifier_threshold': verifier_threshold}
         try:
-            self._model = Model(wakeword_model_paths=[path])
+            self._model = Model(wakeword_model_paths=[path], **kwargs)
         except Exception as e:  # bad/missing file, onnx load failure, etc.
             raise WakeUnavailable(f'failed to load wake model {path!r}: {e}') from e
 
