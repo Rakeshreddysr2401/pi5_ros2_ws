@@ -20,7 +20,10 @@ ESP32     ──────  4-wheel drive chassis, 50 Hz PID (micro-ROS over W
 **[ARCHITECTURE_LLD.md](ARCHITECTURE_LLD.md) — the low-level design: every file, the turn lifecycle, where the latency goes** ·
 [INTEGRATION_GAPS.md](INTEGRATION_GAPS.md) — what this brain asks of the rover that the rover does not answer ·
 [OPERATIONS.md](OPERATIONS.md) — deploy, systemd, health API, troubleshooting ·
-[TELEGRAM.md](TELEGRAM.md) — chat with the robot from your phone: setup + usage
+[TELEGRAM.md](TELEGRAM.md) — chat with the robot from your phone: setup + usage ·
+[PI5_VOICE.md](PI5_VOICE.md) — the Pi5 voice trio (speaker/mic owner, STT, TTS) ·
+[VOICE_ROADMAP.md](VOICE_ROADMAP.md) — the phased voice plan and what is done ·
+[WAKE_WORD_INTEGRATION.md](WAKE_WORD_INTEGRATION.md) — train and plug in the "Mitra" wake word
 
 ---
 

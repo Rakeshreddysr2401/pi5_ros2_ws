@@ -32,7 +32,11 @@ If STT accuracy is the thing that hurts, this is the first lever, ahead of
 every model change below: keep the Stone on **a2dp** (speaker only, full
 quality) and put a **separate USB mic** on the Pi5 — a ReSpeaker array or a
 USB speakerphone, exactly as §1 recommends. Then `input_device` points at the
-USB mic and `output_device`/`bt_mac` keep the Stone.
+USB mic (`wired_fallback` in the `pi5_audio_device` section, or
+`input_device` directly) and the Stone stays the speaker (`bt_prefer_mic:
+false`). Measured 2026-09-20 (VOICE_ROADMAP.md Phase 0b): the Stone mutes
+its mic while it plays, so a separate mic is also the only way to be heard
+*during* playback.
 
 Second lever, same file: `wake_detector: transcript_alias` with
 `stt_provider: sarvam`. The acoustic wake word is implemented

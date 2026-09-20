@@ -41,6 +41,8 @@ from . import bt_audio
 # state, not wait for the next edge.
 LATCHED = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                      durability=DurabilityPolicy.TRANSIENT_LOCAL)
+# Consecutive failed health checks before the device counts as gone.
+LOST_AFTER_MISSES = 2
 
 
 class AudioDeviceNode(Node):
@@ -75,6 +77,9 @@ class AudioDeviceNode(Node):
 
         self._active: dict | None = None      # the device currently routed
         self._ready = False
+        # bluetoothctl/wpctl can time out for one tick while whisper pegs the
+        # CPU; one bad read must not close the mic and drop a reply in flight.
+        self._misses = 0
         self._last_attempt: dict[str, float] = {}
         self._pair_warned = False
         self._publish_state()                  # latch "not ready" immediately
@@ -104,7 +109,11 @@ class AudioDeviceNode(Node):
         if self._active and self._active['kind'] == 'bt':
             still = next((d for d in ranked if d['mac'] == current), None)
             if still and still['connected'] and self._reassert_bt(self._active):
+                self._misses = 0
                 return                          # healthy: nothing to do
+            self._misses += 1
+            if self._misses < LOST_AFTER_MISSES:
+                return                          # could be a slow tool, not a lost device
             self._lost(f"{self._active['name']} disconnected")
 
         for d in ranked:
@@ -176,6 +185,17 @@ class AudioDeviceNode(Node):
                 self._apply_source(source, routed)
             else:
                 self.get_logger().warning(f"{d['name']} is in HFP but PipeWire shows no mic")
+        if routed['source'] is None and self._wired:
+            # A2DP speaker (or HFP without a mic): the wired device is the mic.
+            wired = bt_audio.find_node(bt_audio.wpctl_status(), 'Sources', self._wired)
+            if wired:
+                bt_audio.set_default(wired['id'])
+                routed['source'], routed['source_id'] = wired['name'], wired['id']
+                routed['mic'] = 'wired'
+            else:
+                self.get_logger().warning(
+                    f"no mic: {d['name']} has none in {profile} and no wired source matches "
+                    f"{self._wired!r}")
         return routed
 
     def _apply_source(self, source: dict, routed: dict) -> None:
@@ -238,6 +258,7 @@ class AudioDeviceNode(Node):
         self.get_logger().warning(f'audio lost: {why} — searching')
         self._active = None
         self._ready = False
+        self._misses = 0
         self._publish_state()
 
     def _publish_state(self) -> None:

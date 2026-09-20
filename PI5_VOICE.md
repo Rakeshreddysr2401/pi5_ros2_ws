@@ -35,7 +35,7 @@ is CUDA-accelerated and faster).
 | TTS | `kokoro-onnx`, **fp32** model (not int8 — see below), 4 threads |
 | VAD | `webrtcvad`, aggressiveness 2, 30ms frames, ~300ms pre-pad / ~600ms end-silence |
 | Noise gate | `vad_gate.py` — duration + energy + voiced-ratio, between the VAD and the recognizer. Exists because an idle room's VAD-positive noise got a cloud STT to invent a fluent sentence ("This is ₹11,800." from an empty room). `min_utterance_rms` shipped at 0.012 — **below** this file's own measured Bluetooth-mic noise floor of ~0.029 — so it did nothing on the mic actually in use; fixed to 0.05 (commit `d8379ba`, 2026-09-05) |
-| Wake gate | **`openwakeword`, acoustic, ON by default** (bundled `hey_jarvis` stand-in — the project's real wake word, "Mitra", still needs a trained `.onnx`, see VOICE_QUALITY.md §4). While asleep, nothing is transcribed and nothing leaves the Pi5. `wake_detector: transcript_alias` (transcribe everything, gate on a name in the text) remains as a legacy fallback mode — see "Wake word" below for live-measured threshold tuning |
+| Wake gate | **Currently OFF** (`wake_detector: transcript_alias`, `require_wake: false` — every utterance is transcribed and forwarded). The acoustic gate (`openwakeword`) exists and was verified live with the bundled `hey_jarvis` stand-in, but the real "Mitra" model is not trained yet — **WAKE_WORD_INTEGRATION.md** is the recipe, VOICE_ROADMAP.md Phase 1 the plan. Once on: while asleep nothing is transcribed and nothing leaves the Pi5 |
 | Mic/speaker | **Any paired Bluetooth speaker/headphones, HFP profile** for the mic (8-16kHz call audio, so one device covers both legs) — the boAt Stone 650 is the preferred one, OnePlus Buds Z2 verified too. Owned by `audio_device_node` (see below); a wired USB headset (Plantronics Blackwire) is the fallback when nothing Bluetooth is reachable |
 | Confidence filter | drop segments where `no_speech_prob > 0.6 AND avg_logprob < -1.0` — the exact fix VOICE_QUALITY.md validated on the Jetson |
 
@@ -261,6 +261,9 @@ raising `ProviderUnavailable`.
 
 ## Wake word — threshold tuned from live audio, not the stock default
 
+(History of the `hey_jarvis` stand-in, kept because the tuning method is the
+one to repeat for the "Mitra" model — WAKE_WORD_INTEGRATION.md Part F.)
+
 `wake_detector: openwakeword` runs on every audio frame while asleep
 (negligible CPU, RTF ~0.2 measured) and fires when `last_score >=
 wake_threshold`. The stock default is `0.5`, calibrated (by openWakeWord's
@@ -392,7 +395,8 @@ ssh jetson 'fleet_role.sh voice status'
 
 cd ~/ros2_ws
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
-ros2 launch pi5_voice_pkg voice_launch.py       # both nodes, provider from config
+./scripts/run_voice.sh                          # all three nodes in the foreground
+systemctl --user status langrobo-voice          # ...or the service (starts at boot)
 ```
 
 Params: `src/pi5_voice_pkg/config/voice_params.yaml` (providers, model paths,

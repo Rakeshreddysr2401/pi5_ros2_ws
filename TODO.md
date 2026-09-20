@@ -101,8 +101,9 @@ token-joining in `_run()` produces correctly-spaced text — that logic is
 unverified. Delete this section once one real Telugu utterance round-trips
 correctly through at least one cloud provider (not the fallback).
 confirm `/voice/user_input` gets a clean transcript. Delete this section
-once that's done and the wake_aliases list (`rakhi`/`chotu`/`hey pi` —
-config/voice_params.yaml) has been tuned against a few real tries.
+once that's done and the wake_aliases list (`mitra`/`hey mitra` —
+config/voice_params.yaml; the robot was renamed Mitra 2026-09-20) has been
+tuned against a few real tries.
 
 ## OUTSTANDING 2026-07-10: Mac Mini llama.cpp returns "Compute error" on EVERY request
 

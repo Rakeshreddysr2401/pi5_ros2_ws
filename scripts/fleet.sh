@@ -81,6 +81,10 @@ sim)
         # Sim mode needs BOTH Jetson roles: voice (real mic/speaker — you
         # still talk to the robot while the body is simulated) AND perception
         # (isaac_ros consuming the sim's /cam_1 depth/RGB topics).
+        # The Jetson speaks and listens in sim mode, so the Pi5's own voice
+        # trio must NOT: two stt_nodes = every turn answered twice.
+        systemctl --user stop langrobo-voice 2>/dev/null || true
+        echo "pi5:    voice=$(systemctl --user is-active langrobo-voice) (Jetson takes voice in sim mode)"
         echo "jetson: starting voice + perception..."
         $SSH $JETSON "$ROLE_SCRIPT voice start" || echo "jetson: voice start FAILED"
         $SSH $JETSON "$ROLE_SCRIPT perception start" || echo "jetson: perception start FAILED"
@@ -104,8 +108,12 @@ rover)
     else
         echo "jetson: UNREACHABLE (perception not started)"
     fi
+    # Voice lives on the Pi5 in rover mode (langrobo-voice user unit — the
+    # speaker/mic owner + STT + TTS; PI5_VOICE.md).
+    systemctl --user start langrobo-voice 2>/dev/null || true
+    echo "pi5:    voice=$(systemctl --user is-active langrobo-voice)"
     echo "fleet: ROVER mode up. Voice is OFF on the Jetson (perception has the 8GB)"
-    echo "       — talk to the robot via Telegram. Voice manually: $ROLE_SCRIPT voice start"
+    echo "       — the Pi5 voice trio is listening (or use Telegram)."
     ;;
 stop)
     # Park the robot: stop the body (sim + Jetson roles). No password needed.
@@ -117,7 +125,9 @@ stop)
         $SSH $JETSON "$ROLE_SCRIPT voice stop" || true
         $SSH $JETSON "$ROLE_SCRIPT perception stop" || true
     fi
-    echo "fleet: robot body stopped. Brain + discovery still up (Telegram/chat alive)."
+    # Pi5 voice stays up like the brain: parked is not deaf.
+    systemctl --user start langrobo-voice 2>/dev/null || true
+    echo "fleet: robot body stopped. Brain + discovery + Pi5 voice still up (Telegram/chat/voice alive)."
     echo "       Full shutdown incl. Pi5 services: $0 down"
     ;;
 down)
@@ -131,6 +141,7 @@ down)
         $SSH $JETSON "$ROLE_SCRIPT voice stop" || true
         $SSH $JETSON "$ROLE_SCRIPT perception stop" || true
     fi
+    systemctl --user stop langrobo-voice 2>/dev/null || true
     echo "pi5:    stopping brain, micro-ROS, discovery (needs sudo)..."
     sudo systemctl stop langrobo-brain langrobo-microros langrobo-discovery
     echo "pi5:    discovery=$(systemctl is-active langrobo-discovery)  brain=$(systemctl is-active langrobo-brain)  microros=$(systemctl is-active langrobo-microros)"
@@ -138,7 +149,7 @@ down)
     echo "       (these units are enabled, so they'll also restart on next Pi5 boot)"
     ;;
 status)
-    echo "pi5:    discovery=$(systemctl is-active langrobo-discovery)  brain=$(systemctl is-active langrobo-brain)  microros=$(systemctl is-active langrobo-microros)"
+    echo "pi5:    discovery=$(systemctl is-active langrobo-discovery)  brain=$(systemctl is-active langrobo-brain)  microros=$(systemctl is-active langrobo-microros)  voice=$(systemctl --user is-active langrobo-voice 2>/dev/null)"
     if reachable "$LAPTOP_HOST"; then
         $SSH $LAPTOP "$SIM_SCRIPT status" 2>/dev/null || true
     else

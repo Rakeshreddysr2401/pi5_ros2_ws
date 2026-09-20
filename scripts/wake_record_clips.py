@@ -51,11 +51,13 @@ def main():
                     help="clip length (default 2.0 for positive, 4.0 for negative)")
     ap.add_argument("--device", default=None, help="sounddevice input name/index (default: system mic)")
     args = ap.parse_args()
+    if args.device is not None and args.device.isdigit():
+        args.device = int(args.device)       # sounddevice: int = index, str = name match
     seconds = args.seconds or (2.0 if args.kind == "positive" else 4.0)
     os.makedirs(args.out, exist_ok=True)
     existing = len([f for f in os.listdir(args.out) if f.endswith(".wav")])
 
-    print(f"mic: {sd.query_devices(args.device or sd.default.device[0])['name']}")
+    print(f"mic: {sd.query_devices(args.device if args.device is not None else sd.default.device[0])['name']}")
     if args.kind == "positive":
         print(f"Say ONLY the wake word, once, when you see GO. {args.n} clips of {seconds:.0f}s.")
     else:

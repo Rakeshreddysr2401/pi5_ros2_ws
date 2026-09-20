@@ -12,7 +12,7 @@ Deploy, run, observe, and troubleshoot the Pi5 brain.
 | Production | `systemctl start langrobo-brain langrobo-microros` | the brain + micro-ROS agent, 24/7, auto-restart, JSON logs |
 | Foreground | `ros2 launch langrobo_ros brain_launch.py` | the same, in your terminal |
 | Dev (Studio) | `./scripts/dev.sh` | micro-ROS + `langgraph dev` on :2024 — **draws the graph**, and lets you step a turn node by node |
-| Voice | `ros2 launch pi5_voice_pkg voice_launch.py` | CPU-only STT + TTS on the Pi 5 (see PI5_VOICE.md) |
+| Voice | `systemctl --user status langrobo-voice` (user unit, starts at boot; foreground: `./scripts/run_voice.sh`) | speaker/mic owner + CPU-only STT + TTS on the Pi 5 (see PI5_VOICE.md) |
 | Studio, brain live | `./scripts/start_studio.sh` | inspect the graph **while `agent_node` keeps running** — see the caveat below |
 
 **Never run two brains at once** — both drive `/cmd_vel` and micro-ROS UDP 8888.

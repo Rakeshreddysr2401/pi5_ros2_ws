@@ -64,7 +64,12 @@ case "$CMD" in
       [ -z "${1:-}" ] && exec python3 "$(dirname "$0")/bt_pair.py"
       MAC="$1"
       bluetoothctl --timeout 15 scan on >/dev/null 2>&1
-      bluetoothctl pair "$MAC"
+      if ! bluetoothctl pair "$MAC"; then
+          echo "pairing failed. Is the device in pairing mode and in range?"
+          echo "If bluez answered with a DBus/NotAuthorized error, this user may lack pairing rights:"
+          echo "    sudo usermod -aG bluetooth $USER   (then log in again)   — or run this once with sudo"
+          exit 1
+      fi
       bluetoothctl trust "$MAC"      # trust = reconnect without asking again
       bluetoothctl connect "$MAC"
       default_sink_for "$MAC"

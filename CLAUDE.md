@@ -15,7 +15,10 @@ Home robot "Mitra" (renamed from "Rakhi" 2026-09-20; the `rakhi24` username and 
 Read HOW_IT_WORKS.md for the end-to-end walkthrough (boot, turn lifecycle,
 failure paths); **ARCHITECTURE_LLD.md before touching graph/agent code**;
 INTEGRATION_GAPS.md before building anything that touches the world;
-OPERATIONS.md for run/deploy/troubleshooting; PI5_VOICE.md for the STT/TTS pair.
+OPERATIONS.md for run/deploy/troubleshooting; PI5_VOICE.md for the Pi5 voice trio
+(speaker/mic owner + STT + TTS); **VOICE_ROADMAP.md** for the phased voice plan
+(what is done, what is next); WAKE_WORD_INTEGRATION.md to train and plug in the
+"Mitra" wake word.
 
 ## Fleet start — one command brings up the whole robot
 
@@ -29,9 +32,9 @@ OPERATIONS.md for run/deploy/troubleshooting; PI5_VOICE.md for the STT/TTS pair.
 - **`rover`** — the REAL body: starts this Pi5's micro-ROS agent (ESP32 wheels) and
   the Jetson's perception role (D555 + cuVSLAM + nvblox + Nav2 + the phase-4 VLM
   bridge). Perception owns the 8 GB Orin, so Jetson voice is OFF in this mode —
-  run `ros2 launch pi5_voice_pkg voice_launch.py` here instead (CPU-only, fits
-  alongside), or use Telegram. Switches `robot_body` back to `rover` (plain
-  Twist on `/cmd_vel`).
+  the Pi5's own voice trio runs here instead (`langrobo-voice` user unit,
+  starts at boot; CPU-only, fits alongside), or use Telegram. Switches
+  `robot_body` back to `rover` (plain Twist on `/cmd_vel`).
 
   **`./scripts/fleet.sh rover` does not start the Jetson's VLM bridge.** Without
   `./rover vlm` over there, `look()` has no camera frame and
@@ -154,6 +157,12 @@ that moves wheels).
 - `langrobo_ros/` — agent_node (params, queues, worker loop, cache warmer),
   ros2_bridge (all topics/services/actions; `NAV_FRAME` defined once here),
   launch, systemd units
+- `pi5_voice_pkg/` — the Pi5 voice trio: `audio_device_node` is the ONE
+  owner of the speaker + mic (any paired Bluetooth device, or a wired
+  fallback; publishes latched `/voice/audio_ready`), `stt_node` and
+  `tts_node` follow it and never touch Bluetooth. `bt_audio.py` is the
+  pure bluez/PipeWire glue. `/bt-audio` (Claude skill) is the operator
+  checklist. Robot name / wake word: **Mitra**.
 
 ## Config split
 
