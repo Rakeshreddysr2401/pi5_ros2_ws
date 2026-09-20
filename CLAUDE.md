@@ -1,6 +1,6 @@
 # LangRobo Pi5 brain — project guide
 
-Home robot "Rakhi". Four machines:
+Home robot "Mitra" (renamed from "Rakhi" 2026-09-20; the `rakhi24` username and `rakhi-jetson` hostname are unrelated and unchanged). Four machines:
 
 - **Pi 5** (this repo) — the LangGraph brain, **three agents**, plus a CPU-only
   STT/TTS pair (`pi5_voice_pkg`) so voice runs concurrently with driving.

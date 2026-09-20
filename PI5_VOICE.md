@@ -35,7 +35,7 @@ is CUDA-accelerated and faster).
 | TTS | `kokoro-onnx`, **fp32** model (not int8 — see below), 4 threads |
 | VAD | `webrtcvad`, aggressiveness 2, 30ms frames, ~300ms pre-pad / ~600ms end-silence |
 | Noise gate | `vad_gate.py` — duration + energy + voiced-ratio, between the VAD and the recognizer. Exists because an idle room's VAD-positive noise got a cloud STT to invent a fluent sentence ("This is ₹11,800." from an empty room). `min_utterance_rms` shipped at 0.012 — **below** this file's own measured Bluetooth-mic noise floor of ~0.029 — so it did nothing on the mic actually in use; fixed to 0.05 (commit `d8379ba`, 2026-09-05) |
-| Wake gate | **`openwakeword`, acoustic, ON by default** (bundled `hey_jarvis` stand-in — the project's real wake word, "Rakhi"/"chotu", still needs a trained `.onnx`, see VOICE_QUALITY.md §4). While asleep, nothing is transcribed and nothing leaves the Pi5. `wake_detector: transcript_alias` (transcribe everything, gate on a name in the text) remains as a legacy fallback mode — see "Wake word" below for live-measured threshold tuning |
+| Wake gate | **`openwakeword`, acoustic, ON by default** (bundled `hey_jarvis` stand-in — the project's real wake word, "Mitra", still needs a trained `.onnx`, see VOICE_QUALITY.md §4). While asleep, nothing is transcribed and nothing leaves the Pi5. `wake_detector: transcript_alias` (transcribe everything, gate on a name in the text) remains as a legacy fallback mode — see "Wake word" below for live-measured threshold tuning |
 | Mic/speaker | **Any paired Bluetooth speaker/headphones, HFP profile** for the mic (8-16kHz call audio, so one device covers both legs) — the boAt Stone 650 is the preferred one, OnePlus Buds Z2 verified too. Owned by `audio_device_node` (see below); a wired USB headset (Plantronics Blackwire) is the fallback when nothing Bluetooth is reachable |
 | Confidence filter | drop segments where `no_speech_prob > 0.6 AND avg_logprob < -1.0` — the exact fix VOICE_QUALITY.md validated on the Jetson |
 
@@ -110,7 +110,7 @@ you to put the new device in pairing mode, scans, lists only audio devices by
 name, pairs + trusts the one you pick, waits for the node to switch to it, and
 offers to make it the preferred device in `voice_params.yaml`. From then on
 the node handles it. `bt_speaker.sh scan/connect/profile` remain as hand tools
-for poking at the stack; nothing depends on them. A voice version ("Rakhi,
+for poking at the stack; nothing depends on them. A voice version ("Mitra,
 connect my new earbuds") is planned — VOICE_ROADMAP.md Phase 1.
 
 Known earbud behaviour: OnePlus Buds Z2 hold one connection and drop the
@@ -286,7 +286,7 @@ loop, real hardware, real Bluetooth mic.
 the ambient noise floor are hardware- and room-specific. Re-measure with the
 `[diag] asleep peak_wake_score=` heartbeat log (`diag_log_period_s` in
 `voice_params.yaml`) before trusting `0.35` on different hardware, and revisit
-once the custom "Rakhi" model replaces the `hey_jarvis` stand-in — a
+once the custom "Mitra" model replaces the `hey_jarvis` stand-in — a
 different model has a different score distribution.
 
 ---
@@ -442,7 +442,7 @@ source /opt/ros/jazzy/setup.bash && source install/setup.bash
 ros2 topic echo --field data /voice/debug_transcript
 ```
 Say **"what is the time today"** → text appears in Terminal 2. Say
-**"Rakhi, what is the time"** → Terminal 1 also logs `addressed to me: '…'`
+**"Mitra, what is the time"** → Terminal 1 also logs `addressed to me: '…'`
 and publishes to `/voice/user_input` (what the brain consumes). The `[diag]`
 heartbeat in Terminal 1 shows `voiced=True` while you speak; any ALSA
 `input status` overflow prints as a WARNING.

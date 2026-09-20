@@ -119,7 +119,7 @@ class STTNode(Node):
         # expensive, useless cloud call. Cutting means the speaker gets
         # transcribed in pieces, which is far better than not at all.
         self.declare_parameter('max_utterance_s', 20.0)
-        self.declare_parameter('wake_aliases', ['rakhi', 'chotu', 'hey pi'])
+        self.declare_parameter('wake_aliases', ['mitra', 'hey mitra'])
         self.declare_parameter('stop_words', ['stop'])
         self.declare_parameter('stt_provider', 'local')       # local | sarvam | soniox
         self.declare_parameter('stt_source_language', 'te')   # Telugu source for cloud translate
@@ -127,8 +127,8 @@ class STTNode(Node):
         # Wake word: 'transcript_alias' = legacy (transcribe all, match a name in text);
         # 'openwakeword' = acoustic gate (transcribe nothing until the word is heard).
         self.declare_parameter('wake_detector', 'transcript_alias')
-        self.declare_parameter('wake_word', 'hey_jarvis')  # bundled stand-in until rakhi.onnx
-        self.declare_parameter('wake_model_path', '')      # explicit .onnx (custom Rakhi) wins
+        self.declare_parameter('wake_word', 'hey_jarvis')  # bundled stand-in until mitra.onnx
+        self.declare_parameter('wake_model_path', '')      # explicit .onnx (custom Mitra) wins
         self.declare_parameter('wake_threshold', 0.5)
         self.declare_parameter('follow_up_window_s', 9.0)  # stay awake this long after each command
         # transcript_alias mode only: if False, forward EVERY transcript to the brain
@@ -576,12 +576,12 @@ class STTNode(Node):
 
         # transcript_alias mode with require_wake: the alias opens the door, and
         # a follow-up window holds it open. Nobody says the robot's name in every
-        # sentence of a conversation: "rakhi, set a timer" / "for how long?" /
+        # sentence of a conversation: "mitra, set a timer" / "for how long?" /
         # "five minutes" — that third utterance has no alias and used to be
         # dropped, which made every exchange a one-shot command.
         stripped = strip_alias(text, self._aliases)
         if stripped is not None:
-            # Bare "Rakhi?" is a real thing people say to get attention; forward
+            # Bare "Mitra?" is a real thing people say to get attention; forward
             # the name itself rather than dropping it as an empty remainder.
             self._forward(stripped or text)
             return

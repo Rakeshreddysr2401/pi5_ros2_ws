@@ -1,7 +1,7 @@
 # Voice quality — getting STT/TTS closer to "Siri good"
 
 Why the robot mishears, what actually moves the needle, and how to train the
-custom "hey chotu" wake-word model. Written 2026-07-06 against the current
+custom "Mitra" wake-word model. Written 2026-07-06 against the current
 stack: Whisper `small` (CUDA) + SileroVAD (onnx) + openWakeWord
 (`hey_jarvis_v0.1`) + transcript gate on the Jetson (`~/robot`,
 voice_pkg/voice_params.yaml), Kokoro TTS → `ec_speaker` (PipeWire AEC).
@@ -79,7 +79,7 @@ specific failure you're seeing:
 |---|---|
 | `condition_on_previous_text=False` on the decode call | THE classic hallucination fix — stops one bad transcript from seeding the next |
 | `no_speech_threshold` ~0.6 + drop segments whose `avg_logprob` < −1.0 | discards "transcripts" of silence/noise instead of publishing them |
-| `initial_prompt="Rakhi, Chotu, Telegram, kitchen, …"` (household vocabulary) | Whisper spells rare names right when primed; shrinks the wake-alias zoo |
+| `initial_prompt="Mitra, Telegram, kitchen, …"` (household vocabulary) | Whisper spells rare names right when primed; shrinks the wake-alias zoo |
 | Raise VAD strictness: `min_speech_duration` up, SileroVAD threshold up | fewer half-syllable blips reaching Whisper = fewer inventions |
 | Language pin `language="en"` (if not already) | stops random language-flip hallucinations |
 
@@ -102,23 +102,23 @@ Current: `whisper small` on CUDA. Options, in order of bang-for-buck:
 Branch discipline (as you suggested): try each rung on a `voice-quality-*`
 branch on the Jetson repo, A/B with the method in §5, merge only winners.
 
-## 4. Training the custom wake word ("hey chotu" / "hey rakhi")
+## 4. Training the custom wake word ("Mitra") — robot renamed 2026-09-20
 
-Today the NEURAL gate runs the stock `hey_jarvis_v0.1`. "Chotu" aliases only
-cover the transcript fallback — a true "hey chotu" needs a trained model.
+Today the NEURAL gate runs the stock `hey_jarvis_v0.1`. "Mitra" aliases only
+cover the transcript fallback — a true "Mitra" wake needs a trained model.
 openWakeWord ships an **automatic synthetic-training pipeline** so you never
 record thousands of samples:
 
 1. Open openWakeWord's `automatic_model_training.ipynb` (in the
    dscripka/openWakeWord repo, runs on Google Colab free tier, ~1 hour).
-2. Set the target phrase: `hey chotu` (also do a `hey rakhi` run while
+2. Set the target phrase: `mitra` (also do a `hey mitra` run while
    you're there). The notebook generates thousands of synthetic utterances
    (piper-sample-generator: many voices/speeds/pitches), mixes them with
    noise/impulse responses, trains, and validates against false-positive data.
 3. Export the `.onnx` model. Copy to the Jetson:
-   `scp hey_chotu.onnx rakhi24@<jetson>:~/robot/models/wake/`
+   `scp mitra.onnx rakhi24@<jetson>:~/robot/models/wake/`
 4. Point the config at it (voice_params.yaml):
-   `wake_models: ["hey_chotu"]` (openWakeWord loads by model-file stem from
+   `wake_models: ["mitra"]` (openWakeWord loads by model-file stem from
    the wake models dir; keep `wake_threshold: 0.5` to start).
 5. Rebuild voice_pkg + restart the stack (Jetson CLAUDE.md commands), then
    tune: false rejects → lower `wake_threshold` toward 0.35; false accepts →

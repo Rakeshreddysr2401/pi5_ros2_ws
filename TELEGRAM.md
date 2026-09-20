@@ -1,6 +1,6 @@
 # Telegram Channel — Setup & Usage Guide
 
-Chat with Rakhi from anywhere: text or photos in, text or photos back, from
+Chat with Mitra from anywhere: text or photos in, text or photos back, from
 the same brain that answers voice in the living room. This is the household
 setup guide; internals live in ARCHITECTURE.md ("Telegram channel"), the turn
 walkthrough in HOW_IT_WORKS.md §4b, and the env reference in OPERATIONS.md.
@@ -12,7 +12,7 @@ The robot connects as a **bot** with its own token.
 
 
 1. **Create the bot**: in Telegram, chat with **@BotFather** → `/newbot` →
-   pick a display name (`Rakhi`) and a unique username ending in `bot`
+   pick a display name (`Mitra`) and a unique username ending in `bot`
    (`RakhiHomeBot`). BotFather returns a **token** (`7123456789:AAHfQx…`).
    Treat it like a password — anyone holding it can impersonate the bot.
 2. **Get each member's chat_id**: everyone messages **@userinfobot** once and
@@ -64,7 +64,7 @@ is logged: `journalctl -u langrobo-brain -o cat | grep "AUDIT telegram"`.
   different view).
 - **Send a photo** — attach a picture (+ optional caption question); the
   multimodal model actually sees it.
-- **Relay by voice** — say "Rakhi, tell Mom I'll be late" → lands on Mom's
+- **Relay by voice** — say "Mitra, tell Mom I'll be late" → lands on Mom's
   phone as a Telegram message.
 - **Drive it** — "go to the kitchen", "go to the red bottle" (owner only).
   The reply comes back immediately; **arrival is reported to your chat later**,

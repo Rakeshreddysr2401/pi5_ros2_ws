@@ -4,7 +4,7 @@ Name-gating is the only thing standing between a room microphone and a robot
 that answers the television. But people do not say a robot's name in every
 sentence of a conversation — they say it once and then keep talking:
 
-    "rakhi, set a timer"        → addressed
+    "mitra, set a timer"        → addressed
     "for how long?"             ← the robot asks
     "five minutes"              → still talking to it, no name
 
@@ -19,7 +19,7 @@ def strip_alias(text: str, aliases) -> str | None:
     """Remove the wake name if present.
 
     Returns the rest of the sentence, `''` when the text was only the name
-    (people do say a bare "Rakhi?" to get attention), or None when no name
+    (people do say a bare "Mitra?" to get attention), or None when no name
     appears at all.
 
     Matching is word-bounded on purpose: a plain substring search fires on an
@@ -28,8 +28,9 @@ def strip_alias(text: str, aliases) -> str | None:
     """
     if not text:
         return None
-    for alias in aliases or ():
-        alias = (alias or "").strip()
+    # Longest first: with "mitra" and "hey mitra" both configured, matching
+    # the short one first leaves a stray "hey" behind.
+    for alias in sorted(((a or "").strip() for a in aliases or ()), key=len, reverse=True):
         if not alias:
             continue
         m = re.search(rf"\b{re.escape(alias)}\b", text, flags=re.IGNORECASE)

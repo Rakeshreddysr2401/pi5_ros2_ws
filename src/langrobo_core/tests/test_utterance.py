@@ -6,7 +6,7 @@ from langrobo_core.utils.utterance import join_utterances, looks_incomplete
 
 
 @pytest.mark.parametrize("text", [
-    "rakhi I want you to",          # dangling verb
+    "mitra I want you to",          # dangling verb
     "go to the kitchen and",        # dangling conjunction
     "put it on the",                # dangling determiner
     "I think we should go to",      # dangling preposition
@@ -39,5 +39,5 @@ def test_empty_is_not_incomplete():
 
 
 def test_join_reads_as_one_sentence():
-    assert join_utterances("rakhi I want you to ", " go to the kitchen") == \
-        "rakhi I want you to go to the kitchen"
+    assert join_utterances("mitra I want you to ", " go to the kitchen") == \
+        "mitra I want you to go to the kitchen"

@@ -1,6 +1,6 @@
 # LangRobo — Pi5 Robot Brain
 
-The **brain** of a distributed home assistant robot ("Rakhi"). The Pi5 runs all
+The **brain** of a distributed home assistant robot ("Mitra"). The Pi5 runs all
 reasoning (a LangGraph state machine over three agents) and bridges motor commands to
 the chassis; the Jetson handles perception.
 

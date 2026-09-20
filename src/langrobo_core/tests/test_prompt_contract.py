@@ -69,7 +69,7 @@ def test_every_speaking_agent_gets_the_speech_contract(name):
 
 
 def test_every_agent_shares_one_identity():
-    """PERSONA carries the "you are Rakhi, built by Rakesh" block. An agent
+    """PERSONA carries the "you are Mitra, built by Rakesh" block. An agent
     without it falls back to its training and tells users it was made by
     Google (Issues/asked_weather.txt) — so every agent that can answer a user
     must have it, and all of them can now."""

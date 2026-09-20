@@ -4,16 +4,16 @@ import pytest
 
 from pi5_voice_pkg.addressing import strip_alias
 
-ALIASES = ["rakhi", "chotu", "hey pi"]
+ALIASES = ["mitra", "hey mitra"]
 
 
 @pytest.mark.parametrize("text,expected", [
-    ("rakhi what is the time", "what is the time"),
-    ("Rakhi, what is the time?", "what is the time"),          # capitalised + punctuation
-    ("hey pi turn on the light", "turn on the light"),          # multi-word alias
-    ("can you rakhi go to the kitchen", "can you go to the kitchen"),  # name mid-sentence
-    ("chotu!", ""),                                             # bare name = attention call
-    ("Rakhi?", ""),
+    ("mitra what is the time", "what is the time"),
+    ("Mitra, what is the time?", "what is the time"),          # capitalised + punctuation
+    ("hey mitra turn on the light", "turn on the light"),       # multi-word alias, longest wins
+    ("can you mitra go to the kitchen", "can you go to the kitchen"),  # name mid-sentence
+    ("hey mitra!", ""),                                             # bare name = attention call
+    ("Mitra?", ""),
 ])
 def test_addressed_utterances(text, expected):
     assert strip_alias(text, ALIASES) == expected
@@ -37,9 +37,9 @@ def test_alias_inside_another_word_does_not_count():
 def test_empty_and_missing_inputs():
     assert strip_alias("", ALIASES) is None
     assert strip_alias(None, ALIASES) is None
-    assert strip_alias("rakhi hello", []) is None
-    assert strip_alias("rakhi hello", ["", "  "]) is None
+    assert strip_alias("mitra hello", []) is None
+    assert strip_alias("mitra hello", ["", "  "]) is None
 
 
 def test_first_matching_alias_wins():
-    assert strip_alias("rakhi and chotu", ALIASES) == "and chotu"
+    assert strip_alias("mitra and mitra", ALIASES) == "and mitra"
