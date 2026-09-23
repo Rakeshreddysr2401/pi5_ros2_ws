@@ -263,6 +263,65 @@ already publishes per-sentence `rtf`.
 
 ---
 
+## 6. The Jetson's localization work (2026-09-22 → 09-24) — what it means here ⬜
+
+The Jetson repo added a LiDAR, found why turns shift x,y, and built an
+exact-move controller. Full analysis: `LOCALIZATION.md` in
+`-langrobo_perception-`. No code in this repo was changed; these are the seams
+it opened.
+
+**A `map` frame exists now — and `NAV_FRAME = odom` is still right.**
+slam_toolbox publishes `map → odom` (LiDAR scan matching, every scan);
+cuVSLAM's loop closure is switched off so the two do not fight. nav2 still
+plans in `odom`, so every goal this brain sends must stay in `odom`. The
+CLAUDE.md rule stands until the Jetson makes the driven change in
+`phase2/config/SLAM.md` — both repos together, with a tape.
+
+**`move_robot`'s turns: graded up to 3.0 rad/s, not at 5.0.** `L:`/`R:` are
+*timed* turns at `_ANGULAR_VEL_RS = 5.0`, on the 2026-08-22 teleop finding that
+5.0 pivots cleanly. The Jetson graded pure-`wz` turns against the walls
+(`./rover pivot`) from 0.4 to 3.0 rad/s:
+
+| | measured |
+|---|---|
+| pivot speed reached | ~7–11 % of the command |
+| centre slide per 90° "in place" | **27.8–32.8 cm** |
+| where it pivots | usually the left tyres (4, 21) cm; sometimes the centre — unpredictable |
+| heading | good: ±1.6° per 90° by odometry |
+
+5.0 was never tested, so this neither confirms nor refutes the teleop claim.
+Until it is: after `L:90` the robot's x,y may have moved ~30 cm, and a sequence
+like `F:60,L:90,F:30` carries that into every later step. To grade it, on the
+Jetson: `PIVOT_WZ=5.0 ./rover pivot 90 -90`.
+
+**The fix the Jetson uses, if this brain keeps its own turns.** Commanding a
+turn as `vx = wz·0.17 − sign(wz)·0.02` (0.17 = half the firmware's
+`WHEEL_BASE_M`) holds the left side near zero, and every turn then pivots
+about one point — spread 1.5 cm over four turns, heading ≤0.56°. It still
+slides (~21 cm per 45°), predictably. Not applied here: it changes physical
+behaviour and should be graded on the robot first.
+
+**An exact-move primitive exists, and this brain cannot reach it.**
+`./rover drive` plans every move as rotate → straight → rotate → straight
+around the measured pivot and re-plans on the LiDAR-corrected pose: a +90° in
+place ends within 1.4 cm / +0.4°. It is a script on the Jetson. Exposing it as
+a ROS action would give `move_robot` and "go back to where you started" exact
+returns. ⬜
+
+**"Movement done" can be reported with nothing moving.** After a power cycle on
+2026-09-23 the ESP32 linked at 20 Hz and echoed every command, with the motor
+supply off. `/wheel_state.x`/`.y` (left/right m/s) at ~0 while commanding is the
+tell. `move_robot` does not look. ⬜
+
+**Smaller:**
+- `/scan` now exists (10 Hz, BEST_EFFORT, 360° at 21 cm). Nothing here
+  subscribes; it is there for obstacle checks.
+- The Mac mini moved on DHCP (.6 → .10). This brain calls it as
+  `singireddys-mac-mini.local`, so it is unaffected; any doc quoting the IP is
+  stale.
+
+---
+
 ## What I could not check
 
 Neither repo was run. This was read on a laptop with no robot, no Jetson and
