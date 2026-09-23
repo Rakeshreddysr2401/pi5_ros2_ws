@@ -1,12 +1,14 @@
 # TODO — pending on-device work
 
-## OUTSTANDING 2026-09-24: grade move_robot turns — they may slide ~30 cm per 90°
+## OUTSTANDING 2026-09-24: move_robot turns — graded at 5.0 rad/s, unpredictable; close them on yaw
 
 The Jetson graded pure-`wz` turns against the walls up to 3.0 rad/s: the
 centre slides 27.8–32.8 cm per 90° "in place", pivoting about the left tyres
 usually and the centre sometimes. `move_robot`'s `L:`/`R:` are timed turns at
-5.0 rad/s, which was never tested. On the Jetson: `PIVOT_WZ=5.0 ./rover pivot
-90 -90`. Details, the held-left turn fix, and the other seams this opened
+5.0 rad/s. **Graded the same day:** 31–68 cm of slide, pivot spread 36 cm, and
+one turn stalled at 67° of 90° — which a timed turn reports as done. Next: close
+`L:`/`R:` on measured yaw, left-held. Details, the held-left turn fix, and the
+other seams this opened
 (a `map` frame now exists; `./rover drive` has no ROS interface yet;
 "Movement done" can be reported with the motors unpowered):
 INTEGRATION_GAPS.md §6.

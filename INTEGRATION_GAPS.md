@@ -277,7 +277,7 @@ plans in `odom`, so every goal this brain sends must stay in `odom`. The
 CLAUDE.md rule stands until the Jetson makes the driven change in
 `phase2/config/SLAM.md` — both repos together, with a tape.
 
-**`move_robot`'s turns: graded up to 3.0 rad/s, not at 5.0.** `L:`/`R:` are
+**`move_robot`'s turns are timed at 5.0 rad/s — graded, and unpredictable.** `L:`/`R:` are
 *timed* turns at `_ANGULAR_VEL_RS = 5.0`, on the 2026-08-22 teleop finding that
 5.0 pivots cleanly. The Jetson graded pure-`wz` turns against the walls
 (`./rover pivot`) from 0.4 to 3.0 rad/s:
@@ -289,10 +289,17 @@ CLAUDE.md rule stands until the Jetson makes the driven change in
 | where it pivots | usually the left tyres (4, 21) cm; sometimes the centre — unpredictable |
 | heading | good: ±1.6° per 90° by odometry |
 
-5.0 was never tested, so this neither confirms nor refutes the teleop claim.
-Until it is: after `L:90` the robot's x,y may have moved ~30 cm, and a sequence
-like `F:60,L:90,F:30` carries that into every later step. To grade it, on the
-Jetson: `PIVOT_WZ=5.0 ./rover pivot 90 -90`.
+**Graded at 5.0 on 2026-09-24 — the teleop claim does not hold.** Six turns
+with `PIVOT_WZ=5.0 ./rover pivot`: slides of **31–68 cm**, pivot points spread
+**36 cm**, pose error 0.8–8.9 cm, heading still good (≤0.8°). And **one turn
+stalled at 67° of 90°**. Because `move_robot` turns are *timed*, that turn
+would have been reported as `Movement done` 23° short. After `L:90` the robot's
+x,y can move 30–70 cm, and a sequence like `F:60,L:90,F:30` carries that into
+every later step.
+
+**What would fix it here:** close the turn on measured yaw (the gyro is good to
+<1°) instead of on time, and command it left-held (below). Better still, call
+the Jetson's `./rover drive` once it has a ROS interface.
 
 **The fix the Jetson uses, if this brain keeps its own turns.** Commanding a
 turn as `vx = wz·0.17 − sign(wz)·0.02` (0.17 = half the firmware's
