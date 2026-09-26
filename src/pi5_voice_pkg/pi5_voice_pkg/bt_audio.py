@@ -182,6 +182,28 @@ def set_profile(mac: str, profile: str) -> tuple[bool, str]:
     return (rc == 0), (out.strip() or target)
 
 
+def parse_active_profile(text: str, mac: str) -> str:
+    """`pactl list cards` -> the Active Profile of this MAC's card, or ''.
+
+    The value carries the codec ("headset-head-unit-cvsd"), so callers match
+    on a prefix, not equality.
+    """
+    want = card_name(mac)
+    in_card = False
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if line.startswith("Name: bluez_card."):
+            in_card = line.split("Name:", 1)[1].strip() == want
+        elif in_card and line.startswith("Active Profile:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def active_profile(mac: str) -> str:
+    rc, out = _run(["pactl", "list", "cards"])
+    return parse_active_profile(out, mac) if rc == 0 else ""
+
+
 def set_default(node_id: int) -> tuple[bool, str]:
     rc, out = _run(["wpctl", "set-default", str(node_id)])
     return (rc == 0), out.strip()

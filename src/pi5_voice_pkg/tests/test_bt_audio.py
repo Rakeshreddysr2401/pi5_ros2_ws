@@ -194,6 +194,24 @@ def test_mac_matching_is_case_insensitive():
     assert ranked[0]["mac"] == STONE.lower()
 
 
+CARDS = """Card #42
+\tName: bluez_card.AA_BB_CC_DD_EE_FF
+\tDriver: module-bluez5-device.c
+\tActive Profile: a2dp-sink
+Card #43
+\tName: bluez_card.D6_AA_BB_59_EF_B6
+\tDriver: module-bluez5-device.c
+\tActive Profile: headset-head-unit-cvsd
+"""
+
+
+def test_active_profile_is_read_per_card():
+    assert bt_audio.parse_active_profile(CARDS, "D6:AA:BB:59:EF:B6") == "headset-head-unit-cvsd"
+    assert bt_audio.parse_active_profile(CARDS, "AA:BB:CC:DD:EE:FF") == "a2dp-sink"
+    assert bt_audio.parse_active_profile(CARDS, "11:22:33:44:55:66") == ""
+    assert bt_audio.parse_active_profile("", "D6:AA:BB:59:EF:B6") == ""
+
+
 def test_gain_overrides_are_per_device_and_forgiving():
     g = bt_audio.parse_gain_overrides(["d6:aa:bb:59:ef:b6=4.0", "", "junk", "AA:BB:CC:DD:EE:FF=x", None])
     assert g == {"D6:AA:BB:59:EF:B6": 4.0}

@@ -43,6 +43,8 @@ LATCHED = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                      durability=DurabilityPolicy.TRANSIENT_LOCAL)
 # Consecutive failed health checks before the device counts as gone.
 LOST_AFTER_MISSES = 2
+# Let bluez tear the old SCO link down before asking for a fresh one.
+BOUNCE_SETTLE_S = 1.5
 
 
 class AudioDeviceNode(Node):
@@ -173,6 +175,14 @@ class AudioDeviceNode(Node):
         """Make a connected device PipeWire's default sink (+ source). Returns
         the routed description, or None when PipeWire never showed its nodes."""
         profile = bt_audio.profile_for(d, self._prefer_mic)
+        if profile == 'hfp' and bt_audio.active_profile(d['mac']).startswith('headset'):
+            # Already in HFP, so setting it again changes nothing — and that
+            # is how a DEAD link survives: the SCO stream can go one-way
+            # (source RUNNING, not muted, gain fine, and pure digital silence
+            # out of the mic — seen live 2026-09-26 after a service restart).
+            # Drop to A2DP and back so the link is rebuilt from scratch.
+            bt_audio.set_profile(d['mac'], 'a2dp')
+            time.sleep(BOUNCE_SETTLE_S)
         ok, msg = bt_audio.set_profile(d['mac'], profile)
         if not ok and profile == 'hfp':
             self.get_logger().warning(f"could not switch {d['name']} to HFP ({msg}); using A2DP")
