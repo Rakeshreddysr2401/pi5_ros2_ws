@@ -4,7 +4,10 @@
     ./scripts/wake_switch.py              # what is active now
     ./scripts/wake_switch.py rakhi        # wake on "Rakhi" (Telugu-trained)
     ./scripts/wake_switch.py mitra        # wake on "Mitra"
-    ./scripts/wake_switch.py off          # no wake word: transcribe everything
+    ./scripts/wake_switch.py off          # no acoustic gate; still needs the
+                                          # name IN THE TEXT to answer
+    ./scripts/wake_switch.py open         # answer everything it hears (noisy
+                                          # rooms will start conversations)
     ./scripts/wake_switch.py mitra --threshold 0.5     # also set the threshold
 
 Edits the three lines in voice_params.yaml that pick the model (path, name,
@@ -67,7 +70,8 @@ def restart_and_report() -> None:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("word", nargs="?", help=f"one of: {', '.join(available()) or '(no models)'}, or 'off'")
+    ap.add_argument("word", nargs="?",
+                    help=f"one of: {', '.join(available()) or '(no models)'}, 'off', or 'open'")
     ap.add_argument("--threshold", type=float, help="wake trigger threshold (0-1)")
     ap.add_argument("--no-restart", action="store_true", help="edit the config only")
     args = ap.parse_args()
@@ -82,10 +86,18 @@ def main():
         print("\nswitch with:  ./scripts/wake_switch.py <word>|off")
         return
 
-    if args.word == "off":
+    if args.word in ("off", "open"):
         text = set_line(text, "wake_detector", "transcript_alias")
-        text = set_line(text, "require_wake", "false")
-        print("wake word OFF — every utterance will be transcribed and sent to the brain.")
+        # Everything is transcribed either way (so a cloud STT sees the room —
+        # cost + privacy). The difference is what becomes a TURN.
+        text = set_line(text, "require_wake", "false" if args.word == "open" else "true")
+        if args.word == "off":
+            cur = current(text)
+            print(f"acoustic wake word OFF. Everything is transcribed, but only text "
+                  f"containing the name ({cur['word'] or 'see wake_aliases'}) is answered.")
+        else:
+            print("wake word OPEN — every utterance is transcribed AND answered. "
+                  "In a noisy room the robot will start conversations by itself.")
     elif args.word:
         if args.word not in available():
             sys.exit(f"no model {args.word!r} in {WAKE_DIR} — have: {', '.join(available()) or '(none)'}")

@@ -165,7 +165,7 @@ Conclusions:
 
 ---
 
-## Phase 1 — Wake word done properly, with an ack `[mostly done 2026-09-26]`
+## Phase 1 — Wake word done properly, with an ack `[built; gate OFF pending a better model]`
 
 **Why:** T1 and T2. This is the most visible "messy" behaviour today (the
 robot transcribes the whole room and ships it to a cloud STT) and it is
@@ -178,7 +178,14 @@ work and can start while Phase 0 is being measured.
   - `rakhi.onnx` (414 KB): specialized for Telugu households (*"Rakhi"*, *"రాఖీ"*, *"ఏయ్ రాఖీ"*, *"Hello Rakhi"*), verified with zero false wakes on Telugu conversational phrases (*"repu movie ke veldama"*, *"cheppu"*, *"aagu"* all 0.000) at `src/langrobo_ros/models/wake/rakhi.onnx`.
   - Live mic scorer `scripts/wake_live_score.py`, trainer `scripts/train_rakhi_local.py`, verifier trainer `scripts/wake_train_verifier.py`, and Colab trainer `notebooks/train_mitra_wakeword.ipynb` are all in place.
   See **WAKE_WORD_INTEGRATION.md**.
-- [x] **Acoustic gating is ON** (2026-09-26): `wake_detector: openwakeword`,
+- [~] **Acoustic gating: built, verified in the lab, currently OFF.** Owner's
+  call 2026-09-26 evening — "disable wakeword for now, we need a more
+  trained one". Back on with `./scripts/wake_switch.py mitra`. **The models
+  have never had a fair live test:** the only attempt ran while the Stone's
+  HFP link was delivering pure digital silence (fixed the same evening), so
+  nothing could have fired. Before retraining, re-run the exit test below on
+  a working mic — the answer may be a threshold, not a model.
+- [x] **The switch itself** (2026-09-26): `wake_detector: openwakeword`,
   `wake_model_path: models/wake/mitra.onnx`, `require_wake: true`,
   threshold 0.45. Nothing is transcribed or sent to Sarvam until the name is
   heard. Switch model/threshold with `./scripts/wake_switch.py <word>|off

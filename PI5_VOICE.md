@@ -35,7 +35,7 @@ is CUDA-accelerated and faster).
 | TTS | `kokoro-onnx`, **fp32** model (not int8 — see below), 4 threads |
 | VAD | `webrtcvad`, aggressiveness 2, 30ms frames, ~300ms pre-pad / ~600ms end-silence |
 | Noise gate | `vad_gate.py` — duration + energy + voiced-ratio, between the VAD and the recognizer. Exists because an idle room's VAD-positive noise got a cloud STT to invent a fluent sentence ("This is ₹11,800." from an empty room). `min_utterance_rms` shipped at 0.012 — **below** this file's own measured Bluetooth-mic noise floor of ~0.029 — so it did nothing on the mic actually in use; fixed to 0.05 (commit `d8379ba`, 2026-09-05) |
-| Wake gate | **ON since 2026-09-26** — `openwakeword` with the trained **`mitra.onnx`** (threshold 0.45, `require_wake: true`). While asleep nothing is transcribed and nothing leaves the Pi5; on the word it listens for `follow_up_window_s` (9 s). `rakhi.onnx` (Telugu-trained) is the alternative — swap with `./scripts/wake_switch.py rakhi`. `transcript_alias` remains the no-model fallback. See WAKE_WORD_INTEGRATION.md |
+| Wake gate | **Acoustic gate OFF since 2026-09-26 evening** — the owner wants a better-trained model first. Now `transcript_alias` + `require_wake: true`: everything is transcribed (so a cloud STT hears the room) but only text containing **"mitra"/"hey mitra"** becomes a turn. The trained `mitra.onnx` / `rakhi.onnx` are committed and one command away (`./scripts/wake_switch.py mitra`) — note the only live test of them ran while the Stone's mic was delivering silence (see the stale-SCO fault below), so they have not actually been judged on this hardware yet |
 | Mic/speaker | **Any paired Bluetooth speaker/headphones, HFP profile** for the mic (8-16kHz call audio, so one device covers both legs) — the boAt Stone 650 is the preferred one, OnePlus Buds Z2 verified too. Owned by `audio_device_node` (see below); a wired USB headset (Plantronics Blackwire) is the fallback when nothing Bluetooth is reachable |
 | Confidence filter | drop segments where `no_speech_prob > 0.6 AND avg_logprob < -1.0` — the exact fix VOICE_QUALITY.md validated on the Jetson |
 
@@ -263,8 +263,17 @@ raising `ProviderUnavailable`.
 
 ## Wake word — "Mitra", and the "chepandi boss" it answers with
 
-**Live since 2026-09-26.** The robot is asleep until it hears its name; only
-then does anything reach a cloud STT or the brain.
+**Built and committed 2026-09-26; currently switched OFF** (`./scripts/
+wake_switch.py off`) pending a model the owner is happier with. When on, the
+robot is asleep until it hears its name and nothing reaches a cloud STT or the
+brain until then.
+
+**Fair warning about the one live test:** it ran while the Stone's HFP link
+was dead (100% digital silence out of the mic — the stale-SCO fault fixed the
+same evening), so a wake word could not possibly have fired. The models scored
+0.98–0.99 on held-out clips and 0.72 on the single real call that happened
+before the link went stale. They deserve a real 20-call test before anyone
+concludes they need retraining.
 
 | | |
 |---|---|
