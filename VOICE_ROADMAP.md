@@ -173,13 +173,11 @@ independent of Phase 0 except for threshold tuning. Model training is offline
 work and can start while Phase 0 is being measured.
 
 **Tasks**
-- [ ] **Train the real wake model** — the owner does this on the laptop.
-  The complete recipe (synthetic data + own recordings + personal verifier +
-  where every file goes + threshold tuning + exit test) is
-  **WAKE_WORD_INTEGRATION.md**. Helpers shipped 2026-09-20:
-  `scripts/wake_record_clips.py`, `scripts/wake_score.py`; the detector
-  takes an optional `wake_verifier_path`; `.gitignore` un-ignores
-  `models/wake/` so `mitra.onnx` is committed.
+- [x] **Train the real wake models** — COMPLETED 2026-09-20 on branch `dev-1.3.4-minimal`.
+  - `mitra.onnx` (414 KB): verified on positives (0.92–0.99 peak) and negatives (0.02) at `src/langrobo_ros/models/wake/mitra.onnx`.
+  - `rakhi.onnx` (414 KB): specialized for Telugu households (*"Rakhi"*, *"రాఖీ"*, *"ఏయ్ రాఖీ"*, *"Hello Rakhi"*), verified with zero false wakes on Telugu conversational phrases (*"repu movie ke veldama"*, *"cheppu"*, *"aagu"* all 0.000) at `src/langrobo_ros/models/wake/rakhi.onnx`.
+  - Live mic scorer `scripts/wake_live_score.py`, trainer `scripts/train_rakhi_local.py`, verifier trainer `scripts/wake_train_verifier.py`, and Colab trainer `notebooks/train_mitra_wakeword.ipynb` are all in place.
+  See **WAKE_WORD_INTEGRATION.md**.
 - [ ] **Re-enable acoustic gating:** `wake_detector: openwakeword`,
   `require_wake: true`. Re-tune `wake_threshold` from the `[diag] asleep
   peak_wake_score` log on the mic Phase 0 settled on. Keep `transcript_alias`
