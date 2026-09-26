@@ -277,7 +277,7 @@ a 20-minute idle room with the TV on → 0 turns.
 
 ---
 
-## Phase 3 — Turn lifecycle hardening `[ ]`
+## Phase 3 — Turn lifecycle hardening `[3 of 8 done 2026-09-26]`
 
 **Why:** T5's "no double-speak, no dead air, no stuck mic". Cheap, independent
 of hardware, and these are the bugs a demo hits. Each one gets a unit test in
@@ -286,20 +286,37 @@ of hardware, and these are the bugs a demo hits. Each one gets a unit test in
 Candidates found reading the code on 2026-09-20 — **verify each on the robot
 before fixing**, some may be theoretical:
 
-- [ ] **Double-speak on a partial stream.** `agent_node._process`: if
+- [x] **Double-speak on a partial stream — FIXED** (`b2050f3`). It was real:
+  a streaming attempt can publish two sentences and then fail (its text is
+  dropped by `on_llm_error`, so `spoke()` says no), and the retry or the
+  non-streaming cloud fallback then returns the full reply — which was
+  published whole, over what had just been heard. `SpeechStreamHandler` now
+  remembers what it PUBLISHED and `unspoken(text)` returns only the tail;
+  a degraded message shares no prefix, so it is still spoken in full. 7 tests.
+- [ ] ~~Double-speak (original note)~~ `agent_node._process`: if
   `speech_stream.chunks_sent > 0` but `spoke(response)` is false (the
   streaming run errored mid-way and the non-streaming fallback produced the
   final text; or the final text differs from the streamed text after
   normalisation), the whole response is re-published on top of the sentences
   already spoken. Decide: speak only the un-streamed remainder, or never
   re-speak once anything streamed.
-- [ ] **Speech text hygiene.** Nothing between the LLM and TTS strips
+- [x] **Speech text hygiene — DONE** (`2e5a984`). `clean_for_speech()` in the
+  pure zone strips headings, bullets, emphasis, code spans, emoji and link
+  targets, and turns a bare URL into "a link"; applied in
+  `ROS2Bridge.publish_speech_chunk`, the one point every spoken path passes
+  through (stub mirrors it). Emoji ranges only — the robot speaks Telugu.
+  31 tests, which also pinned the splitter: decimals and times ("1.45
+  metres", "at 10.30") were already handled, so that worry was theoretical.
+- [ ] ~~Speech text hygiene (original note)~~ Nothing between the LLM and TTS strips
   markdown (`**`, `*`, `#`, backticks), URLs, emojis or bracketed
   stage-directions; `SPEECH_STYLE` in the prompt asks the model not to emit
   them, which is a rule to measure. Add a deterministic `clean_for_speech()`
   in `speech_stream.py` applied per chunk, with tests. Telegram keeps the raw
   text.
-- [ ] **Sentence splitter edge cases** (`split_sentences`): decimals and
+- [x] **Sentence splitter edge cases — covered by the tests above** (decimals,
+  times, abbreviations, initials, bare newlines, the 250-char safety valve,
+  trailing quotes). No code change was needed. Original note:
+- [ ] ~~splitter~~ (`split_sentences`): decimals and
   times ("at 10.30", "3.5 metres") currently split on the dot when followed
   by a space is absent — check; ellipsis runs; a chunk of exactly
   `_MIN_CHUNK_CHARS`; a `\n` immediately after an abbreviation. Table-driven
@@ -316,7 +333,11 @@ before fixing**, some may be theoretical:
   on the spin thread while `_play` writes on the playback thread — guarded by
   `_stream_lock` per chunk; confirm with a soak test (100 stops mid-sentence)
   that the process never hangs and `/voice/tts_speaking` always ends false.
-- [ ] **Stuck-mic watchdog.** If `/voice/tts_speaking` has been true for
+- [x] **Stuck-mic watchdog — DONE** (`ae18990`). A 5 s timer in `stt_node`
+  unmutes after `/voice/tts_speaking` has been true for 60 s and says loudly
+  what it did. Verified live with the threshold temporarily at 8 s. Original
+  note:
+- [ ] ~~watchdog~~ If `/voice/tts_speaking` has been true for
   longer than any plausible utterance (say 60 s) with no audio being written,
   `stt_node` unmutes itself and logs loudly. Belt-and-braces for a lost
   `<|eou|>`.
