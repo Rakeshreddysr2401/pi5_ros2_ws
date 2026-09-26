@@ -39,6 +39,9 @@ from langrobo_core.utils.history import trim_history
 from langrobo_core.utils.utterance import join_utterances, looks_incomplete
 from langrobo_core.utils.speech_stream import SPEECH_ABANDON, SpeechStreamHandler
 
+# A warm turn speaks within ~1.5s; 6s means the LLM is cold or unreachable.
+SLOW_TURN_CUE_S = 6.0
+
 from .ros2_bridge import ROS2Bridge
 
 
@@ -723,6 +726,20 @@ class AgentNode(Node):
                     trace, source, incoming_agent, telegram),
             }
 
+            # A warm turn speaks its first sentence in ~1.5s. If nothing has
+            # been said after this long, something is wrong (cold KV cache, the
+            # Mac Mini unreachable) and silence reads as a dead robot — so say
+            # "one moment". Voice only: a Telegram sender gets typing dots.
+            slow_cue = None
+            if not telegram:
+                def _say_one_moment():
+                    if speech_stream is None or not speech_stream.chunks_sent:
+                        self.get_logger().info("turn is slow — cueing 'one moment'")
+                        self._bridge.publish_cue("wait")
+                slow_cue = threading.Timer(SLOW_TURN_CUE_S, _say_one_moment)
+                slow_cue.daemon = True
+                slow_cue.start()
+
             result = None
             interrupted = False
             for event in self._graph.stream(
@@ -748,6 +765,8 @@ class AgentNode(Node):
                     self.get_logger().info(f"Step message [{type(msg).__name__}]: {str(msg.content)[:200]} (tool_calls: {getattr(msg, 'tool_calls', None)})")
                 result = event
 
+            if slow_cue is not None:
+                slow_cue.cancel()
             timing.emit("graph_end", interrupted=interrupted)
 
             if interrupted:
@@ -840,6 +859,13 @@ class AgentNode(Node):
             else:
                 self._bridge.publish_speech(apology)
         finally:
+            # The cue must never outlive the turn — a late "one moment" after
+            # the answer has been spoken is worse than no cue at all.
+            try:
+                if slow_cue is not None:
+                    slow_cue.cancel()
+            except NameError:
+                pass
             with self._queue_lock:
                 self._turn_active = False
             self._last_turn_ts = time.time()

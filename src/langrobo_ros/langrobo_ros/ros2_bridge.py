@@ -167,6 +167,7 @@ class ROS2Bridge:
         # tagged so agent_node does not mistake its own message for a human
         # saying "stop" and sweep the wheels (see _on_tts_stop).
         self._tts_stop_pub      = node.create_publisher(String, "/voice/tts_stop", 10)
+        self._cue_pub           = node.create_publisher(String, "/voice/cue", 10)
         self._sim_body = self._robot_body == "sim"
         if self._sim_body:
             from geometry_msgs.msg import TwistStamped
@@ -478,6 +479,15 @@ class ROS2Bridge:
         """Publish a complete utterance (non-streamed path: startup, fallbacks)."""
         self.publish_speech_chunk(text)
         self.publish_speech_end()
+
+    def publish_cue(self, name: str) -> None:
+        """Fire a short pre-rendered cue ("wake", "wait") on /voice/cue.
+
+        Not speech: tts_node plays a clip it rendered at startup and never
+        touches /voice/tts_speaking, so this costs no API call, no synthesis
+        delay, and cannot mute the mic mid-command.
+        """
+        self._cue_pub.publish(String(data=name))
 
     def publish_speech_stop(self) -> None:
         """Abandon the current utterance — drop what is queued AND playing.

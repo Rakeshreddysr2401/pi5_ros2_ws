@@ -59,6 +59,9 @@ pi5_tts_node:
     # to use tts_provider — but note sarvam_translate would TRANSLATE this,
     # and "chepandi boss" came back as చెపండి (misspelt) when we tried.
     cue_text: "చెప్పండి బాస్"
+    # Spoken if a turn takes unusually long (cold cache, LLM unreachable) so
+    # the robot never just goes quiet. Published by agent_node as cue "wait".
+    cue_wait_text: "ఒక నిమిషం బాస్"
     cue_provider: sarvam
     cue_language: te
 

@@ -226,6 +226,32 @@ def get_fallback_llm():
         return None
 
 
+# Why a split timeout and not one number: generation on the 12B model
+# legitimately takes tens of seconds, but CONNECTING never should. With no
+# timeout at all (the default), a Mac Mini that rebooted onto a new DHCP
+# address left the client waiting on a dead socket — measured 50-108s of
+# silence on the first turn afterwards (PI5_VOICE.md), which reads as a dead
+# robot. For a STREAMING request the read timeout is the gap BETWEEN chunks,
+# not the whole answer, so it can be tight; for the non-streaming cloud
+# fallback it bounds the whole reply, so it cannot be too tight.
+CONNECT_TIMEOUT_S = 5.0
+READ_TIMEOUT_S = 90.0
+
+
+def _http_timeout():
+    """httpx.Timeout if httpx is importable, else a plain read timeout.
+
+    Never raises: a missing httpx must not stop the robot from talking
+    (CLAUDE.md #5) — it just costs the connect-specific bound.
+    """
+    try:
+        import httpx
+        return httpx.Timeout(READ_TIMEOUT_S, connect=CONNECT_TIMEOUT_S,
+                             write=30.0, pool=CONNECT_TIMEOUT_S)
+    except Exception:
+        return READ_TIMEOUT_S
+
+
 def _build(cfg: dict):
     provider   = cfg.get("provider", "llamacpp")
     model      = cfg.get("model", "default")
@@ -247,6 +273,7 @@ def _build(cfg: dict):
             # ~6 connect attempts (~40s of silence) before the spoken offline
             # message instead of ~2.
             "max_retries": 0,
+            "timeout": _http_timeout(),
         }
         if base_url:
             kwargs["base_url"] = base_url

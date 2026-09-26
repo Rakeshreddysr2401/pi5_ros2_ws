@@ -66,6 +66,10 @@ class TTSNode(Node):
         # ONCE at startup through the configured provider (so it is instant,
         # costs no API call per wake, and sounds like the robot's own voice).
         self.declare_parameter('cue_text', 'Yes boss')
+        # Spoken when a turn is taking unusually long, so a slow first turn
+        # (cold KV cache, or a Mac Mini that moved address) does not look like
+        # a dead robot. Same render-once rule as the wake cue.
+        self.declare_parameter('cue_wait_text', 'One moment')
         self.declare_parameter('cue_enabled', True)
         # The cue is usually spoken by the provider above, but that one may
         # TRANSLATE (sarvam_translate). To say a fixed Telugu phrase exactly
@@ -166,10 +170,10 @@ class TTSNode(Node):
         self._ready_fallback = self.create_timer(AUDIO_READY_TIMEOUT_S, self._assume_ready)
         # Pre-rendered acknowledgement. Built off the spin thread: a cloud
         # provider takes seconds, and the node must come up regardless.
-        self._cue_audio = None
+        self._cues: dict = {}
         self._cue_lock = threading.Lock()
         if bool(self.get_parameter('cue_enabled').value):
-            threading.Thread(target=self._render_cue, daemon=True).start()
+            threading.Thread(target=self._render_cues, daemon=True).start()
         self._synth_thread = threading.Thread(target=self._synth_loop, daemon=True)
         self._play_thread = threading.Thread(target=self._play_loop, daemon=True)
         self._synth_thread.start()
@@ -202,10 +206,8 @@ class TTSNode(Node):
     def _on_speech(self, msg: String):
         self._q.put(msg.data)
 
-    def _render_cue(self) -> None:
-        text = (self.get_parameter('cue_text').value or '').strip()
-        if not text:
-            return
+    def _render_cues(self) -> None:
+        """Pre-render every cue once, in the robot's own voice."""
         provider = self._provider
         name = (self.get_parameter('cue_provider').value or '').strip()
         language = (self.get_parameter('cue_language').value or '').strip()
@@ -214,15 +216,20 @@ class TTSNode(Node):
             if language:
                 params['language'] = language
             provider = self._build_provider(name or self._provider.name, params)
-        try:
-            self._cue_audio = provider.synthesize(text)
-        except Exception:
+
+        for key, param in (('wake', 'cue_text'), ('wait', 'cue_wait_text')):
+            text = (self.get_parameter(param).value or '').strip()
+            if not text:
+                continue
             try:
-                self._cue_audio = self._fallback.synthesize(text)
+                self._cues[key] = provider.synthesize(text)
             except Exception:
-                self.get_logger().warning(f'could not render the wake cue {text!r} — no acknowledgement')
-                return
-        self.get_logger().info(f'wake cue ready: {text!r} ({provider.name})')
+                try:
+                    self._cues[key] = self._fallback.synthesize(text)
+                except Exception:
+                    self.get_logger().warning(f'could not render the {key!r} cue {text!r}')
+                    continue
+            self.get_logger().info(f'{key} cue ready: {text!r} ({provider.name})')
 
     def _on_cue(self, msg: String) -> None:
         """Play the acknowledgement — short, and NOT an utterance.
@@ -231,12 +238,13 @@ class TTSNode(Node):
         the mic, and muting for half a second here would clip the start of
         the command the user is about to say.
         """
-        if self._cue_audio is None or not self._audio_ready or self._speaking:
+        audio = self._cues.get((msg.data or 'wake').strip() or 'wake')
+        if audio is None or not self._audio_ready or self._speaking:
             return
         if not self._cue_lock.acquire(blocking=False):
             return                                  # one cue at a time
         try:
-            samples, sr = self._cue_audio
+            samples, sr = audio
             self._play(samples, sr, self._generation)
         except Exception:
             self.get_logger().debug('cue playback failed')

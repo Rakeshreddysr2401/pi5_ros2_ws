@@ -131,6 +131,9 @@ class StubBridge:
     def publish_speech_stop(self) -> None:
         logger.info("[STUB] abandon utterance (drop queued + playing audio)")
 
+    def publish_cue(self, name: str) -> None:
+        logger.info("[STUB] cue: %s", name)
+
     def publish_timing(self, event: dict) -> None:
         pass
 
