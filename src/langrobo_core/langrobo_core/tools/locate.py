@@ -33,7 +33,7 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
 from . import _bridge
-from .approach import _fresh_frame, _vlm_locate
+from .approach import _capture, _ground, _vlm_locate
 
 # Turned into "to my left" / "ahead" for speech. The VLM's pixel is itself only
 # good to a few degrees and ground_pixel medians over a window, so finer
@@ -71,6 +71,13 @@ _DEPTH_FAIL_HELP = {
     "no_robot_pose": "I do not currently know where I am",
     "no_reply_from_jetson": ("the depth service on the Jetson is not "
                              "answering"),
+    # Grounding at the moment of the photo (approach._ground) failed and the
+    # robot has moved since, so the newest depth is a different view.
+    "snapshot_expired": ("the depth for that photo is no longer held and I "
+                         "have moved since, so I need a fresh look"),
+    "no_depth_near_stamp": ("the depth stream had a gap when that photo was "
+                            "taken and I have moved since"),
+    "tf_failed": "I could not tell where the camera was when the photo was taken",
 }
 
 
@@ -98,7 +105,7 @@ def locate_object(description: str,
     """
     bridge = _bridge.get()
 
-    frame = _fresh_frame(bridge)
+    frame, capture = _capture(bridge)
     if frame is None:
         return ("My camera feed isn't giving me a fresh image right now, so I "
                 "can't measure anything.")
@@ -114,7 +121,7 @@ def locate_object(description: str,
                 f"turned to look around — ask me to look for it if you want "
                 f"me to search.")
 
-    res = bridge.ground_pixel(*uv)
+    res = _ground(bridge, uv, capture)   # at the moment of the photo
     if not res.get("ok"):
         reason = res.get("reason", "unknown")
         help_text = _DEPTH_FAIL_HELP.get(reason, f"depth reading failed: {reason}")

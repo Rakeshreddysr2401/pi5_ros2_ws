@@ -44,7 +44,7 @@ class StubBridge:
 
     # ── Camera ────────────────────────────────────────────────────────────
 
-    def on_image(self, frame_bytes: bytes) -> None:
+    def on_image(self, frame_bytes: bytes, camera_stamp: tuple | None = None) -> None:
         pass
 
     def get_frame(self, max_age_s: float | None = None) -> bytes | None:
@@ -65,6 +65,14 @@ class StubBridge:
         # The STUDIO_TEST_IMAGE frame (if any) is always "fresh".
         return 0.0 if self.get_frame() is not None else None
 
+    def get_frame_stamped(self, max_age_s: float | None = None) -> tuple:
+        """A test image has no camera stamp: the tools then ground the old way."""
+        frame = self.get_frame(max_age_s)
+        return (frame, None) if frame is not None else (None, None)
+
+    def hold_frame(self, camera_stamp: tuple) -> None:
+        logger.info("[STUB] hold_frame(%s)", camera_stamp)
+
     # ── Pose and locations ────────────────────────────────────────────────
 
     def get_current_pose(self):
@@ -81,7 +89,8 @@ class StubBridge:
 
     # ── VLM pixel grounding (Jetson pixel_to_goal) ────────────────────────
 
-    def ground_pixel(self, u: float, v: float, timeout: float = 4.0) -> dict:
+    def ground_pixel(self, u: float, v: float, timeout: float = 4.0,
+                     stamp: tuple | None = None) -> dict:
         """No Jetson in Studio, so there is no depth to ground a pixel against.
 
         Returns the same shape the real bridge returns when the Jetson is
@@ -140,6 +149,19 @@ class StubBridge:
 
     def motion_interrupted(self) -> bool:
         return False
+
+    # ── Exact moves (Jetson goal_exec) ────────────────────────────────────
+    # No Jetson: "unavailable", which is the real bridge's answer when
+    # goal_exec is not running, so movement tools take their timed fallback
+    # (whose publish_twist is logged here) instead of raising.
+
+    def turn_by(self, degrees: float, timeout: float = 40.0) -> dict:
+        logger.info("[STUB] turn_by(%.0f) -> unavailable", degrees)
+        return {"ok": False, "result": "unavailable", "why": "no Jetson (StubBridge)"}
+
+    def drive_by(self, metres: float, timeout: float = 60.0) -> dict:
+        logger.info("[STUB] drive_by(%.2f) -> unavailable", metres)
+        return {"ok": False, "result": "unavailable", "why": "no Jetson (StubBridge)"}
 
     def start_nav_to_pose(self, x: float, y: float, yaw_deg: float, label: str = "") -> None:
         dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"

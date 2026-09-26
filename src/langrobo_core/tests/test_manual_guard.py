@@ -86,8 +86,8 @@ def test_approach_refuses_in_manual_before_paying_for_the_vlm(monkeypatch):
     are wasted if the wheels are being zeroed, so the guard runs first."""
     monkeypatch.setattr(mv, "teleop_is_manual", lambda: True)
     called = []
-    monkeypatch.setattr(ap, "_fresh_frame",
-                        lambda b, settle_s=2.5: called.append("frame") or b"jpeg")
+    monkeypatch.setattr(ap, "_capture",
+                        lambda b, settle_s=2.5: called.append("frame") or (b"jpeg", None))
     monkeypatch.setattr(ap, "_vlm_locate",
                         lambda f, d: called.append("vlm") or (10.0, 10.0))
     started = []
@@ -103,10 +103,10 @@ def test_approach_refuses_in_manual_before_paying_for_the_vlm(monkeypatch):
 def test_approach_proceeds_normally_in_auto(monkeypatch):
     """The guard must not become a second way for approach to fail."""
     monkeypatch.setattr(mv, "teleop_is_manual", lambda: False)
-    monkeypatch.setattr(ap, "_fresh_frame", lambda b, settle_s=2.5: b"jpeg")
+    monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5: (b"jpeg", None))
     monkeypatch.setattr(ap, "_vlm_locate", lambda f, d: (100.0, 50.0))
     monkeypatch.setattr(_bridge.get(), "ground_pixel",
-                        lambda u, v, timeout=4.0: {
+                        lambda u, v, timeout=4.0, stamp=None: {
                             "ok": True, "depth_m": 1.8,
                             "goal": {"x": 1.2, "y": 0.3, "yaw": 0.0}})
     started = []

@@ -40,9 +40,13 @@ from . import movement as _mv
 _STANDOFF_M = float(os.environ.get("LANGROBO_STANDOFF_M", "0.45"))
 
 # Search: rotate the base and re-check. Each check is a VLM round-trip
-# (~10-40 s), so the sweep is bounded at a full circle plus one recheck of the
-# starting orientation (odometry under-rotates).
-_SEARCH_STEPS = 5
+# (~10-40 s), so the sweep is bounded at one full circle: four views, 90 deg
+# apart, against the colour camera's ~87 deg. There used to be a fifth, a
+# recheck of the start, because the TIMED turns under-rotated; the turns are
+# now closed on the measured heading (movement.turn_robot -> goal_exec), so
+# the fourth turn lands where the first view was. Overlapping views and one
+# VLM call that lists everything are the next step (INTELLIGENCE_PLAN.md B5).
+_SEARCH_STEPS = 4
 _SEARCH_STEP_DEG = 90.0
 
 
@@ -113,18 +117,53 @@ def _vlm_locate(frame: bytes, description: str) -> tuple[float, float] | None:
     return (x / 1000.0 * width, y / 1000.0 * height)
 
 
-def _fresh_frame(bridge, settle_s: float = 2.5) -> bytes | None:
-    """Frame captured AFTER now — the look feed needs a beat to publish a
+def _capture(bridge, settle_s: float = 2.5) -> tuple:
+    """(jpeg, capture) for a frame taken NOW, or (None, None).
+
+    capture = {"stamp": the photo's camera stamp or None, "pose": where the
+    robot was when it was taken}. The Jetson is told to hold that photo's
+    depth and camera pose at once (bridge.hold_frame), because the VLM will
+    take 10-40 s to pick a pixel and by then its buffers have moved on --
+    grounding against the NEWEST depth and pose instead is how an object seen
+    at one heading got placed at another (rover repo INTELLIGENCE_PLAN.md B2).
+
+    Frame captured AFTER now -- the look feed needs a beat to publish a
     post-motion view; a pre-rotation cache hit would re-check the old view."""
     end = time.time() + settle_s
+    frame, stamp = None, None
     while time.time() < end:
         if bridge.motion_interrupted():
-            return None
-        frame = bridge.get_frame(max_age_s=0.8)
+            return None, None
+        frame, stamp = bridge.get_frame_stamped(max_age_s=0.8)
         if frame is not None:
-            return frame
+            break
         time.sleep(0.15)
-    return bridge.get_frame(max_age_s=10.0)   # degraded fallback: newest we have
+    if frame is None:
+        frame, stamp = bridge.get_frame_stamped(max_age_s=10.0)   # degraded: newest we have
+        if frame is None:
+            return None, None
+    if stamp:
+        bridge.hold_frame(stamp)
+    return frame, {"stamp": stamp, "pose": bridge.get_current_pose()}
+
+
+# The photo's own depth and pose are gone (the hold did not arrive, or the
+# depth stream had a gap there). The newest depth and pose describe the same
+# view only if the robot has not moved since the photo.
+_REGROUND_REASONS = ("snapshot_expired", "no_depth_near_stamp")
+_STILL_M, _STILL_DEG = 0.02, 1.0
+
+
+def _ground(bridge, uv: tuple, capture: dict | None) -> dict:
+    """ground_pixel at the moment of the photo, when the photo has a stamp."""
+    stamp = (capture or {}).get("stamp")
+    res = bridge.ground_pixel(*uv, stamp=stamp)
+    if stamp and not res.get("ok") and res.get("reason") in _REGROUND_REASONS:
+        then, now = capture.get("pose"), bridge.get_current_pose()
+        if then and now and math.hypot(now[0] - then[0], now[1] - then[1]) <= _STILL_M \
+                and abs((now[2] - then[2] + 180.0) % 360.0 - 180.0) <= _STILL_DEG:
+            res = bridge.ground_pixel(*uv)
+    return res
 
 
 @tool
@@ -135,9 +174,9 @@ def approach_described_object(description: str,
     not saved as a location: "the red coffee mug", "my black backpack", "the
     chair", "the surf excel packet".
 
-    If the object isn't in the current view the robot turns in 90 degree steps
-    and re-checks, up to a full circle (each check takes a while — the vision
-    model looks at a fresh photo every step).
+    If the object isn't in the current view the robot turns in exact 90 degree
+    steps and re-checks, up to a full circle (each check takes a while — the
+    vision model looks at a fresh photo every step).
 
     Returns once the object is found and the drive starts — the drive
     continues in the background and a system message reports arrival."""
@@ -158,18 +197,20 @@ def approach_described_object(description: str,
         return refusal
 
     uv = None
+    capture = None
     for step in range(_SEARCH_STEPS):
         if bridge.motion_interrupted():
             return f"Stopped searching for the {description}."
         if step > 0:
             if Twist is None:
                 break
-            twist = Twist()
-            twist.angular.z = _mv._ANGULAR_VEL_RS
-            if not _mv._drive_for_duration(
-                    bridge, twist, _mv._duration("L", _SEARCH_STEP_DEG)):
-                return f"Stopped searching for the {description}."
-        frame = _fresh_frame(bridge)
+            ok, why = _mv.turn_robot(bridge, _SEARCH_STEP_DEG)
+            if not ok:
+                if why == "interrupted":
+                    return f"Stopped searching for the {description}."
+                return (f"I couldn't turn to keep looking for the {description} "
+                        f"({why}). It isn't in the {step} view(s) I checked.")
+        frame, capture = _capture(bridge)
         if frame is None:
             if bridge.motion_interrupted():
                 return f"Stopped searching for the {description}."
@@ -187,7 +228,7 @@ def approach_described_object(description: str,
         return (f"I turned a full circle and looked carefully, but I couldn't "
                 f"spot the {description} anywhere around me.")
 
-    res = bridge.ground_pixel(*uv)
+    res = _ground(bridge, uv, capture)
     if not res.get("ok"):
         reason = res.get("reason", "unknown")
         if reason == "no_reply_from_jetson":
@@ -224,15 +265,16 @@ def scan_surroundings() -> str:
     bridge.clear_motion_stop()
 
     try:
-        from geometry_msgs.msg import Twist
+        from geometry_msgs.msg import Twist  # noqa: F401 -- the timed fallback needs it
     except ImportError:
         return "I can't turn right now — my wheel interface isn't available."
-    twist = Twist()
-    twist.angular.z = _mv._ANGULAR_VEL_RS
-    step_dur = _mv._duration("L", 60.0)
-    for _ in range(6):
-        if not _mv._drive_for_duration(bridge, twist, step_dur):
-            return "Scan stopped."
+    for i in range(6):
+        ok, why = _mv.turn_robot(bridge, 60.0)
+        if not ok:
+            if why == "interrupted":
+                return "Scan stopped."
+            return (f"Scan stopped after {i * 60} degrees: I couldn't turn further "
+                    f"({why})." + (_mv.view_stale_note() if i else ""))
         # Pause so vSLAM/nvblox integrate a still frame (motion blur hurts both).
         end = time.time() + 1.0
         while time.time() < end:

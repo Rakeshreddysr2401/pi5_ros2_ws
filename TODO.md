@@ -1,6 +1,17 @@
 # TODO — pending on-device work
 
-## OUTSTANDING 2026-09-24: move_robot turns — graded at 5.0 rad/s, unpredictable; close them on yaw
+## BUILT 2026-09-26, floor test pending: move_robot turns and moves run on the Jetson's goal_exec
+
+Every `move_robot` step, the approach search and `scan_surroundings` now go to the
+Jetson's goal_exec (`bridge.turn_by` / `drive_by`: closed on the fused pose,
+outline-checked, refused with a reason); `navigate_to_pose` and the approach drive
+go to `/reach/goal` (nav2 + exact finish + retries). Timed twists are only the
+fallback when goal_exec is not running. Plumbing verified live with no motion
+(`turn_by(0.5)`: reached, slid 0.0 cm). Still to grade on the floor with the owner:
+`L:90` x6 each way, a sequence, a reach through a gap. Rover repo
+INTELLIGENCE_PLAN.md §5. The history below is why.
+
+### (was) OUTSTANDING 2026-09-24: move_robot turns — graded at 5.0 rad/s, unpredictable; close them on yaw
 
 The Jetson graded pure-`wz` turns against the walls up to 3.0 rad/s: the
 centre slides 27.8–32.8 cm per 90° "in place", pivoting about the left tyres

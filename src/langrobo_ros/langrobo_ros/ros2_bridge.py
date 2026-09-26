@@ -118,6 +118,14 @@ class ROS2Bridge:
         # ── Latest camera frame (bytes, JPEG-encoded) ─────────────────────────
         self._latest_frame: bytes | None = None
         self._frame_stamp: float = 0.0   # time.monotonic() of last frame
+        # The CAMERA's own stamp for that frame, (sec, nanosec) on the Jetson's
+        # clock, or None. It was dropped here until 2026-09-26, and without it
+        # the Jetson could only ground a VLM pixel against its NEWEST depth
+        # and pose -- 10-40 s after the photo, wherever the rover had got to
+        # (rover repo INTELLIGENCE_PLAN.md B2). It is only ever echoed back to
+        # the Jetson, never compared with this clock, so the Pi 5's offset
+        # from the Jetson (LOCALIZATION_GAPS.md G9) does not matter.
+        self._frame_camera_stamp: tuple | None = None
 
         # Commanded pan/tilt (open-loop; servos settle in ~0.3s). Kept so tools
         # can re-centre and report the current aim without a state topic.
@@ -179,6 +187,32 @@ class ROS2Bridge:
         self._PointStamped = PointStamped
         self._pixel_query_pub = node.create_publisher(PointStamped, "/vision/pixel_query", 10)
         node.create_subscription(String, "/vision/pixel_result", self._on_pixel_result, 10)
+        # "Keep the depth and camera pose of THIS photo": sent the moment a
+        # frame is taken for the VLM, so the later pixel_query can be grounded
+        # at the photo's instant (pixel_to_goal.py AT THE MOMENT OF THE PHOTO).
+        self._pixel_snapshot_pub = node.create_publisher(PointStamped, "/vision/pixel_snapshot", 10)
+
+        # ── Exact motion on the Jetson (rover repo phase3/) ──────────────────
+        # goal_exec: turns and short straight moves closed on the fused pose
+        # (~1.4 cm, heading within 2 deg), outline-checked against LiDAR and
+        # depth. reach: nav2 for the route, goal_exec to finish, and on failure
+        # look / pass / wait, retrying. Both report on a status topic whose
+        # lines carry the goal's header.stamp ("goal_stamp"), which is how a
+        # result is matched to the goal that asked for it.
+        self._goal_exec_goal_pub = node.create_publisher(PoseStamped, "/goal_exec/goal", 10)
+        self._goal_exec_turn_pub = node.create_publisher(PoseStamped, "/goal_exec/turn", 10)
+        from std_msgs.msg import Empty
+        self._Empty = Empty
+        self._goal_exec_cancel_pub = node.create_publisher(Empty, "/goal_exec/cancel", 10)
+        self._reach_goal_pub = node.create_publisher(PoseStamped, "/reach/goal", 10)
+        self._reach_cancel_pub = node.create_publisher(Empty, "/reach/cancel", 10)
+        self._status_lock = threading.Lock()
+        self._goal_exec_status: dict[str, list] = {}   # goal_stamp -> status dicts
+        self._reach_status: dict[str, list] = {}
+        node.create_subscription(String, "/goal_exec/status",
+                                 lambda m: self._on_status(m, self._goal_exec_status), 10)
+        node.create_subscription(String, "/reach/status",
+                                 lambda m: self._on_status(m, self._reach_status), 10)
 
         # Subscribe to Kokoro speaking status (half-duplex state, stop-keyword later)
         node.create_subscription(Bool, "/voice/tts_speaking", self._on_speaking, 10)
@@ -208,10 +242,11 @@ class ROS2Bridge:
 
     # ── Callbacks (ROS2 spin thread) ───────────────────────────────────────
 
-    def on_image(self, frame_bytes: bytes) -> None:
+    def on_image(self, frame_bytes: bytes, camera_stamp: tuple | None = None) -> None:
         with self._frame_lock:
             self._latest_frame = frame_bytes
             self._frame_stamp = time.monotonic()
+            self._frame_camera_stamp = camera_stamp
 
     def _on_compressed_image(self, msg) -> None:
         """CompressedImage -> the byte cache. msg.data is already JPEG.
@@ -221,7 +256,9 @@ class ROS2Bridge:
         message adapter and only makes sense with rclpy present.
         """
         try:
-            self.on_image(bytes(msg.data))
+            st = msg.header.stamp
+            self.on_image(bytes(msg.data),
+                          (st.sec, st.nanosec) if (st.sec or st.nanosec) else None)
         except Exception as e:
             self._node.get_logger().warning(f"Frame cache error: {e}")
 
@@ -248,6 +285,30 @@ class ROS2Bridge:
             if self._latest_frame is None:
                 return None
             return time.monotonic() - self._frame_stamp
+
+    def get_frame_stamped(self, max_age_s: float | None = None) -> tuple:
+        """(jpeg, camera_stamp) for the latest frame, read together so the two
+        always describe the same photo; (None, None) under get_frame's rules.
+        camera_stamp is (sec, nanosec) on the Jetson's clock, or None if the
+        publisher left it empty."""
+        with self._frame_lock:
+            if self._latest_frame is None:
+                return None, None
+            if max_age_s is not None and time.monotonic() - self._frame_stamp > max_age_s:
+                return None, None
+            return self._latest_frame, self._frame_camera_stamp
+
+    def hold_frame(self, camera_stamp: tuple) -> None:
+        """Ask the Jetson to keep the depth frame and camera pose of the photo
+        with this camera stamp, for a pixel_query that will come after the VLM
+        has looked (10-40 s: longer than the Jetson's depth ring and TF buffer
+        reach back). Fire and forget: a failed hold shows up in that query's
+        reason ("snapshot_expired"). No-op for a frame with no stamp."""
+        if not camera_stamp:
+            return
+        msg = self._PointStamped()
+        msg.header.stamp.sec, msg.header.stamp.nanosec = int(camera_stamp[0]), int(camera_stamp[1])
+        self._pixel_snapshot_pub.publish(msg)
 
     def get_known_locations(self) -> dict:
         return self._known_locations
@@ -336,17 +397,25 @@ class ROS2Bridge:
                 self._pixel_results.clear()
             self._pixel_results[req_id] = data
 
-    def ground_pixel(self, u: float, v: float, timeout: float = 4.0) -> dict:
+    def ground_pixel(self, u: float, v: float, timeout: float = 4.0,
+                     stamp: tuple | None = None) -> dict:
         """Ask the Jetson to turn a COLOR-image pixel into a NAV_FRAME Nav2
         goal (deproject depth → NAV_FRAME → pull back by the approach standoff).
         The Jetson's pixel_to_goal node publishes odom, matching NAV_FRAME.
         Returns the pixel_to_goal JSON result, or ok=False on timeout —
         which means the query never arrived (node down / link), NOT that
-        grounding failed; grounding failures come back with a reason."""
+        grounding failed; grounding failures come back with a reason.
+
+        stamp: the photo's camera stamp (get_frame_stamped). With it the
+        Jetson grounds against the depth and camera pose of THAT photo
+        (see hold_frame); without it, against its newest ones -- right only
+        if nothing has moved since the photo."""
         import uuid
         req_id = uuid.uuid4().hex[:8]
         msg = self._PointStamped()
         msg.header.frame_id = req_id
+        if stamp:
+            msg.header.stamp.sec, msg.header.stamp.nanosec = int(stamp[0]), int(stamp[1])
         msg.point.x = float(u)
         msg.point.y = float(v)
         self._pixel_query_pub.publish(msg)
@@ -453,12 +522,137 @@ class ROS2Bridge:
     def motion_interrupted(self) -> bool:
         return self._motion_interrupt.is_set()
 
+    # ── Exact moves (Jetson goal_exec) ─────────────────────────────────────
+    #
+    # These replace the TIMED twists movement.py used to drive for every turn
+    # and short move: 5.0 rad/s for a computed duration, open loop. Graded on
+    # 2026-09-24 (INTEGRATION_GAPS.md §6) that slid 31-68 cm per 90 deg turn
+    # and once stalled at 67 of 90 deg while reporting "Movement done".
+    # goal_exec closes the move on fusion2's pose, checks the swept outline
+    # against the LiDAR and depth first and throughout, and says why when it
+    # refuses. Both calls BLOCK until the move ends (like the timed drive did)
+    # and return:
+    #   {"ok": bool, "result": "reached" | "refused" | "stalled" | "failed" |
+    #    "cancelled" | "interrupted" | "timeout" | "no_answer" | "no_pose" |
+    #    "unavailable", "why": str, "turned_deg": float, "moved_cm": float}
+    # "unavailable" = goal_exec is not running; the caller may fall back.
+
+    def _on_status(self, msg, store: dict) -> None:
+        try:
+            d = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError):
+            return
+        key = d.get("goal_stamp")
+        if not key:
+            return
+        with self._status_lock:
+            if key not in store and len(store) > 16:
+                store.pop(next(iter(store)))
+            store.setdefault(key, []).append(d)
+
+    def _stamp_now(self) -> tuple:
+        """(header stamp, key): a unique id for a goal, echoed back in status."""
+        st = self._node.get_clock().now().to_msg()
+        return st, f"{st.sec}.{st.nanosec:09d}"
+
+    def _pose_msg(self, x: float, y: float, yaw_rad: float, stamp) -> PoseStamped:
+        p = PoseStamped()
+        p.header.frame_id = self.NAV_FRAME
+        p.header.stamp = stamp
+        p.pose.position.x, p.pose.position.y = float(x), float(y)
+        p.pose.orientation.z = math.sin(yaw_rad / 2.0)
+        p.pose.orientation.w = math.cos(yaw_rad / 2.0)
+        return p
+
+    def turn_by(self, degrees: float, timeout: float = 40.0) -> dict:
+        """Turn in place by `degrees` (+ left), closed on the measured heading.
+        The shorter way round: callers split turns over ~170 deg."""
+        pose = self.get_current_pose()
+        if pose is None:
+            return {"ok": False, "result": "no_pose", "why": "no odom -> base_link fix"}
+        x, y, yaw = pose
+        return self._run_goal_exec(self._goal_exec_turn_pub, x, y,
+                                   math.radians(yaw + degrees), timeout, pose)
+
+    def drive_by(self, metres: float, timeout: float = 60.0) -> dict:
+        """Drive straight `metres` (+ forward, - back), ending on the line to
+        ~1.5 cm, heading held."""
+        pose = self.get_current_pose()
+        if pose is None:
+            return {"ok": False, "result": "no_pose", "why": "no odom -> base_link fix"}
+        x, y, yaw = pose
+        th = math.radians(yaw)
+        return self._run_goal_exec(self._goal_exec_goal_pub, x + metres * math.cos(th),
+                                   y + metres * math.sin(th), th, timeout, pose)
+
+    def _run_goal_exec(self, pub, x: float, y: float, yaw_rad: float,
+                       timeout: float, start: tuple) -> dict:
+        if pub.get_subscription_count() == 0:
+            return {"ok": False, "result": "unavailable",
+                    "why": "goal_exec is not running on the Jetson (./rover nav)"}
+        stamp, key = self._stamp_now()
+        pub.publish(self._pose_msg(x, y, yaw_rad, stamp))
+        t0 = time.monotonic()
+        out = None
+        while out is None:
+            if self.motion_interrupted():
+                self._goal_exec_cancel_pub.publish(self._Empty())
+                out = {"ok": False, "result": "interrupted", "why": "stopped by a new command"}
+                break
+            with self._status_lock:
+                lines = list(self._goal_exec_status.get(key, []))
+            done = [d for d in lines if d.get("state") == "done"]
+            if done:
+                d = done[-1]
+                out = {"ok": d.get("result") == "reached",
+                       "result": d.get("result") or "failed", "why": d.get("why", "")}
+            elif not lines and time.monotonic() - t0 > 3.0:
+                # It reports the instant a goal arrives. Silence is not
+                # "unavailable" -- it may still act on it -- so no fallback.
+                self._goal_exec_cancel_pub.publish(self._Empty())
+                out = {"ok": False, "result": "no_answer", "why": "goal_exec did not acknowledge the goal"}
+            elif time.monotonic() - t0 > timeout:
+                self._goal_exec_cancel_pub.publish(self._Empty())
+                out = {"ok": False, "result": "timeout", "why": f"no result in {timeout:.0f} s"}
+            else:
+                time.sleep(0.05)
+        with self._status_lock:
+            self._goal_exec_status.pop(key, None)
+        end = self.get_current_pose()
+        if end is not None:
+            out["turned_deg"] = round((end[2] - start[2] + 180.0) % 360.0 - 180.0, 1)
+            out["moved_cm"] = round(math.hypot(end[0] - start[0], end[1] - start[1]) * 100.0, 1)
+        return out
+
+    # How navigate_to_pose / approach goals are driven. "reach" (default): the
+    # Jetson's reach_node -- nav2 for the route, goal_exec for an exact finish,
+    # and on failure it clears, looks, passes a tight gap or waits, and tries
+    # again (plain nav2 gave up on a 51 cm corridor in 15 s, 2026-09-26).
+    # "nav2": the plain NavigateToPose action, as before. reach falls back to
+    # nav2 by itself when reach_node is not running.
+    NAV_BACKEND = os.environ.get("LANGROBO_NAV_BACKEND", "reach").strip().lower()
+
     def start_nav_to_pose(self, x: float, y: float, yaw_deg: float, label: str = "") -> None:
-        """Start a Nav2 NavigateToPose action asynchronously.
+        """Start driving to (x, y, yaw) in NAV_FRAME asynchronously -- through
+        reach_node, or plain Nav2 (see NAV_BACKEND).
 
         Returns immediately. When navigation completes or fails, the registered
         nav_done_callback is invoked from a background thread with (success, message).
         """
+        worker, args = self._nav_worker, (x, y, yaw_deg, label)
+        if self.NAV_BACKEND == "reach":
+            if self._reach_goal_pub.get_subscription_count() > 0:
+                # The new goal's key is current BEFORE the old goal is
+                # cancelled, so the old worker sees it has been superseded and
+                # does not send /reach/cancel, which could land after this
+                # goal and kill it. reach preempts on a new goal by itself.
+                stamp, key = self._stamp_now()
+                self._reach_current_key = key
+                worker, args = self._reach_worker, (x, y, yaw_deg, label, stamp, key)
+            else:
+                self._node.get_logger().warning(
+                    "nav: reach_node is not running on the Jetson -- plain nav2 "
+                    "(no exact finish, no retries). ./rover nav starts it.")
         self.cancel_navigation()
 
         cancel_event = threading.Event()
@@ -466,8 +660,8 @@ class ROS2Bridge:
             self._nav_cancel_event = cancel_event
 
         thread = threading.Thread(
-            target=self._nav_worker,
-            args=(x, y, yaw_deg, label, cancel_event),
+            target=worker,
+            args=(*args, cancel_event),
             daemon=True,
         )
         with self._nav_lock:
@@ -642,6 +836,55 @@ class ROS2Bridge:
 
         except Exception as e:
             self._fire_nav_done(False, f"Navigation error: {e}")
+
+    _reach_current_key: str | None = None
+
+    def _reach_worker(self, x: float, y: float, yaw_deg: float, label: str,
+                      stamp, key: str, cancel_event: threading.Event) -> None:
+        """Background thread: one goal through reach_node, until its final line."""
+        dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"
+        try:
+            self._reach_goal_pub.publish(self._pose_msg(x, y, math.radians(yaw_deg), stamp))
+            t0 = time.monotonic()
+            while True:
+                if cancel_event.wait(timeout=0.5):
+                    if self._reach_current_key == key:     # a stop, not a newer goal
+                        self._reach_cancel_pub.publish(self._Empty())
+                    self._fire_nav_done(False, f"Navigation to {dest} cancelled")
+                    return
+                with self._status_lock:
+                    lines = list(self._reach_status.get(key, []))
+                final = [d for d in lines if "result" in d]
+                if final:
+                    d = final[-1]
+                    if d["result"] == "reached":
+                        self._fire_nav_done(True, f"I've arrived at {dest}.")
+                    elif d["result"] == "cancelled":
+                        self._fire_nav_done(False, f"Navigation to {dest} cancelled")
+                    else:
+                        tried = d.get("tried") or []
+                        why = tried[-1] if tried else d.get("why", "")
+                        self._fire_nav_done(
+                            False, f"Navigation to {dest} failed after retrying -- {why}."
+                            if why else f"Navigation to {dest} failed.")
+                    return
+                waited = time.monotonic() - t0
+                if not lines and waited > 10.0:
+                    self._fire_nav_done(
+                        False, f"Navigation to {dest} did not start -- the Jetson's "
+                        f"reach node did not answer.")
+                    return
+                if waited > 900.0:              # reach gives up by itself at 300 s
+                    self._reach_cancel_pub.publish(self._Empty())
+                    self._fire_nav_done(
+                        False, f"Navigation to {dest} never finished -- I've stopped "
+                        f"waiting and cancelled the goal.")
+                    return
+        except Exception as e:
+            self._fire_nav_done(False, f"Navigation error: {e}")
+        finally:
+            with self._status_lock:
+                self._reach_status.pop(key, None)
 
     def _fire_nav_done(self, success: bool, message: str) -> None:
         # Logged unconditionally, and says whether a listener existed. A silent

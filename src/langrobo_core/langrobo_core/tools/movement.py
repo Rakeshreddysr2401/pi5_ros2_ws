@@ -141,6 +141,96 @@ def _drive_for_duration(bridge, twist, dur: float) -> bool:
     return not interrupted
 
 
+# ── Exact moves on the Jetson (rover repo INTELLIGENCE_PLAN.md B1) ──────────
+#
+# Every turn and short move now goes to the Jetson's goal_exec
+# (bridge.turn_by / drive_by): closed on fusion2's pose, outline-checked
+# against the LiDAR and depth before and during the move, refused with a
+# reason when something is in the way. The timed twist above is only the
+# FALLBACK for when goal_exec is not running (and Studio / tests, where the
+# StubBridge answers "unavailable"). Graded 2026-09-24, the timed 5 rad/s turn
+# slid 31-68 cm per 90 deg and once stalled 23 deg short while reporting done.
+_TURN_PIECE_DEG = 170.0   # goal_exec turns the short way round: longer turns go in pieces
+_DRIVE_PIECE_M = 1.0      # goal_exec hands anything past 1.5 m (with its runway) to nav2
+_TURN_DONE_DEG = 2.0      # goal_exec's own turn tolerance
+_DRIVE_DONE_M = 0.02
+
+
+def exact_turn(bridge, degrees: float) -> dict | None:
+    """Turn `degrees` (+ left) on goal_exec, in pieces of at most
+    _TURN_PIECE_DEG, each piece re-aimed on the MEASURED turn so far.
+    None = goal_exec unavailable before anything moved (fall back).
+    Otherwise the last piece's result, with turned_deg / moved_cm totalled."""
+    turned = moved = 0.0
+    res = None
+    for _ in range(4):                      # 360 deg is three pieces; one spare
+        left = degrees - turned
+        if abs(left) <= _TURN_DONE_DEG:
+            break
+        res = bridge.turn_by(max(-_TURN_PIECE_DEG, min(_TURN_PIECE_DEG, left)))
+        if res.get("result") == "unavailable" and turned == 0.0:
+            return None
+        turned += res.get("turned_deg", 0.0)
+        moved += res.get("moved_cm", 0.0)
+        if not res.get("ok"):
+            break
+    res = dict(res or {"ok": True, "result": "reached", "why": "already facing that way"})
+    res["turned_deg"], res["moved_cm"] = round(turned, 1), round(moved, 1)
+    return res
+
+
+def exact_drive(bridge, metres: float) -> dict | None:
+    """Drive straight `metres` (+ forward) on goal_exec, in pieces of at most
+    _DRIVE_PIECE_M. None = unavailable before anything moved (fall back)."""
+    done = 0.0
+    res = None
+    sign = 1.0 if metres >= 0 else -1.0
+    for _ in range(8):
+        left = abs(metres) - done
+        if left <= _DRIVE_DONE_M:
+            break
+        piece = min(_DRIVE_PIECE_M, left)
+        res = bridge.drive_by(sign * piece)
+        if res.get("result") == "unavailable" and done == 0.0:
+            return None
+        done += res.get("moved_cm", piece * 100.0) / 100.0
+        if not res.get("ok"):
+            break
+    res = dict(res or {"ok": True, "result": "reached", "why": ""})
+    res["moved_cm"] = round(done * 100.0, 1)
+    return res
+
+
+def turn_robot(bridge, degrees: float) -> tuple[bool, str]:
+    """Turn by `degrees` (+ left): exact on goal_exec, else the timed fallback.
+    (True, "") when done; (False, why) when it did not complete -- "interrupted"
+    means a new command stopped it."""
+    res = exact_turn(bridge, degrees)
+    if res is not None:
+        if res["ok"]:
+            return True, ""
+        if res["result"] == "interrupted":
+            return False, "interrupted"
+        return False, f"{res['result']}: {res.get('why', '')}".rstrip(": ")
+    from geometry_msgs.msg import Twist
+    twist = Twist()
+    twist.angular.z = math.copysign(_ANGULAR_VEL_RS, degrees)
+    if _drive_for_duration(bridge, twist, _duration("L", abs(degrees))):
+        return True, ""
+    return False, "interrupted"
+
+
+def _measured(cmd: str, res: dict) -> str:
+    """'L:90' -> 'L:90 (turned +89.4 deg, slid 5 cm)': what the pose says."""
+    if cmd in ("L", "R"):
+        return f"turned {res.get('turned_deg', 0.0):+.0f} deg, slid {res.get('moved_cm', 0.0):.0f} cm"
+    return f"moved {res.get('moved_cm', 0.0):.0f} cm"
+
+
+_TIMED_NOTE = (" (Timed and open-loop: the Jetson's exact-move node is not "
+               "running, so distances and angles are approximate.)")
+
+
 # How many steps one move_robot call may carry. A sequence runs BLIND -- nothing
 # re-plans between steps -- so this is a safety bound, not a parser limit. Real
 # requests ("forward, left, forward") are two to four steps.
@@ -293,7 +383,31 @@ def move_robot(command: str) -> str:
     bridge.clear_motion_stop()   # this is a deliberate move - start with a clean slate
 
     from geometry_msgs.msg import Twist
+    measured = []                # what the pose says each exact step did
+    timed = False
     for i, (cmd, val) in enumerate(steps):
+        # Exact first (goal_exec on the Jetson); None = not running -> timed.
+        res = None
+        if cmd in ("L", "R"):
+            res = exact_turn(bridge, val if cmd == "L" else -val)
+        elif cmd in ("F", "B"):
+            res = exact_drive(bridge, (val if cmd == "F" else -val) / 100.0)
+        if res is not None:
+            if res["ok"]:
+                measured.append(f"{labels[i]} ({_measured(cmd, res)})")
+                continue
+            if res["result"] == "interrupted":
+                return _report_partial(labels, i, "interrupted during",
+                                       moved=_moved(steps[:i + 1]))
+            # Refused (something in the way), stalled, pose unsure...: say
+            # which, why, and how far it got -- then stop the sequence, since
+            # every later step was planned from where this one should have ended.
+            return _report_partial(
+                labels, i, f"{res['result']} ({res.get('why', '')}; {_measured(cmd, res)}) at",
+                moved=_moved(steps[:i]) or res.get("moved_cm", 0) > 1
+                or abs(res.get("turned_deg", 0)) > 2)
+
+        timed = timed or cmd != "S"
         twist = Twist()
         if cmd == "F":
             twist.linear.x = _LINEAR_VEL_MS
@@ -323,6 +437,10 @@ def move_robot(command: str) -> str:
                                    moved=_moved(steps[:i + 1]))
 
     out = "Movement done: " + ", ".join(labels)
+    if measured:
+        out += ". Measured: " + ", ".join(measured) + "."
+    if timed:
+        out += _TIMED_NOTE
     return out + (view_stale_note() if _moved(steps) else "")
 
 

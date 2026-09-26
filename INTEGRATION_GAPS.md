@@ -313,7 +313,10 @@ behaviour and should be graded on the robot first.
 around the measured pivot and re-plans on the LiDAR-corrected pose: a +90° in
 place ends within 1.4 cm / +0.4°. It is a script on the Jetson. Exposing it as
 a ROS action would give `move_robot` and "go back to where you started" exact
-returns. ⬜
+returns. ✅ **2026-09-26**: done as goal_exec topics rather than a script —
+`/goal_exec/turn` (turn-only), `/goal_exec/goal`, `/reach/goal`, each status
+line carrying `goal_stamp`; `move_robot`, the approach search, `scan_surroundings`
+and navigation all use them (rover repo INTELLIGENCE_PLAN.md §5). Floor test pending.
 
 **"Movement done" can be reported with nothing moving.** After a power cycle on
 2026-09-23 the ESP32 linked at 20 Hz and echoed every command, with the motor

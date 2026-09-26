@@ -60,11 +60,11 @@ def test_standoff_goal_on_top_of_the_object_does_not_divide_by_zero():
 # ── The VLM approach path ───────────────────────────────────────────────────
 
 def test_approach_starts_nav_when_the_vlm_finds_it(monkeypatch):
-    monkeypatch.setattr(ap, "_fresh_frame", lambda b, settle_s=2.5: b"jpeg")
+    monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5: (b"jpeg", None))
     monkeypatch.setattr(ap, "_vlm_locate", lambda frame, desc: (100.0, 50.0))
     goals = []
     monkeypatch.setattr(_bridge.get(), "ground_pixel",
-                        lambda u, v, timeout=4.0: {
+                        lambda u, v, timeout=4.0, stamp=None: {
                             "ok": True, "depth_m": 1.8,
                             "goal": {"x": 1.2, "y": 0.3, "yaw": 0.0}})
     monkeypatch.setattr(_bridge.get(), "start_nav_to_pose",
@@ -77,10 +77,10 @@ def test_approach_starts_nav_when_the_vlm_finds_it(monkeypatch):
 
 def test_approach_is_honest_when_the_jetson_is_silent(monkeypatch):
     """A timeout means the query never arrived — NOT that grounding failed."""
-    monkeypatch.setattr(ap, "_fresh_frame", lambda b, settle_s=2.5: b"jpeg")
+    monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5: (b"jpeg", None))
     monkeypatch.setattr(ap, "_vlm_locate", lambda frame, desc: (10.0, 10.0))
     monkeypatch.setattr(_bridge.get(), "ground_pixel",
-                        lambda u, v, timeout=4.0: {
+                        lambda u, v, timeout=4.0, stamp=None: {
                             "ok": False, "reason": "no_reply_from_jetson"})
     out = approach_described_object.invoke(
         {"description": "mug", "state": dict(VOICE_STATE)})
@@ -88,10 +88,10 @@ def test_approach_is_honest_when_the_jetson_is_silent(monkeypatch):
 
 
 def test_approach_reports_a_depth_failure_with_its_reason(monkeypatch):
-    monkeypatch.setattr(ap, "_fresh_frame", lambda b, settle_s=2.5: b"jpeg")
+    monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5: (b"jpeg", None))
     monkeypatch.setattr(ap, "_vlm_locate", lambda frame, desc: (10.0, 10.0))
     monkeypatch.setattr(_bridge.get(), "ground_pixel",
-                        lambda u, v, timeout=4.0: {
+                        lambda u, v, timeout=4.0, stamp=None: {
                             "ok": False, "reason": "no_depth_at_pixel"})
     out = approach_described_object.invoke(
         {"description": "mug", "state": dict(VOICE_STATE)})
@@ -100,7 +100,7 @@ def test_approach_reports_a_depth_failure_with_its_reason(monkeypatch):
 
 def test_approach_gives_up_honestly_after_a_full_circle(monkeypatch):
     """The VLM never finds it. The robot must say so, not invent a goal."""
-    monkeypatch.setattr(ap, "_fresh_frame", lambda b, settle_s=2.5: b"jpeg")
+    monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5: (b"jpeg", None))
     monkeypatch.setattr(ap, "_vlm_locate", lambda frame, desc: None)
     out = approach_described_object.invoke(
         {"description": "elephant", "state": dict(VOICE_STATE)})
@@ -108,7 +108,7 @@ def test_approach_gives_up_honestly_after_a_full_circle(monkeypatch):
 
 
 def test_approach_admits_a_dead_camera(monkeypatch):
-    monkeypatch.setattr(ap, "_fresh_frame", lambda b, settle_s=2.5: None)
+    monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5: (None, None))
     out = approach_described_object.invoke(
         {"description": "mug", "state": dict(VOICE_STATE)})
     assert "fresh image" in out
