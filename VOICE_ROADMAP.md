@@ -165,7 +165,7 @@ Conclusions:
 
 ---
 
-## Phase 1 — Wake word done properly, with an ack `[ ]`
+## Phase 1 — Wake word done properly, with an ack `[mostly done 2026-09-26]`
 
 **Why:** T1 and T2. This is the most visible "messy" behaviour today (the
 robot transcribes the whole room and ships it to a cloud STT) and it is
@@ -178,11 +178,27 @@ work and can start while Phase 0 is being measured.
   - `rakhi.onnx` (414 KB): specialized for Telugu households (*"Rakhi"*, *"రాఖీ"*, *"ఏయ్ రాఖీ"*, *"Hello Rakhi"*), verified with zero false wakes on Telugu conversational phrases (*"repu movie ke veldama"*, *"cheppu"*, *"aagu"* all 0.000) at `src/langrobo_ros/models/wake/rakhi.onnx`.
   - Live mic scorer `scripts/wake_live_score.py`, trainer `scripts/train_rakhi_local.py`, verifier trainer `scripts/wake_train_verifier.py`, and Colab trainer `notebooks/train_mitra_wakeword.ipynb` are all in place.
   See **WAKE_WORD_INTEGRATION.md**.
-- [ ] **Re-enable acoustic gating:** `wake_detector: openwakeword`,
-  `require_wake: true`. Re-tune `wake_threshold` from the `[diag] asleep
-  peak_wake_score` log on the mic Phase 0 settled on. Keep `transcript_alias`
-  as the documented fallback only.
-- [ ] **Ack cue.** New additive topic `/voice/cue` (`std_msgs/String`:
+- [x] **Acoustic gating is ON** (2026-09-26): `wake_detector: openwakeword`,
+  `wake_model_path: models/wake/mitra.onnx`, `require_wake: true`,
+  threshold 0.45. Nothing is transcribed or sent to Sarvam until the name is
+  heard. Switch model/threshold with `./scripts/wake_switch.py <word>|off
+  [--threshold X]`; watch a call with `./scripts/wake_test.sh` (live score
+  bar) or `./scripts/voice_watch.sh` (the robot's own log).
+  `[ ]` **Threshold still needs real-room numbers** — first live call through
+  the OnePlus Buds peaked **0.72** against an idle floor of **0.02**, so 0.45
+  sits between them, but that is one sample. Re-check on the Stone.
+- [x] **Ack cue — DONE 2026-09-26.** Says **"చెప్పండి బాస్" (chepandi boss)**
+  when you pause after the name, nothing when you keep talking. `wake_cue.py`
+  (`CueGate`, pure, 7 tests) decides; `stt_node` publishes `/voice/cue`;
+  `tts_node` renders it once at startup and replays from memory, so a wake
+  costs no API call. The cue names its own voice (`cue_provider: sarvam`,
+  `cue_language: te`) because the configured `sarvam_translate` would
+  translate the phrase — probed live: "chepandi boss" came back as the
+  misspelt చెపండి, "Tell me boss" as the informal చెప్పు బాస్. Verified: the
+  cue plays with `/voice/tts_speaking` never going true, so it cannot clip
+  the command. Original design below, kept for the `done`/`error` cues that
+  do not exist yet.
+- [ ] **Ack cue (rest of the design).** New additive topic `/voice/cue` (`std_msgs/String`:
   `wake` | `done` | `error`). `tts_node` maps each to a short audio clip
   pre-rendered **once at startup** with the configured provider (so "haan
   boss?" costs no API call per wake and sounds like the same voice) and plays
