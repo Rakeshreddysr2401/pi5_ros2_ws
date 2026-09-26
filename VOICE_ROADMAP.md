@@ -107,7 +107,13 @@ The fix is structural, not another timer:
 - [x] **Reboot with no ritual**: `langrobo-voice` user unit + `run_voice.sh`,
   installed by `install_systemd.sh` (with `enable-linger`). `[ ]` not yet
   installed on this Pi — needs one sudo run of `./scripts/install_systemd.sh`.
-- [ ] **Wideband HFP (mSBC).** Check `pactl list cards` for the Stone's
+- [x] **Wideband HFP (mSBC) — DONE 2026-09-26.** `bt_audio` reads the card's
+  profile list and picks the widest headset codec available: mSBC (16 kHz) over
+  CVSD (8 kHz). The OnePlus Buds now run `headset-head-unit-msbc`. Same change
+  fixed a real deafness bug — bluez has not resolved a device's service UUIDs
+  right after pairing, so the Buds reported "no mic" and were routed A2DP with
+  no source at all; the card is authoritative and race-free. Original note:
+- [ ] ~~mSBC~~ Check `pactl list cards` for the Stone's
   supported codecs; if mSBC is offered, pin it (`bluez5.codecs` / WirePlumber
   rule) — 16 kHz instead of 8 kHz is a free win for wake detection and STT.
   Record which codec is actually negotiated in PI5_VOICE.md.
@@ -261,7 +267,11 @@ it). What is left is making the *turn-taking* feel right.
   "stop"/"aagu" makes a halt a ~50 ms local event. (While the robot is
   talking on the Stone nothing can be heard anyway; the wheels are stopped
   by any new utterance the moment the robot goes quiet.)
-- [ ] **Abandoned turn must go quiet**: on `_turn_interrupt` `agent_node`
+- [x] **Abandoned turn goes quiet — DONE 2026-09-26** (`3816846`).
+  `bridge.publish_speech_stop()` drops queued AND playing audio, tagged
+  `SPEECH_ABANDON` so the brain does not read its own message as a human
+  "stop" and sweep the wheels. Original note:
+- [ ] ~~abandoned turn~~: on `_turn_interrupt` `agent_node`
   publishes only the EOU today, so sentences already queued in `tts_node`
   keep playing under the new answer. Add `publish_speech_stop()` to the
   bridge (stub.py mirrors it) and call it on interrupt.
@@ -277,7 +287,7 @@ a 20-minute idle room with the TV on → 0 turns.
 
 ---
 
-## Phase 3 — Turn lifecycle hardening `[3 of 8 done 2026-09-26]`
+## Phase 3 — Turn lifecycle hardening `[7 of 8 done 2026-09-26]`
 
 **Why:** T5's "no double-speak, no dead air, no stuck mic". Cheap, independent
 of hardware, and these are the bugs a demo hits. Each one gets a unit test in
@@ -325,11 +335,23 @@ before fixing**, some may be theoretical:
   steps; a long generation or a blocking tool (timed drive, servo loop) delays
   it by the whole step. Measure worst case; if > 1 s, pass an abort into the
   tool layer (the motion tools already honour `request_motion_stop`).
-- [ ] **Merge window** (`_on_user_input`, `_merge_window`): two utterances
+- [x] **Merge window — checked, no change needed** (2026-09-26). The worry was
+  utterances merging out of order. They cannot: `stt_node` has ONE FIFO queue,
+  ONE worker thread that transcribes sequentially, and is the ONLY publisher of
+  `/voice/user_input`, so the brain receives them strictly in capture order.
+  Two STT sources could break it — which is exactly what `fleet.sh` now
+  prevents (sim mode stops the Pi5 trio). Original note:
+- [ ] ~~merge window~~: two utterances
   with different cloud STT latencies can merge out of order. Either stamp
   utterances with capture time in `/voice/stt_meta` and merge on that, or
   drop the merge now that the follow-up window exists on the STT side.
-- [ ] **tts_node stop races.** `_on_stop` clears queues and closes the stream
+- [x] **tts_node stop races — SOAK TESTED 2026-09-26.** 25 stops landing
+  mid-sentence (publish a sentence, stop 0.9 s in, repeat): `tts_node` never
+  crashed (same PID throughout), `/voice/tts_speaking` came back perfectly
+  balanced at 21 true / 21 false with the LAST value false — the mic was
+  released every time. The per-chunk `_stream_lock` discipline holds. Original
+  note:
+- [ ] ~~stop races~~ `_on_stop` clears queues and closes the stream
   on the spin thread while `_play` writes on the playback thread — guarded by
   `_stream_lock` per chunk; confirm with a soak test (100 stops mid-sentence)
   that the process never hangs and `/voice/tts_speaking` always ends false.
@@ -341,7 +363,13 @@ before fixing**, some may be theoretical:
   longer than any plausible utterance (say 60 s) with no audio being written,
   `stt_node` unmutes itself and logs loudly. Belt-and-braces for a lost
   `<|eou|>`.
-- [ ] **Cold-turn UX.** The 50–108 s first turn after a brain or Mac Mini
+- [x] **Cold-turn UX — DONE** (`ec04780`). Both halves: the LLM client had no
+  timeout at all, so a Mac Mini on a new DHCP address left it on a dead socket
+  (the 50-108 s first turns) — now connect 5 s / read 90 s, split because
+  generation legitimately takes tens of seconds while connecting never should.
+  And 6 s into a wordless turn the robot now says "ఒక నిమిషం బాస్" via the
+  `wait` cue, cancelled the moment the graph ends. Original note:
+- [ ] ~~cold turn~~ The 50–108 s first turn after a brain or Mac Mini
   restart looks like a dead robot. Speak a short "one moment, warming up"
   cue (Phase 1's `/voice/cue`) when a turn's first token has not arrived in
   N s, and fix the stale-connection half by giving the LLM HTTP client a
