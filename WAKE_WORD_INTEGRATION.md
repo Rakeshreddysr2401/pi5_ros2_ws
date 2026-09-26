@@ -1,7 +1,22 @@
 # Wake Word Models ("Mitra" & "Rakhi") — Train on Laptop, Deploy to Robot
 
-**Updated 2026-09-20. Status: TRAINED & INTEGRATED on branch `dev-1.3.4-minimal`** — two custom
-acoustic wake-word models are trained, verified, and committed to `src/langrobo_ros/models/wake/`:
+**Updated 2026-09-26. Status: LIVE ON THE ROBOT.** The wake gate is ON
+(`mitra.onnx`, threshold 0.45), the robot answers **"చెప్పండి బాస్"** when you
+pause after its name, and nothing is transcribed or sent to a cloud STT until
+it hears that name. Day-to-day you need only:
+
+```bash
+./scripts/wake_switch.py               # what is active, and what models exist
+./scripts/wake_switch.py rakhi|mitra|off [--threshold X]
+./scripts/wake_test.sh                 # live score bar — say the word, watch it
+./scripts/voice_watch.sh               # the robot's own log while you call it
+```
+
+The rest of this file is how the models were MADE, and how to make another
+one (a different name, or a retrain when the mic changes).
+
+Two custom acoustic wake-word models are trained, verified, and committed to
+`src/langrobo_ros/models/wake/`:
 
 1. **`rakhi.onnx` (414 KB)** — Telugu household specialized ("Rakhi", "రాఖీ", "ఏయ్ రాఖీ", "హలో రాఖీ", "హాయ్ రాఖీ"):
    - Native Telugu Positives ("రాఖీ", "ఏయ్ రాఖీ"): **0.996 – 1.000**

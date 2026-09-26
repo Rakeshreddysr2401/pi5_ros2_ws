@@ -50,6 +50,9 @@ running, and which known devices are on/off.
 | two devices both on, wrong one used | preference | `bt_devices:` order in `voice_params.yaml` (first = preferred); the one already in use is kept until it disconnects |
 | robot answers itself / double speech | Jetson voice also running | `./scripts/fleet.sh status`; stop one side |
 | want a NEW speaker/headphones | never paired | user runs `! ./scripts/bt_speaker.sh pair` and follows the prompts |
+| robot hears nothing and never answers | the wake gate is ON — it ignores everything until it hears "Mitra" | that is by design. `./scripts/wake_switch.py` shows the active model; `./scripts/wake_test.sh` gives a live score bar; `./scripts/wake_switch.py off` disables the gate |
+| wake word never fires on this speaker | threshold set for a different mic (the Stone's 8 kHz HFP mic scores lower than wideband) | watch `[diag] asleep peak_wake_score` while the user calls it, then `./scripts/wake_switch.py mitra --threshold <between floor and peak>` |
+| it answers "chepandi boss" over the command | the cue fired on a continued sentence | raise `wake_cue_delay_s` in `voice_params.yaml`, or `wake_cue: false` to silence it |
 
 ## Step 3 — verify after any change
 

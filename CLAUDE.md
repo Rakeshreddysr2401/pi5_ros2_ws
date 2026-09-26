@@ -162,7 +162,13 @@ that moves wheels).
   fallback; publishes latched `/voice/audio_ready`), `stt_node` and
   `tts_node` follow it and never touch Bluetooth. `bt_audio.py` is the
   pure bluez/PipeWire glue. `/bt-audio` (Claude skill) is the operator
-  checklist. Robot name / wake word: **Mitra**.
+  checklist. Robot name / wake word: **Mitra** — the acoustic gate is ON
+  (`models/wake/mitra.onnx`; `rakhi.onnx` is the Telugu-trained alternative,
+  both tracked in git), so nothing is transcribed until the name is heard,
+  and it answers "చెప్పండి బాస్" when you pause after it (`wake_cue.py`).
+  `./scripts/wake_switch.py` swaps model/threshold and restarts the service;
+  `./scripts/wake_test.sh` shows a live score bar. WAKE_WORD_INTEGRATION.md
+  is the train-and-deploy recipe.
 
 ## Config split
 
