@@ -75,6 +75,9 @@ class StubBridge:
 
     # ── Pose and locations ────────────────────────────────────────────────
 
+    def get_origin_epoch(self):
+        return getattr(self, "origin_epoch", None)
+
     def get_current_pose(self):
         # Settable so tests can reach the no-localisation branch: the real
         # bridge returns None when TF has no odom->base_link fix, and tools

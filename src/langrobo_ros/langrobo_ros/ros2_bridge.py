@@ -341,6 +341,13 @@ class ROS2Bridge:
         self._warned_stale_locations = False   # a new origin deserves its own warning
         self._rebuild_known_locations()
 
+    def get_origin_epoch(self):
+        """The odom origin this session's coordinates are measured from
+        (/fusion/status origin_epoch), or None before the first message.
+        Anything remembered in odom -- saved locations, object memory -- is
+        only meaningful under the same epoch."""
+        return self._origin_epoch
+
     def get_current_pose(self) -> tuple | None:
         """Robot pose as (x, y, yaw_deg) in NAV_FRAME; None if TF has no fix."""
         import rclpy.time
