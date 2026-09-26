@@ -67,6 +67,12 @@ class TTSNode(Node):
         # costs no API call per wake, and sounds like the robot's own voice).
         self.declare_parameter('cue_text', 'Yes boss')
         self.declare_parameter('cue_enabled', True)
+        # The cue is usually spoken by the provider above, but that one may
+        # TRANSLATE (sarvam_translate). To say a fixed Telugu phrase exactly
+        # as written, render it with a plain TTS provider and its own
+        # language instead: cue_provider: sarvam, cue_language: te.
+        self.declare_parameter('cue_provider', '')
+        self.declare_parameter('cue_language', '')
 
         model_path = self.get_parameter('model_path').value
         voices_path = self.get_parameter('voices_path').value
@@ -90,6 +96,7 @@ class TTSNode(Node):
             'translate_from': self.get_parameter('tts_translate_from').value,
             'translate_to': self.get_parameter('tts_translate_to').value,
         }
+        self._params = params          # reused when rendering the wake cue
         self._fallback = LocalKokoroProvider.from_config(params, os.environ)
         self.get_logger().info('kokoro model loaded (fallback path)')
 
@@ -199,15 +206,23 @@ class TTSNode(Node):
         text = (self.get_parameter('cue_text').value or '').strip()
         if not text:
             return
+        provider = self._provider
+        name = (self.get_parameter('cue_provider').value or '').strip()
+        language = (self.get_parameter('cue_language').value or '').strip()
+        if name or language:
+            params = dict(self._params)
+            if language:
+                params['language'] = language
+            provider = self._build_provider(name or self._provider.name, params)
         try:
-            self._cue_audio = self._provider.synthesize(text)
+            self._cue_audio = provider.synthesize(text)
         except Exception:
             try:
                 self._cue_audio = self._fallback.synthesize(text)
             except Exception:
                 self.get_logger().warning(f'could not render the wake cue {text!r} — no acknowledgement')
                 return
-        self.get_logger().info(f'wake cue ready: {text!r}')
+        self.get_logger().info(f'wake cue ready: {text!r} ({provider.name})')
 
     def _on_cue(self, msg: String) -> None:
         """Play the acknowledgement — short, and NOT an utterance.

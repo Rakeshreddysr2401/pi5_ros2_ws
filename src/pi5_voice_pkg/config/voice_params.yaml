@@ -54,7 +54,13 @@ pi5_tts_node:
     # call per wake, same voice as its replies). Set cue_enabled: false for
     # silence; stt_node's wake_cue_delay_s decides WHEN it is appropriate.
     cue_enabled: true
-    cue_text: "Yes boss"
+    # Spoken exactly as written: cue_provider is a plain TTS (no translation
+    # step), cue_language is the language of the text below. Leave both empty
+    # to use tts_provider — but note sarvam_translate would TRANSLATE this,
+    # and "chepandi boss" came back as చెపండి (misspelt) when we tried.
+    cue_text: "చెప్పండి బాస్"
+    cue_provider: sarvam
+    cue_language: te
 
 pi5_stt_node:
   ros__parameters:
