@@ -46,6 +46,61 @@ _MIN_CHUNK_CHARS = 12
 _MAX_BUFFER_CHARS = 250
 
 
+# ── Making text safe to SAY ──────────────────────────────────────────────────
+# SPEECH_STYLE (prompts.py) tells the model not to emit markdown, emoji or
+# URLs, because the voice reads them out character by character. That is a rule
+# the model has to follow, and CLAUDE.md is explicit that such a rule is a
+# thing to MEASURE, not a fix — the 12B model has ignored prompt rules on real
+# hardware before. So the contract is enforced here too, deterministically, on
+# every chunk that reaches the speaker.
+
+_CODE_FENCE = re.compile(r"^\s*```.*$", re.M)
+_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+", re.M)
+_BLOCKQUOTE = re.compile(r"^\s{0,3}>\s?", re.M)
+_BULLET = re.compile(r"^\s{0,4}(?:[-*+•·]|\d+[.)])\s+", re.M)
+_IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_BARE_URL = re.compile(r"\b(?:https?://|www\.)\S+")
+# Emphasis/code spans. Underscores only when they are not inside a word, so
+# snake_case survives; asterisks and backticks are unambiguous enough.
+_STRONG = re.compile(r"(\*\*|__)(?=\S)(.+?)(?<=\S)\1", re.S)
+_EM_STAR = re.compile(r"\*(?=\S)([^*]+?)(?<=\S)\*")
+_EM_UNDER = re.compile(r"(?<![\w_])_(?=\S)([^_]+?)(?<=\S)_(?![\w_])")
+_CODE_SPAN = re.compile(r"`+([^`]+)`+")
+# Pictographs, dingbats, flags, variation selectors — NOT other scripts: the
+# robot speaks Telugu, and stripping "non-ASCII" would eat it.
+_EMOJI = re.compile(
+    "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF"
+    "\U00002190-\U000021FF\U0000FE00-\U0000FE0F\U00002B00-\U00002BFF]+")
+
+
+def clean_for_speech(text: str) -> str:
+    """Strip anything the voice would read out as characters.
+
+    Keeps the words, drops the markup: headings, bullets, emphasis, code
+    spans, link targets (the link TEXT stays), emoji. A bare URL becomes
+    "a link" — speaking one aloud is useless either way. Returns "" when
+    nothing sayable is left, so the caller can skip the chunk.
+    """
+    if not text:
+        return ""
+    out = _CODE_FENCE.sub("", text)
+    out = _IMAGE.sub(r"\1", out)
+    out = _LINK.sub(r"\1", out)
+    out = _BARE_URL.sub("a link", out)
+    out = _HEADING.sub("", out)
+    out = _BLOCKQUOTE.sub("", out)
+    out = _BULLET.sub("", out)
+    out = _STRONG.sub(r"\2", out)
+    out = _EM_STAR.sub(r"\1", out)
+    out = _EM_UNDER.sub(r"\1", out)
+    out = _CODE_SPAN.sub(r"\1", out)
+    out = _EMOJI.sub(" ", out)
+    # Leftover lone markers ("**" on its own, a table's pipes).
+    out = re.sub(r"(?<!\w)[*_`#|](?!\w)", " ", out)
+    return " ".join(out.split())
+
+
 def _norm(text: str) -> str:
     return " ".join(text.split())
 

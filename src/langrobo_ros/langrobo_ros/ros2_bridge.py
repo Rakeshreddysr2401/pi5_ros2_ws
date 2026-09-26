@@ -20,7 +20,7 @@ import math
 from geometry_msgs.msg import PoseStamped, Twist
 from std_msgs.msg import Bool, String
 
-from langrobo_core.utils.speech_stream import SPEECH_EOU
+from langrobo_core.utils.speech_stream import SPEECH_EOU, clean_for_speech
 
 
 class ROS2Bridge:
@@ -452,7 +452,16 @@ class ROS2Bridge:
     # (mic muted) until the marker arrives.
 
     def publish_speech_chunk(self, text: str) -> None:
-        """Publish one sentence chunk immediately (SpeechStreamHandler sink)."""
+        """Publish one sentence chunk immediately (SpeechStreamHandler sink).
+
+        Cleaned here rather than at each caller: this is the ONE point every
+        spoken path passes through — streamed chunks, whole replies, the
+        startup line, the error apology — so markup cannot reach the speaker
+        by some other route.
+        """
+        text = clean_for_speech(text)
+        if not text:
+            return                      # was only markup; nothing to say
         self.publish_timing({"stage": "speech_publish", "t": time.time(), "chars": len(text)})
         self._speech_pub.publish(String(data=text))
 

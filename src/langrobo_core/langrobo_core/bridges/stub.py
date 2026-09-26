@@ -117,6 +117,12 @@ class StubBridge:
         logger.info("[STUB] speak: %s", text)
 
     def publish_speech_chunk(self, text: str) -> None:
+        # Same cleaning as ROS2Bridge, so what the stub logs is what the robot
+        # would actually say.
+        from langrobo_core.utils.speech_stream import clean_for_speech
+        text = clean_for_speech(text)
+        if not text:
+            return
         logger.info("[STUB] speak chunk: %s", text)
 
     def publish_speech_end(self) -> None:
