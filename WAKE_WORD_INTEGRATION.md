@@ -209,7 +209,24 @@ more positives from everyone who should be able to wake the robot.
    ```
    Keep the name `mitra.onnx` — the verifier is keyed by that stem.
 
-2. **Edit `src/pi5_voice_pkg/config/voice_params.yaml`**, `pi5_stt_node`
+2. **Switch to it in one command** (edits the config and restarts the
+   service for you):
+   ```bash
+   ./scripts/wake_switch.py                 # what is active now + what models exist
+   ./scripts/wake_switch.py mitra           # wake on "Mitra"
+   ./scripts/wake_switch.py rakhi           # wake on "Rakhi" (Telugu-trained)
+   ./scripts/wake_switch.py off             # no wake word (transcribe everything)
+   ./scripts/wake_switch.py mitra --threshold 0.5
+   ```
+   Any `.onnx` in `models/wake/` is a valid choice. Switching the wake word
+   does NOT change what the robot calls itself when it speaks — that is the
+   persona in `langrobo_core/prompts.py`.
+
+   Watch a call live: `./scripts/voice_watch.sh` (the robot's own log) or
+   `python3 scripts/wake_live_score.py src/langrobo_ros/models/wake/mitra.onnx
+   --threshold 0.45` (a live score bar as you speak).
+
+   Or by hand — **edit `src/pi5_voice_pkg/config/voice_params.yaml`**, `pi5_stt_node`
    section — these five lines are the whole switch:
    ```yaml
    wake_detector: openwakeword          # was transcript_alias (gate OFF)
