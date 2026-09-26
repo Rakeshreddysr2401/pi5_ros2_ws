@@ -62,6 +62,11 @@ class TTSNode(Node):
         # Only used by tts_provider=sarvam_translate (English text -> Telugu speech).
         self.declare_parameter('tts_translate_from', 'en')
         self.declare_parameter('tts_translate_to', 'te')
+        # Acknowledgement spoken the moment the wake word is heard. Rendered
+        # ONCE at startup through the configured provider (so it is instant,
+        # costs no API call per wake, and sounds like the robot's own voice).
+        self.declare_parameter('cue_text', 'Yes boss')
+        self.declare_parameter('cue_enabled', True)
 
         model_path = self.get_parameter('model_path').value
         voices_path = self.get_parameter('voices_path').value
@@ -100,6 +105,7 @@ class TTSNode(Node):
         self._tts_meta_pub = self.create_publisher(String, '/voice/tts_meta', 10)
         self.create_subscription(String, '/voice/robot_speech', self._on_speech, 10)
         self.create_subscription(String, '/voice/tts_stop', self._on_stop, 10)
+        self.create_subscription(String, '/voice/cue', self._on_cue, 10)
 
         self._q: queue.Queue[str] = queue.Queue()
         # Synthesised audio waiting to be played. Bounded so synthesis stays a
@@ -151,6 +157,12 @@ class TTSNode(Node):
             QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                        durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self._ready_fallback = self.create_timer(AUDIO_READY_TIMEOUT_S, self._assume_ready)
+        # Pre-rendered acknowledgement. Built off the spin thread: a cloud
+        # provider takes seconds, and the node must come up regardless.
+        self._cue_audio = None
+        self._cue_lock = threading.Lock()
+        if bool(self.get_parameter('cue_enabled').value):
+            threading.Thread(target=self._render_cue, daemon=True).start()
         self._synth_thread = threading.Thread(target=self._synth_loop, daemon=True)
         self._play_thread = threading.Thread(target=self._play_loop, daemon=True)
         self._synth_thread.start()
@@ -182,6 +194,39 @@ class TTSNode(Node):
 
     def _on_speech(self, msg: String):
         self._q.put(msg.data)
+
+    def _render_cue(self) -> None:
+        text = (self.get_parameter('cue_text').value or '').strip()
+        if not text:
+            return
+        try:
+            self._cue_audio = self._provider.synthesize(text)
+        except Exception:
+            try:
+                self._cue_audio = self._fallback.synthesize(text)
+            except Exception:
+                self.get_logger().warning(f'could not render the wake cue {text!r} — no acknowledgement')
+                return
+        self.get_logger().info(f'wake cue ready: {text!r}')
+
+    def _on_cue(self, msg: String) -> None:
+        """Play the acknowledgement — short, and NOT an utterance.
+
+        It deliberately does not touch /voice/tts_speaking: that flag mutes
+        the mic, and muting for half a second here would clip the start of
+        the command the user is about to say.
+        """
+        if self._cue_audio is None or not self._audio_ready or self._speaking:
+            return
+        if not self._cue_lock.acquire(blocking=False):
+            return                                  # one cue at a time
+        try:
+            samples, sr = self._cue_audio
+            self._play(samples, sr, self._generation)
+        except Exception:
+            self.get_logger().debug('cue playback failed')
+        finally:
+            self._cue_lock.release()
 
     def _on_audio_ready(self, msg: Bool):
         self._ready_fallback.cancel()

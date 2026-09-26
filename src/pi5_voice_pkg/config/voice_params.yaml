@@ -49,6 +49,12 @@ pi5_tts_node:
     # Only used by tts_provider=sarvam_translate: source text language -> spoken language.
     tts_translate_from: en
     tts_translate_to: te
+    # "Yes boss" the instant the wake word is heard, so you know it is
+    # listening. Rendered once at startup through the provider above (no API
+    # call per wake, same voice as its replies). Set cue_enabled: false for
+    # silence; stt_node's wake_cue_delay_s decides WHEN it is appropriate.
+    cue_enabled: true
+    cue_text: "Yes boss"
 
 pi5_stt_node:
   ros__parameters:
@@ -73,6 +79,11 @@ pi5_stt_node:
     follow_up_window_s: 9.0
     wake_aliases: ["mitra", "hey mitra"]   # used as transcript fallback if model fails to load
     require_wake: true
+    # Speak the acknowledgement only if you PAUSE after the name. Saying
+    # "Mitra, go to the kitchen" in one breath skips it rather than talking
+    # over the command (see wake_cue.py).
+    wake_cue: true
+    wake_cue_delay_s: 0.4
     stop_words: ["stop"]
     # Noise gate before the cloud call — see vad_gate.py. 0.05 clears the
     # measured Bluetooth-mic noise floor (~0.029) with margin; the old 0.012

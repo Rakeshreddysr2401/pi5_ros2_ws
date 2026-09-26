@@ -58,6 +58,7 @@ from std_msgs.msg import Bool, String
 
 from .addressing import strip_alias
 from .vad_gate import GateConfig, evaluate as gate_utterance
+from .wake_cue import DEFAULT_DELAY_S, CueGate
 from .stt_providers import REGISTRY, ProviderUnavailable
 from .stt_providers.local_whisper import LocalWhisperProvider
 from .wake import REGISTRY as WAKE_REGISTRY, WakeUnavailable
@@ -140,6 +141,11 @@ class STTNode(Node):
         # (no name required in the text — the agent prompt knows its own name and judges
         # relevance). Ignored in acoustic mode, where the wake word already gates.
         self.declare_parameter('require_wake', True)
+        # "Yes boss" after the wake word — so you know it heard you. Spoken
+        # only when you PAUSE after the name; saying "Mitra, go to the
+        # kitchen" in one breath skips it rather than talking over you.
+        self.declare_parameter('wake_cue', True)
+        self.declare_parameter('wake_cue_delay_s', DEFAULT_DELAY_S)
 
         device_hint = self.get_parameter('input_device').value
         model_size = self.get_parameter('model_size').value
@@ -192,6 +198,9 @@ class STTNode(Node):
         self.get_logger().info(f'stt_provider = {self._provider.name}')
 
         self._input_pub = self.create_publisher(String, '/voice/user_input', 10)
+        # Additive topic: tts_node plays a clip it rendered once at startup.
+        # The Jetson's voice stack ignores it, like /voice/*_meta.
+        self._cue_pub = self.create_publisher(String, '/voice/cue', 10)
         self._tts_stop_pub = self.create_publisher(String, '/voice/tts_stop', 10)
         self._debug_vad_pub = self.create_publisher(String, '/voice/debug_vad', 10)
         self._debug_transcript_pub = self.create_publisher(String, '/voice/debug_transcript', 10)
@@ -231,6 +240,8 @@ class STTNode(Node):
         self._awake = False
         self._awake_until = 0.0
         self._wake_peak = 0.0  # [diag] peak wake score since last heartbeat log
+        self._cue = CueGate(float(self.get_parameter('wake_cue_delay_s').value),
+                            bool(self.get_parameter('wake_cue').value))
         self._follow_up_s = float(self.get_parameter('follow_up_window_s').value)
         if self._acoustic:
             self.get_logger().info(
@@ -392,6 +403,7 @@ class STTNode(Node):
                     self._in_speech = False
                     self._silence_run = 0
                     self._voiced_frames = 0
+                    self._cue.on_wake(time.monotonic())
                     self.get_logger().info(f'wake word {self._wake_label!r} detected — listening')
                     self._debug_vad_pub.publish(String(data=f'wake: {self._wake_label} — listening'))
             except Exception:
@@ -405,6 +417,8 @@ class STTNode(Node):
 
         # ── LISTENING (acoustic awake) or legacy transcript_alias: VAD-segment speech ──
         voiced = self._vad.is_speech(frame, SAMPLE_RATE)
+        if self._cue.armed and self._cue.update(voiced, time.monotonic()):
+            self._cue_pub.publish(String(data='wake'))
         if self._diag_every and self._dbg_frames % self._diag_every == 0:
             self.get_logger().info(
                 f'[diag] frames={self._dbg_frames} voiced={voiced} '
@@ -420,6 +434,7 @@ class STTNode(Node):
             elif self._acoustic and time.monotonic() > self._awake_until:
                 # follow-up window elapsed with no new speech → back to sleep
                 self._awake = False
+                self._cue.cancel()
                 self._wake.reset()
                 self.get_logger().info('follow-up window closed — asleep')
                 self._debug_vad_pub.publish(String(data='asleep'))
