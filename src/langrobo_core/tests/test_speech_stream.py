@@ -128,3 +128,77 @@ def test_an_endless_ramble_still_starts_speaking():
 def test_trailing_quotes_and_brackets_stay_with_their_sentence():
     ready, _ = split_sentences('She said "it is done." Then she left. ')
     assert ready[0] == 'She said "it is done."'
+
+
+# ── What the listener has already heard ────────────────────────────────────
+
+from uuid import uuid4                                        # noqa: E402
+
+from langrobo_core.utils.speech_stream import SpeechStreamHandler  # noqa: E402
+
+
+def _stream(handler, run_id, *tokens, end=True):
+    handler.on_chat_model_start(None, None, run_id=run_id)
+    for t in tokens:
+        handler.on_llm_new_token(t, run_id=run_id)
+    if end:
+        handler.on_llm_end(None, run_id=run_id)
+
+
+def test_a_fully_streamed_reply_needs_nothing_respoken():
+    sent = []
+    h = SpeechStreamHandler(sent.append)
+    _stream(h, uuid4(), "The battery is full. ", "Everything looks fine. ")
+    assert sent == ["The battery is full.", "Everything looks fine."]
+    assert h.unspoken("The battery is full. Everything looks fine.") == ""
+
+
+def test_only_the_tail_is_respoken_after_a_failed_partial_stream():
+    """The real double-speak bug: attempt 1 streamed two sentences and then
+    errored (so its text is dropped), the fallback returned the full reply.
+    Publishing that whole reply said the opening twice."""
+    sent = []
+    h = SpeechStreamHandler(sent.append)
+    run = uuid4()
+    h.on_chat_model_start(None, None, run_id=run)
+    h.on_llm_new_token("The battery is full. ", run_id=run)
+    h.on_llm_error(RuntimeError("connection reset"), run_id=run)
+    assert sent == ["The battery is full."]
+    assert h.spoke("The battery is full. It is charging now.") is False
+    assert h.unspoken("The battery is full. It is charging now.") == "It is charging now."
+
+
+def test_an_unrelated_final_text_is_spoken_in_full():
+    """A degraded message ("I'm having trouble...") shares no prefix with the
+    partial — the listener must hear all of it."""
+    sent = []
+    h = SpeechStreamHandler(sent.append)
+    run = uuid4()
+    h.on_chat_model_start(None, None, run_id=run)
+    h.on_llm_new_token("Let me check the battery. ", run_id=run)
+    h.on_llm_error(RuntimeError("boom"), run_id=run)
+    degraded = "I'm having trouble right now. Please try again in a moment."
+    assert h.unspoken(degraded) == degraded
+
+
+def test_whitespace_differences_do_not_count_as_unspoken():
+    sent = []
+    h = SpeechStreamHandler(sent.append)
+    _stream(h, uuid4(), "All done, boss. ")
+    assert h.unspoken("All   done,\nboss.") == ""
+
+
+def test_nothing_streamed_means_the_whole_text_is_unspoken():
+    h = SpeechStreamHandler(lambda t: None)
+    assert h.unspoken("Hello there, boss.") == "Hello there, boss."
+    assert h.unspoken("") == ""
+
+
+def test_a_pre_tool_ack_then_the_answer_only_speaks_the_answer():
+    """"Let me check." is streamed as the tool runs; the answer follows in a
+    second LLM run. The listener has heard both — nothing to repeat."""
+    sent = []
+    h = SpeechStreamHandler(sent.append)
+    _stream(h, uuid4(), "Let me check that for you. ")
+    _stream(h, uuid4(), "The kitchen light is on. ")
+    assert h.unspoken("The kitchen light is on.") == ""

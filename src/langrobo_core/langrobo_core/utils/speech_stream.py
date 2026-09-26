@@ -161,6 +161,11 @@ class SpeechStreamHandler(BaseCallbackHandler):
         self._buf:  dict[UUID, str] = {}   # unfinished sentence per LLM run
         self._full: dict[UUID, str] = {}   # everything streamed per LLM run
         self._completed: list[str] = []    # normalized text of finished runs
+        # What actually reached the speaker, in order. NOT the same as
+        # _completed: a run that ERRORS has its text dropped there, yet its
+        # sentences were already published and heard. Without this, agent_node
+        # re-spoke the whole reply over that partial — see unspoken().
+        self._spoken = ""
         self.chunks_sent = 0
 
     # ── LangChain callbacks ────────────────────────────────────────────────
@@ -197,9 +202,29 @@ class SpeechStreamHandler(BaseCallbackHandler):
         """True if `text` was already fully streamed to TTS this turn."""
         return bool(text) and _norm(text) in self._completed
 
+    def unspoken(self, text: str | None) -> str:
+        """The part of `text` the listener has NOT heard yet.
+
+        "" when it was fully streamed. When a streaming attempt fails part-way
+        and a retry (or the non-streaming cloud fallback) produces the final
+        text, the sentences already played are a PREFIX of it — so only the
+        tail comes back, instead of saying the whole reply over the top of
+        what was just heard. If nothing matches, the whole text: better to
+        repeat a clause than to swallow the answer.
+        """
+        if not text:
+            return ""
+        want = _norm(text)
+        if want in self._completed or want == self._spoken:
+            return ""
+        if self._spoken and want.startswith(self._spoken):
+            return want[len(self._spoken):].lstrip()
+        return text
+
     def _send(self, text: str) -> None:
         try:
             self._publish(text)
             self.chunks_sent += 1
+            self._spoken = f"{self._spoken} {_norm(text)}".strip()
         except Exception:
             logger.exception("speech chunk publish failed")

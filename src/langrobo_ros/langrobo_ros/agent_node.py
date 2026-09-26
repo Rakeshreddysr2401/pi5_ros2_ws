@@ -794,18 +794,25 @@ class AgentNode(Node):
                 err = self._telegram.send_message(telegram.chat_id, response)
                 if err:
                     self.get_logger().warning(f"Telegram reply not delivered — {err}")
-            elif speech_stream and speech_stream.spoke(response):
+            elif speech_stream and speech_stream.chunks_sent:
                 self.get_logger().info(f"→ TTS: {response[:120]}")
-                # Final text already went out sentence-by-sentence — just close
-                # the utterance. (Any pre-tool acks streamed earlier are part of
-                # the same utterance.)
-                timing.emit("speech_stream_done", chunks=speech_stream.chunks_sent)
-                self._bridge.publish_speech_end()
+                # Sentences already went out while the model was generating.
+                # Speak only what the listener has NOT heard: a streaming
+                # attempt that failed part-way still played its chunks, and a
+                # retry (or the non-streaming cloud fallback) then produced a
+                # final text that starts with them — publishing it whole said
+                # the beginning twice.
+                remainder = speech_stream.unspoken(response)
+                timing.emit("speech_stream_done", chunks=speech_stream.chunks_sent,
+                            respoke_chars=len(remainder))
+                if remainder:
+                    self.get_logger().info(f"→ TTS (not yet spoken): {remainder[:120]}")
+                    self._bridge.publish_speech(remainder)
+                else:
+                    self._bridge.publish_speech_end()
             else:
                 self.get_logger().info(f"→ TTS: {response[:120]}")
-                # Streaming off, or the response never streamed (safe_invoke
-                # fallback, non-streaming provider) — speak it whole. This also
-                # closes any partial stream with the trailing EOU marker.
+                # Streaming off, or nothing streamed at all — speak it whole.
                 self._bridge.publish_speech(response)
 
             # Warm the next turn's prompt after EVERY turn, not just trims.
