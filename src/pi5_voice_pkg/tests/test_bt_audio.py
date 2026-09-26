@@ -205,6 +205,43 @@ Card #43
 """
 
 
+PROFILE_BLOCK = """Card #43
+\tName: bluez_card.84_0F_2A_4C_CD_38
+\tProfiles:
+\t\toff: Off (sinks: 0, sources: 0, priority: 0, available: yes)
+\t\theadset-head-unit: Headset Head Unit (HSP/HFP) (sinks: 1, sources: 1, priority: 1, available: yes)
+\t\ta2dp-sink: High Fidelity Playback (A2DP Sink, codec SBC) (sinks: 1, sources: 0, priority: 18, available: yes)
+\t\theadset-head-unit-msbc: Headset Head Unit (HSP/HFP, codec mSBC) (sinks: 1, sources: 1, priority: 3, available: yes)
+\tActive Profile: a2dp-sink
+Card #44
+\tName: bluez_card.AA_BB_CC_DD_EE_FF
+\tProfiles:
+\t\ta2dp-sink: High Fidelity Playback (A2DP Sink, codec SBC) (sinks: 1, sources: 0, priority: 18, available: yes)
+\tActive Profile: a2dp-sink
+"""
+
+
+def test_card_profiles_are_read_per_card():
+    buds = bt_audio.parse_card_profiles(PROFILE_BLOCK, "84:0F:2A:4C:CD:38")
+    assert buds["headset-head-unit-msbc"] is True and buds["a2dp-sink"] is True
+    # A speaker-only device must not be credited with the earbuds' mic.
+    speaker = bt_audio.parse_card_profiles(PROFILE_BLOCK, "AA:BB:CC:DD:EE:FF")
+    assert "headset-head-unit-msbc" not in speaker
+    assert bt_audio.parse_card_profiles("", "84:0F:2A:4C:CD:38") == {}
+
+
+def test_the_widest_band_headset_profile_wins():
+    """mSBC is 16 kHz, CVSD is 8 kHz — free accuracy where it is offered."""
+    assert bt_audio.best_headset_profile(
+        {"headset-head-unit": True, "headset-head-unit-cvsd": True,
+         "headset-head-unit-msbc": True}) == "headset-head-unit-msbc"
+    assert bt_audio.best_headset_profile(
+        {"headset-head-unit-cvsd": True}) == "headset-head-unit-cvsd"
+    # Offered but unavailable must not be chosen.
+    assert bt_audio.best_headset_profile({"headset-head-unit-msbc": False}) == ""
+    assert bt_audio.best_headset_profile({"a2dp-sink": True}) == ""
+
+
 def test_active_profile_is_read_per_card():
     assert bt_audio.parse_active_profile(CARDS, "D6:AA:BB:59:EF:B6") == "headset-head-unit-cvsd"
     assert bt_audio.parse_active_profile(CARDS, "AA:BB:CC:DD:EE:FF") == "a2dp-sink"

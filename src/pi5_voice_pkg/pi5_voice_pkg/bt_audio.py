@@ -178,6 +178,8 @@ def set_profile(mac: str, profile: str) -> tuple[bool, str]:
     if not shutil.which("pactl"):
         return False, ("pactl not installed — A2DP works without it, but "
                        "switching to HFP needs `sudo apt install pulseaudio-utils`")
+    if profile == "hfp":
+        target = best_headset_profile(card_profiles(mac)) or target
     rc, out = _run(["pactl", "set-card-profile", card_name(mac), target])
     return (rc == 0), (out.strip() or target)
 
@@ -196,6 +198,58 @@ def parse_active_profile(text: str, mac: str) -> str:
             in_card = line.split("Name:", 1)[1].strip() == want
         elif in_card and line.startswith("Active Profile:"):
             return line.split(":", 1)[1].strip()
+    return ""
+
+
+_PROFILE_LINE = re.compile(r"^(?P<name>[a-z0-9_\-]+):\s+(?P<desc>.*?)\s*\(.*available:\s*(?P<avail>\w+)\)\s*$")
+
+
+def parse_card_profiles(text: str, mac: str) -> dict[str, bool]:
+    """`pactl list cards` -> {profile name: available} for this MAC's card.
+
+    Authoritative about what the device can actually do, unlike bluez's UUID
+    list: right after a fresh pair the UUIDs are not resolved yet, so a device
+    with a perfectly good mic looks like a speaker (seen live 2026-09-26 —
+    the OnePlus Buds were routed A2DP, no mic, and the robot went deaf).
+    """
+    want, out, in_card, in_profiles = card_name(mac), {}, False, False
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if line.startswith("Name: bluez_card."):
+            in_card = line.split("Name:", 1)[1].strip() == want
+            in_profiles = False
+        elif in_card and line == "Profiles:":
+            in_profiles = True
+        elif in_card and in_profiles:
+            m = _PROFILE_LINE.match(line)
+            if m:
+                out[m.group("name")] = m.group("avail").lower() == "yes"
+            elif line.startswith("Active Profile:"):
+                in_profiles = False
+    return out
+
+
+def card_profiles(mac: str) -> dict[str, bool]:
+    rc, out = _run(["pactl", "list", "cards"])
+    return parse_card_profiles(out, mac) if rc == 0 else {}
+
+
+def offers_mic(mac: str) -> bool:
+    """Does this device expose a headset (HFP/HSP) profile we could use?"""
+    return any(name.startswith("headset") and ok for name, ok in card_profiles(mac).items())
+
+
+def best_headset_profile(profiles: dict[str, bool]) -> str:
+    """Pick the widest-band headset profile the device offers.
+
+    mSBC is 16 kHz, CVSD is 8 kHz narrowband — a free accuracy win for both
+    wake-word scoring and speech recognition where the device supports it
+    (VOICE_ROADMAP.md Phase 0a). The Buds negotiate mSBC; the Stone offers it
+    too but WirePlumber had settled on CVSD.
+    """
+    for name in ("headset-head-unit-msbc", "headset-head-unit", "headset-head-unit-cvsd"):
+        if profiles.get(name):
+            return name
     return ""
 
 

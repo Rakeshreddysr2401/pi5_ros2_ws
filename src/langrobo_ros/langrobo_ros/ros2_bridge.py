@@ -20,7 +20,7 @@ import math
 from geometry_msgs.msg import PoseStamped, Twist
 from std_msgs.msg import Bool, String
 
-from langrobo_core.utils.speech_stream import SPEECH_EOU, clean_for_speech
+from langrobo_core.utils.speech_stream import SPEECH_ABANDON, SPEECH_EOU, clean_for_speech
 
 
 class ROS2Bridge:
@@ -163,6 +163,10 @@ class ROS2Bridge:
 
         # ── Fixed publishers (pre-created so tools never block on first call) ──
         self._speech_pub        = node.create_publisher(String, "/voice/robot_speech", 10)
+        # Abandon what is queued/playing. Same topic stt_node's stop word uses,
+        # tagged so agent_node does not mistake its own message for a human
+        # saying "stop" and sweep the wheels (see _on_tts_stop).
+        self._tts_stop_pub      = node.create_publisher(String, "/voice/tts_stop", 10)
         self._sim_body = self._robot_body == "sim"
         if self._sim_body:
             from geometry_msgs.msg import TwistStamped
@@ -474,6 +478,16 @@ class ROS2Bridge:
         """Publish a complete utterance (non-streamed path: startup, fallbacks)."""
         self.publish_speech_chunk(text)
         self.publish_speech_end()
+
+    def publish_speech_stop(self) -> None:
+        """Abandon the current utterance — drop what is queued AND playing.
+
+        publish_speech_end() only closes the protocol: tts_node keeps speaking
+        the sentences it has already synthesised, so an abandoned answer went
+        on talking underneath the next one. This drops them.
+        """
+        self.publish_timing({"stage": "speech_abandon", "t": time.time()})
+        self._tts_stop_pub.publish(String(data=SPEECH_ABANDON))
 
     # ── Publishers ─────────────────────────────────────────────────────────
 

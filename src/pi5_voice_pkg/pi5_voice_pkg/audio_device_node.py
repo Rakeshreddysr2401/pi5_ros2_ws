@@ -174,7 +174,11 @@ class AudioDeviceNode(Node):
     def _route_bt(self, d: dict) -> dict | None:
         """Make a connected device PipeWire's default sink (+ source). Returns
         the routed description, or None when PipeWire never showed its nodes."""
-        profile = bt_audio.profile_for(d, self._prefer_mic)
+        # bluez's UUID list is empty for a moment after a fresh pair, so ask
+        # the sound card whether a mic exists as well — otherwise a device
+        # with a perfectly good mic gets routed A2DP and the robot is deaf.
+        mic_capable = dict(d, mic=d.get('mic') or bt_audio.offers_mic(d['mac']))
+        profile = bt_audio.profile_for(mic_capable, self._prefer_mic)
         if profile == 'hfp' and bt_audio.active_profile(d['mac']).startswith('headset'):
             # Already in HFP, so setting it again changes nothing — and that
             # is how a DEAD link survives: the SCO stream can go one-way

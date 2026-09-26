@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 # halves of this protocol live in different packages; change both or neither.
 SPEECH_EOU = "<|eou|>"
 
+# Published on /voice/tts_stop by the brain itself to abandon an utterance
+# (barge-in). Tagged so it is distinguishable from a human saying "stop",
+# which must also halt the WHEELS — agent_node._on_tts_stop relies on this.
+SPEECH_ABANDON = "[abandon]"
+
 # Sentence boundary: terminal punctuation (plus closing quotes/brackets)
 # followed by whitespace, or a bare newline (list items, headings).
 _BOUNDARY = re.compile(r"[.!?…]+[\"'')\]]*\s|\n")

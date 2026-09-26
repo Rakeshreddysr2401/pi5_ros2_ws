@@ -37,7 +37,7 @@ from langrobo_core.utils import timing
 from langrobo_core.utils import pose_stamp
 from langrobo_core.utils.history import trim_history
 from langrobo_core.utils.utterance import join_utterances, looks_incomplete
-from langrobo_core.utils.speech_stream import SpeechStreamHandler
+from langrobo_core.utils.speech_stream import SPEECH_ABANDON, SpeechStreamHandler
 
 from .ros2_bridge import ROS2Bridge
 
@@ -379,7 +379,11 @@ class AgentNode(Node):
         Wake-word barge-in rides the same topic tagged "[wake:…]": it only
         halts TTS, and the user's new utterance does its own motion sweep on
         arrival — so it must NOT trigger the stop-everything sweep here."""
-        if msg.data.startswith("[wake:"):
+        if msg.data.startswith("[wake:") or msg.data == SPEECH_ABANDON:
+            # [wake:…] is stt_node's wake-word barge-in; SPEECH_ABANDON is
+            # this brain abandoning its own utterance. Neither is a human
+            # saying "stop", so neither may sweep the wheels — the new
+            # utterance does its own motion stop on arrival.
             return
         self.get_logger().info(f'Stop keyword ("{msg.data}") — cancelling motion')
         self._bridge.cancel_navigation()
@@ -748,7 +752,11 @@ class AgentNode(Node):
 
             if interrupted:
                 if speech_stream and speech_stream.chunks_sent:
-                    self._bridge.publish_speech_end()
+                    # DROP what is queued and playing, don't merely close the
+                    # utterance: publish_speech_end() left the abandoned
+                    # answer talking underneath the new one, because tts_node
+                    # keeps speaking sentences it has already synthesised.
+                    self._bridge.publish_speech_stop()
                 self.get_logger().info("Turn abandoned — newer user input (barge-in)")
                 metrics.inc("turns_interrupted_total")
                 return
