@@ -28,4 +28,10 @@ if [ ! -f "$MODEL" ]; then
 fi
 
 echo "model: $MODEL   threshold: $THRESH   — say \"$WORD\" (Ctrl-C to stop)"
-exec python3 scripts/wake_live_score.py "$MODEL" --threshold "$THRESH"
+
+# onnxruntime looks for a GPU that a Pi does not have and says so three times
+# before every run; it is noise, and it buried the live bar. Real errors still
+# come through — only these known lines are dropped.
+export PYTHONWARNINGS=ignore
+exec python3 scripts/wake_live_score.py "$MODEL" --threshold "$THRESH" \
+    2> >(grep -vE 'device_discovery|GetGpuDevices|CUDAExecutionProvider|warnings\.warn' >&2)
