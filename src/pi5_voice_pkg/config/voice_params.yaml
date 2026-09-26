@@ -77,7 +77,7 @@ pi5_stt_node:
     # Acoustic wake word (openWakeWord). While asleep the node transcribes NOTHING
     # until it hears the wake word, then listens for follow_up_window_s. Set
     # wake_detector: transcript_alias to disable it and use the legacy name-in-text gate.
-    wake_detector: openwakeword
+    wake_detector: transcript_alias
     wake_word: mitra
     wake_model_path: /home/rakhi24/ros2_ws/src/langrobo_ros/models/wake/mitra.onnx
     wake_threshold: 0.45

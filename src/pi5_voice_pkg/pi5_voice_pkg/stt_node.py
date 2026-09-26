@@ -74,6 +74,13 @@ MIN_UTTERANCE_FRAMES = 10  # ~300ms — drop blips shorter than this
 STT_QUEUE_DEPTH = 3
 STALE_UTTERANCE_S = 15.0
 TTS_TAIL_MUTE_S = 0.5      # keep muting briefly after TTS stops (speaker echo tail)
+# The mic is muted while the robot speaks, and it is /voice/tts_speaking going
+# false that unmutes it. If that edge is ever lost — tts_node killed
+# mid-utterance, a dropped message, the speaker vanishing at the wrong moment —
+# the robot goes deaf FOREVER, silently. Longer than any plausible reply
+# (Kokoro RTF ~1.8 on a long answer), short enough that a stuck mic is a
+# nuisance rather than the end of the conversation.
+STUCK_SPEAKING_S = 60.0
 # How long to wait for audio_device_node before opening the mic anyway
 # (running this node alone, e.g. run_stt.sh, must still work).
 AUDIO_READY_TIMEOUT_S = 15.0
@@ -215,7 +222,9 @@ class STTNode(Node):
         # feeds it back into the brain — an endless self-conversation (no AEC on the Pi5).
         self._tts_speaking = False
         self._mute_until = 0.0
+        self._speaking_since = 0.0
         self.create_subscription(Bool, '/voice/tts_speaking', self._on_tts_speaking, 10)
+        self.create_timer(5.0, self._check_stuck_mute)
 
         self._voiced_frames = 0
         self._ring: collections.deque = collections.deque(maxlen=PRE_PAD_FRAMES)
@@ -454,8 +463,28 @@ class STTNode(Node):
                 '— cutting it here (continuous noise, or someone talking at length)')
             self._end_utterance()
 
+    def _check_stuck_mute(self) -> None:
+        """Unmute ourselves if the robot has been 'speaking' implausibly long.
+
+        Belt and braces for a lost end-of-utterance: being deaf for a minute
+        is bad, being deaf until someone notices and restarts the service is
+        much worse."""
+        if not self._tts_speaking or not self._speaking_since:
+            return
+        stuck_for = time.monotonic() - self._speaking_since
+        if stuck_for < STUCK_SPEAKING_S:
+            return
+        self.get_logger().error(
+            f'/voice/tts_speaking has been true for {stuck_for:.0f}s — that is longer '
+            'than any reply, so the end-of-utterance was lost. Unmuting the mic; '
+            'check tts_node (is it alive? did the speaker drop mid-sentence?).')
+        self._tts_speaking = False
+        self._speaking_since = 0.0
+        self._mute_until = time.monotonic() + self._tail_mute_s
+
     def _on_tts_speaking(self, msg: Bool):
         self._tts_speaking = bool(msg.data)
+        self._speaking_since = time.monotonic() if msg.data else 0.0
         if not msg.data:
             self._mute_until = time.monotonic() + self._tail_mute_s
             # Restart the follow-up window when the robot STOPS talking. Timing
