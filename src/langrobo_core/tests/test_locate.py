@@ -33,7 +33,7 @@ def _patch(monkeypatch, uv=(200.0, 252.0), reply=None):
     monkeypatch.setattr(lo, "_capture", lambda b, settle_s=2.5: (b"jpeg", None))
     monkeypatch.setattr(lo, "_vlm_locate", lambda frame, desc: uv)
     monkeypatch.setattr(_bridge.get(), "ground_pixel",
-                        lambda u, v, timeout=4.0, stamp=None: reply or dict(_OK_REPLY))
+                        lambda u, v, timeout=4.0, stamp=None, box=None: reply or dict(_OK_REPLY))
 
 
 # ── Registration ────────────────────────────────────────────────────────────

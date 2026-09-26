@@ -106,7 +106,7 @@ def test_approach_proceeds_normally_in_auto(monkeypatch):
     monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5: (b"jpeg", None))
     monkeypatch.setattr(ap, "_vlm_locate", lambda f, d: (100.0, 50.0))
     monkeypatch.setattr(_bridge.get(), "ground_pixel",
-                        lambda u, v, timeout=4.0, stamp=None: {
+                        lambda u, v, timeout=4.0, stamp=None, box=None: {
                             "ok": True, "depth_m": 1.8,
                             "goal": {"x": 1.2, "y": 0.3, "yaw": 0.0}})
     started = []

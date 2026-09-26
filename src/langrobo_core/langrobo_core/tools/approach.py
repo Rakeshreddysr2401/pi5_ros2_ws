@@ -71,18 +71,26 @@ def compute_standoff_goal(rx: float, ry: float, ox: float, oy: float,
 
 # ── VLM pixel grounding ─────────────────────────────────────────────────────
 
+# A BOX, not a point (floor test 2026-09-26): Gemma's x is good to ~5 px but
+# its y is off by up to ~45 px either way, so a single "centre" pixel on a
+# thin object often lands on what is behind it -- a bottle 1 m away was
+# grounded on the door 2 m away. The box goes to the Jetson, which takes the
+# nearest solid slab above the floor inside it (pixel_to_goal.py THE
+# OBJECT'S BOX, NOT ONE PIXEL). A reply with only x, y is still accepted.
 _VLM_LOCATE_PROMPT = (
     'Look at this image. Find: "{description}". '
     "Reply with ONLY a JSON object, no other text: "
-    '{{"found": true, "x": N, "y": N}} or {{"found": false}}. '
-    "x and y are the CENTER of the object in normalized image coordinates "
-    "from 0 to 1000, where (0,0) is the top-left corner."
+    '{{"found": true, "box": [ymin, xmin, ymax, xmax]}} or {{"found": false}}. '
+    "The box is the tight bounding box of the whole object, in normalized "
+    "image coordinates from 0 to 1000, where (0,0) is the top-left corner."
 )
 
 
-def _vlm_locate(frame: bytes, description: str) -> tuple[float, float] | None:
+def _vlm_locate(frame: bytes, description: str) -> tuple | None:
     """Ask the multimodal LLM where `description` is in the JPEG frame.
-    Returns color-image pixel (u, v) or None (not found / unparseable)."""
+    Returns (u, v, box) in colour-image pixels -- (u, v) the box centre, box
+    (x0, y0, x1, y1) or None if the model gave only a point -- or None (not
+    found / unparseable)."""
     import base64
     import io
     import json as _json
@@ -108,13 +116,21 @@ def _vlm_locate(frame: bytes, description: str) -> tuple[float, float] | None:
         return None
     if not data.get("found"):
         return None
+    sx, sy = width / 1000.0, height / 1000.0
+    try:
+        ymin, xmin, ymax, xmax = (float(a) for a in data["box"])
+        if all(0 <= a <= 1000 for a in (ymin, xmin, ymax, xmax)) and xmin < xmax and ymin < ymax:
+            box = (xmin * sx, ymin * sy, xmax * sx, ymax * sy)
+            return ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2, box)
+    except (KeyError, TypeError, ValueError):
+        pass
     try:
         x, y = float(data["x"]), float(data["y"])
     except (KeyError, TypeError, ValueError):
         return None
     if not (0 <= x <= 1000 and 0 <= y <= 1000):
         return None
-    return (x / 1000.0 * width, y / 1000.0 * height)
+    return (x * sx, y * sy, None)
 
 
 def _capture(bridge, settle_s: float = 2.5) -> tuple:
@@ -155,14 +171,17 @@ _STILL_M, _STILL_DEG = 0.02, 1.0
 
 
 def _ground(bridge, uv: tuple, capture: dict | None) -> dict:
-    """ground_pixel at the moment of the photo, when the photo has a stamp."""
+    """ground_pixel at the moment of the photo, when the photo has a stamp,
+    on the VLM's box when it gave one. uv = (u, v) or (u, v, box)."""
+    u, v, *rest = uv
+    box = rest[0] if rest else None
     stamp = (capture or {}).get("stamp")
-    res = bridge.ground_pixel(*uv, stamp=stamp)
+    res = bridge.ground_pixel(u, v, stamp=stamp, box=box)
     if stamp and not res.get("ok") and res.get("reason") in _REGROUND_REASONS:
         then, now = capture.get("pose"), bridge.get_current_pose()
         if then and now and math.hypot(now[0] - then[0], now[1] - then[1]) <= _STILL_M \
                 and abs((now[2] - then[2] + 180.0) % 360.0 - 180.0) <= _STILL_DEG:
-            res = bridge.ground_pixel(*uv)
+            res = bridge.ground_pixel(u, v, box=box)
     return res
 
 

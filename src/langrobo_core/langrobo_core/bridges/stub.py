@@ -90,7 +90,7 @@ class StubBridge:
     # ── VLM pixel grounding (Jetson pixel_to_goal) ────────────────────────
 
     def ground_pixel(self, u: float, v: float, timeout: float = 4.0,
-                     stamp: tuple | None = None) -> dict:
+                     stamp: tuple | None = None, box: tuple | None = None) -> dict:
         """No Jetson in Studio, so there is no depth to ground a pixel against.
 
         Returns the same shape the real bridge returns when the Jetson is

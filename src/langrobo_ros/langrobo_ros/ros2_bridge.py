@@ -398,7 +398,7 @@ class ROS2Bridge:
             self._pixel_results[req_id] = data
 
     def ground_pixel(self, u: float, v: float, timeout: float = 4.0,
-                     stamp: tuple | None = None) -> dict:
+                     stamp: tuple | None = None, box: tuple | None = None) -> dict:
         """Ask the Jetson to turn a COLOR-image pixel into a NAV_FRAME Nav2
         goal (deproject depth → NAV_FRAME → pull back by the approach standoff).
         The Jetson's pixel_to_goal node publishes odom, matching NAV_FRAME.
@@ -409,11 +409,17 @@ class ROS2Bridge:
         stamp: the photo's camera stamp (get_frame_stamped). With it the
         Jetson grounds against the depth and camera pose of THAT photo
         (see hold_frame); without it, against its newest ones -- right only
-        if nothing has moved since the photo."""
+        if nothing has moved since the photo.
+
+        box: the VLM's (x0, y0, x1, y1) around the object. The Jetson then
+        takes the nearest solid slab above the floor inside it instead of the
+        depth at one pixel (which, on a thin object, is often the background)."""
         import uuid
         req_id = uuid.uuid4().hex[:8]
         msg = self._PointStamped()
-        msg.header.frame_id = req_id
+        # The box rides in the id string ("<id>;box=..."): the reply's id is <id>.
+        msg.header.frame_id = req_id + (
+            ";box=" + ",".join(f"{a:.0f}" for a in box) if box else "")
         if stamp:
             msg.header.stamp.sec, msg.header.stamp.nanosec = int(stamp[0]), int(stamp[1])
         msg.point.x = float(u)

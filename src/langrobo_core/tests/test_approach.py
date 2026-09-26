@@ -64,7 +64,7 @@ def test_approach_starts_nav_when_the_vlm_finds_it(monkeypatch):
     monkeypatch.setattr(ap, "_vlm_locate", lambda frame, desc: (100.0, 50.0))
     goals = []
     monkeypatch.setattr(_bridge.get(), "ground_pixel",
-                        lambda u, v, timeout=4.0, stamp=None: {
+                        lambda u, v, timeout=4.0, stamp=None, box=None: {
                             "ok": True, "depth_m": 1.8,
                             "goal": {"x": 1.2, "y": 0.3, "yaw": 0.0}})
     monkeypatch.setattr(_bridge.get(), "start_nav_to_pose",
@@ -80,7 +80,7 @@ def test_approach_is_honest_when_the_jetson_is_silent(monkeypatch):
     monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5: (b"jpeg", None))
     monkeypatch.setattr(ap, "_vlm_locate", lambda frame, desc: (10.0, 10.0))
     monkeypatch.setattr(_bridge.get(), "ground_pixel",
-                        lambda u, v, timeout=4.0, stamp=None: {
+                        lambda u, v, timeout=4.0, stamp=None, box=None: {
                             "ok": False, "reason": "no_reply_from_jetson"})
     out = approach_described_object.invoke(
         {"description": "mug", "state": dict(VOICE_STATE)})
@@ -91,7 +91,7 @@ def test_approach_reports_a_depth_failure_with_its_reason(monkeypatch):
     monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5: (b"jpeg", None))
     monkeypatch.setattr(ap, "_vlm_locate", lambda frame, desc: (10.0, 10.0))
     monkeypatch.setattr(_bridge.get(), "ground_pixel",
-                        lambda u, v, timeout=4.0, stamp=None: {
+                        lambda u, v, timeout=4.0, stamp=None, box=None: {
                             "ok": False, "reason": "no_depth_at_pixel"})
     out = approach_described_object.invoke(
         {"description": "mug", "state": dict(VOICE_STATE)})

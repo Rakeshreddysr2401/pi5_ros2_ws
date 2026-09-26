@@ -136,8 +136,9 @@ class GroundBridge(StubBridge):
         self.pose = pose_then
         self.pose_now = pose_now
 
-    def ground_pixel(self, u, v, timeout=4.0, stamp=None):
+    def ground_pixel(self, u, v, timeout=4.0, stamp=None, box=None):
         self.queries.append(stamp)
+        self.boxes = getattr(self, "boxes", []) + [box]
         return self.replies.pop(0)
 
     def get_current_pose(self):
@@ -193,3 +194,51 @@ def test_capture_holds_the_photo_on_the_jetson():
     frame, cap = ap._capture(b)
     assert frame == b"jpeg" and cap["stamp"] == (7, 8) and b.held == [(7, 8)]
     assert cap["pose"] == (0.0, 0.0, 0.0)
+
+
+# ── the VLM's box, not one pixel ────────────────────────────────────────────
+# Floor test 2026-09-26: Gemma's y is off by up to ~45 px, so its "centre" of
+# a bottle 1 m away sat on the cap's top edge and the depth there was the door.
+
+def test_the_box_reaches_the_jetson_query():
+    b = GroundBridge([{"ok": True}])
+    ap._ground(b, (257.0, 203.0, (240.0, 167.0, 274.0, 239.0)), {"stamp": (5, 0), "pose": None})
+    assert b.boxes == [(240.0, 167.0, 274.0, 239.0)]
+
+
+def test_a_point_only_answer_still_grounds():
+    b = GroundBridge([{"ok": True}])
+    ap._ground(b, (257.0, 203.0), {"stamp": None, "pose": None})
+    assert b.boxes == [None]
+
+
+class _Reply:
+    def __init__(self, text):
+        self.content = text
+
+
+def _vlm_says(monkeypatch, text):
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (896, 504)).save(buf, "JPEG")
+    from langrobo_core.services import llm
+    monkeypatch.setattr(llm, "get_llm", lambda slot: type("L", (), {"invoke": lambda self, m: _Reply(text)})())
+    return ap._vlm_locate(buf.getvalue(), "the orange bottle")
+
+
+def test_vlm_box_becomes_pixels_and_a_centre(monkeypatch):
+    """The live reply, fenced as Gemma sends it: [ymin, xmin, ymax, xmax] /1000."""
+    u, v, box = _vlm_says(monkeypatch, '```json\n{"found": true, "box": [331, 268, 475, 306]}\n```')
+    assert box == pytest.approx((240.1, 166.8, 274.2, 239.4), abs=0.1)
+    assert (u, v) == pytest.approx((257.2, 203.1), abs=0.1)
+
+
+def test_vlm_point_only_is_still_accepted(monkeypatch):
+    u, v, box = _vlm_says(monkeypatch, '{"found": true, "x": 500, "y": 500}')
+    assert (u, v, box) == (448.0, 252.0, None)
+
+
+def test_vlm_nonsense_box_falls_back_or_refuses(monkeypatch):
+    assert _vlm_says(monkeypatch, '{"found": true, "box": [500, 600, 400, 100]}') is None
+    assert _vlm_says(monkeypatch, '{"found": false}') is None
