@@ -253,6 +253,27 @@ _VIEW_FROM_M = 1.0
 _ALREADY_THERE_M = 0.3    # within this of the viewpoint: look without driving
 
 
+def _also_remembered(known: list, pose, name: str) -> str:
+    """" I also remember another ... -- say if you meant that one." when memory
+    holds a second match more than a metre from the one being used (recall's
+    order: best match, then most recent). Floor test 2026-09-27: two white
+    boxes, and "the one you saw before" went to the other one with nothing to
+    tell the user there was a choice."""
+    if len(known) < 2 or not pose:
+        return ""
+    first = known[0]
+    for e in known[1:]:
+        if math.hypot(e["x"] - first["x"], e["y"] - first["y"]) > 1.0:
+            rel = object_memory.relative(e, pose)
+            if rel is None:
+                return ""
+            from .locate import describe_bearing
+            age = object_memory.describe_age(time.time() - e.get("seen_at", 0))
+            return (f" (I also remember another {name} about {rel[0]:.1f} m away, "
+                    f"{describe_bearing(rel[1])}, seen {age} — say if you meant that one.)")
+    return ""
+
+
 def _face(bridge, bearing_deg: float) -> tuple:
     """Turn to a bearing (0 = ahead) unless it is already in the middle of the
     view. (ok, why) as movement.turn_robot."""
@@ -329,6 +350,7 @@ def _approach(description: str, state: dict) -> str:
         known = []
     pose = bridge.get_current_pose()
     rel = object_memory.relative(known[0], pose) if known else None
+    also = _also_remembered(known, pose, name)
     if rel is not None:
         entry = known[0]
         age = object_memory.describe_age(time.time() - entry.get("seen_at", 0))
@@ -435,7 +457,7 @@ def _approach(description: str, state: dict) -> str:
             except OSError:
                 pass
             return (f"I went to where I saw the {name} and looked all around that spot, "
-                    f"but it isn't there any more — someone may have moved it.")
+                    f"but it isn't there any more — someone may have moved it." + also)
         return (note + f"I turned a full circle and looked carefully, but I couldn't "
                 f"spot the {name} anywhere around me.")
 
@@ -476,7 +498,7 @@ def _approach(description: str, state: dict) -> str:
                              round(math.degrees(goal["yaw"]), 1),
                              label=f"near the {name}")
     return (note + f"I can see the {name} — about {res['depth_m']:.1f} m away. "
-            f"On my way; I'll say when I'm there." + _mv.view_stale_note())
+            f"On my way; I'll say when I'm there." + also + _mv.view_stale_note())
 
 
 @tool

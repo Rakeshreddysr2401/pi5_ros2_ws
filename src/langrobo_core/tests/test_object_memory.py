@@ -10,6 +10,8 @@ Off-robot: StubBridge plus scripted camera / VLM / Jetson replies.
 
 import math
 
+import time
+
 import pytest
 
 from langrobo_core.bridges import StubBridge
@@ -39,6 +41,12 @@ STATE = {"channel": "voice", "sender_name": "voice", "messages": []}
     ("white box", "white chair", False),                   # colour alone is not the thing
     ("white chair", "chair", True),
     ("the white one", "white chair", True),                # only a colour asked: colour decides
+    # floor test 2026-09-27: the model's long description vs the survey's short label
+    ("the white rectangular box on the marble floor", "white box", True),
+    ("white rectangular box you seen before", "white box", True),
+    ("white rectangular box", "white rectangular table", False),  # same adjective, different thing
+    ("white box on the floor", "floor lamp", False),        # "floor" is where, not what
+    ("coffee mug", "mug", True),
     ("", "the orange bottle", False),
 ])
 def test_match(query, desc, ok):
@@ -314,3 +322,15 @@ def test_other_depth_failures_are_not_retried(robot, scripted, monkeypatch):
     robot.replies = [{"ok": False, "reason": "no_depth_at_pixel"}]
     out = approach_described_object.invoke({"description": "the orange bottle", "state": dict(STATE)})
     assert "no_depth_at_pixel" in out and len(robot.queries) == 1
+
+
+def test_two_matches_far_apart_says_there_is_another(robot, scripted):
+    """Floor test 2026-09-27: two white boxes; "the one you saw before" went to
+    the other one and nothing told the user there was a choice."""
+    turns, vlm = scripted
+    om.remember("white box", -1.35, -0.28, None, EPOCH, when=time.time() - 200)
+    om.remember("white box", 1.15, -0.12, None, EPOCH)                # the newer one, ahead
+    vlm.append((448.0, 250.0, None))
+    robot.replies = [_grounded(1.15, -0.12)]
+    out = approach_described_object.invoke({"description": "white rectangular box", "state": dict(STATE)})
+    assert "also remember another white rectangular box about 1.4 m away" in out

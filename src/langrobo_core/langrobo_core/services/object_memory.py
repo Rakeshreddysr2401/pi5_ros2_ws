@@ -57,39 +57,66 @@ def path() -> str:
                                              "~/.langrobo/object_memory.json"))
 
 
-def _words(text: str) -> set:
-    out = set()
+# Where-it-is phrases are context, not the object: "the white rectangular box
+# ON THE MARBLE FLOOR" is a box. Everything from the first of these is cut.
+_SPATIAL = {"on", "in", "at", "near", "under", "beside", "next", "behind", "by",
+            "inside", "over", "above", "below", "against", "from", "beneath",
+            "you", "i", "we", "that", "which", "seen", "saw"}
+
+
+def _tokens(text: str) -> list:
+    """The object part, as ordered words: filler dropped, plurals folded,
+    cut at the first where-it-is / who-saw-it word ("... on the floor",
+    "... you seen before")."""
+    out = []
     for w in re.findall(r"[a-z]+", (text or "").lower()):
-        if w in _STOP:
+        if w in _SPATIAL and out:
+            break
+        if w in _STOP or w in _SPATIAL:
             continue
         if len(w) > 3 and w.endswith("s") and not w.endswith("ss"):
             w = w[:-1]                     # bottles -> bottle; glass stays glass
-        out.add(w)
+        out.append(w)
     return out
+
+
+def _words(text: str) -> set:
+    return set(_tokens(text))
+
+
+def _head(tokens: list) -> str | None:
+    """The object word: the last non-colour word ("white rectangular BOX")."""
+    nouns = [w for w in tokens if w not in _COLOURS]
+    return nouns[-1] if nouns else None
 
 
 def match_score(query: str, description: str) -> float:
     """How well a remembered description answers a query, 0..1.
 
-    The share of the query's words the description has, and 0 if the two name
-    different colours ("the red bottle" is not "the orange bottle"). Plain word
-    overlap on purpose: the descriptions come from the user and the model in
-    ordinary words ("the orange bottle", "bottle on the floor")."""
-    q, d = _words(query), _words(description)
+    Compared on the OBJECT PART of both (see _SPATIAL), and:
+      * 0 if they name different colours ("red bottle" is not "orange bottle");
+      * 0 if they name different things -- the head word, the last non-colour
+        word, must agree ("white box" is not "white chair", "rectangular box"
+        is not "rectangular table"); a query that is only a colour ("the
+        white one") is decided by colour;
+      * else the share of the SHORTER one's words the other has.
+    The shorter side, not the query: the model rewrites "go near it" as "the
+    white rectangular box on the marble floor", and the survey stored "white
+    box" -- 2 of 5 query words, which missed a box the robot had just
+    photographed (floor test, 2026-09-27)."""
+    q, d = _tokens(query), _tokens(description)
     if not q or not d:
         return 0.0
-    qc, dc = q & _COLOURS, d & _COLOURS
+    qs, ds = set(q), set(d)
+    qc, dc = qs & _COLOURS, ds & _COLOURS
     if qc and dc and not (qc & dc):
         return 0.0
-    # The THING must match, not just the colour: "white box" shares half its
-    # words with "white chair". That was harmless while memory held only what
-    # users named; the photo survey fills it with "white X" / "black Y"
-    # labels, and a colour-only match turned the robot toward the chair,
-    # found no box there, and forgot the chair (review, 2026-09-27).
-    qn, dn = q - _COLOURS, d - _COLOURS
-    if qn and not (qn & dn):
+    qh, dh = _head(q), _head(d)
+    if qh and dh and qh != dh:
         return 0.0
-    return len(q & d) / len(q)
+    if qh and not dh:
+        return 0.0                         # asked for a thing, remembered only a colour
+    return len(qs & ds) / min(len(qs), len(ds))
 
 
 def _load(epoch) -> list:
