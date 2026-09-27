@@ -11,7 +11,8 @@ slot map all derive from it.
 
 ```
 Mac Mini  ──────  llama.cpp — Gemma multimodal GGUF, --parallel 3 (one KV slot per agent)
-Jetson    ──────  D555 depth cam · cuVSLAM · nvblox · Nav2 · VLM pixel→goal bridge
+Jetson    ──────  ~/rover: D555 + RPLidar · fused pose · slam · nvblox · Nav2 + exact moves · VLM pixel→goal
+Laptop    ──────  RViz (pushed and started by the Jetson's `./rover view`) · Gazebo sim body
 Pi 5      ──────  THIS REPO — LangGraph brain + STT/TTS + micro-ROS agent
 ESP32     ──────  4-wheel drive chassis, 50 Hz PID (micro-ROS over WiFi UDP 8888)
 ```
@@ -43,7 +44,7 @@ src/
 │       └── bridges/   StubBridge (run everything without ROS2)
 ├── langrobo_ros/      ROS2 shim: agent_node + ROS2Bridge + launch + systemd
 └── pi5_voice_pkg/     CPU-only STT + TTS on the Pi 5 itself
-scripts/               run_brain.sh · run_microros.sh · dev.sh · install_systemd.sh · latency_replay.py
+scripts/               fleet.sh (whole robot) · run_*.sh (systemd entry points) · start_studio.sh · dev.sh · latency_replay.py · wake_*.py
 graph_studio.py        LangGraph Studio entry point (langgraph dev)
 ```
 
@@ -76,6 +77,24 @@ cp example.env .env    # then fill in keys as they become available
 
 ## Run
 
+**The whole robot, from this Pi 5** (after a power cycle, or any time):
+
+```bash
+./scripts/fleet.sh rover     # bring up: micro-ROS + the Jetson's `./rover up` (skipped if already up)
+./scripts/fleet.sh check     # prove every link with data — read-only, ~20 s, OK/FAIL + what to run
+./scripts/fleet.sh status    # what is running where
+./scripts/fleet.sh stop      # park the body (Jetson off); brain + voice + Telegram stay up
+./scripts/fleet.sh down      # full shutdown before power-off (sudo)
+```
+
+Claude Code skills wrap these with the troubleshooting steps: `/robot-start`,
+`/robot-stop`, `/bt-audio`. Then talk to it — say **"Mitra"** in the sentence —
+or message it on Telegram ([TELEGRAM.md](TELEGRAM.md)). How the machines find
+each other: [NETWORKING.md](NETWORKING.md). The Jetson side (`~/rover` there)
+has its own README.md and STARTUP.md.
+
+**This Pi 5's own services:**
+
 ```bash
 # Production (24/7, auto-restart, structured logs) — one-time install:
 ./scripts/install_systemd.sh
@@ -84,9 +103,12 @@ journalctl -u langrobo-brain -f -o cat       # follow JSON logs
 # Foreground (all-in-one):
 ros2 launch langrobo_ros brain_launch.py
 
-# Dev — LangGraph Studio UI + micro-ROS (don't run alongside systemd units).
-# Studio draws the graph, which is the fastest way to SEE the topology:
-./scripts/dev.sh
+# LangGraph Studio (draws the graph; runs the SAME graph and can drive):
+./scripts/start_studio.sh    # beside the running brain
+./scripts/dev.sh             # same, plus a micro-ROS agent if none is running
+# from the laptop: ssh -N -L 2024:localhost:2024 rakhi24@rakhi24-desktop.local
+#   then https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024
+# Every real turn is also traced to LangSmith, project `pi5` (key in .env).
 
 ```
 

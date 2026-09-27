@@ -4,10 +4,13 @@ Home robot "Mitra" (renamed from "Rakhi" 2026-09-20; the `rakhi24` username and 
 
 - **Pi 5** (this repo) — the LangGraph brain, **three agents**, plus a CPU-only
   STT/TTS pair (`pi5_voice_pkg`) so voice runs concurrently with driving.
-- **Jetson Orin** — perception: cuVSLAM + nvblox + Nav2, and the phase-4 VLM
-  bridge (`image_bridge` publishes the colour frame as JPEG for `look()`;
-  `pixel_to_goal` turns a VLM-picked pixel into an odom-frame Nav2 goal).
-  Repo: `-langrobo_perception-`, brought up with `./rover`.
+- **Jetson Orin** — perception and motion control: D555 + RPLidar C1,
+  cuVSLAM + lidar odometry fused into `/odom`, slam_toolbox, nvblox, Nav2,
+  `goal_exec` (exact turns/drives) + `reach` (nav2 + exact finish), and the
+  phase-4 VLM bridge (`image_bridge` publishes the colour frame as JPEG for
+  `look()`; `pixel_to_goal` turns a VLM-picked pixel into an odom-frame goal).
+  Repo: **`~/rover`** on the Jetson (container `rover`), brought up with
+  `./rover up`. (`~/langrobo_perception` and `~/robot` are the old stacks.)
 - **Mac Mini** — the LLM and VLM (llama.cpp, `singireddys-mac-mini.local:8080`).
   **Must run with `--jinja --parallel 3`** — one KV slot per agent.
 - **ESP32** — 50 Hz closed-loop PID on four wheels, micro-ROS over WiFi.
@@ -24,44 +27,42 @@ OPERATIONS.md for run/deploy/troubleshooting; PI5_VOICE.md for the Pi5 voice tri
 
 `scripts/fleet.sh {sim|rover|stop|down|status}` (run here on the Pi5). Picks the robot **body**:
 
-- **`sim`** — the SIMULATION body: sshes the laptop and starts its Gazebo sim + Nav2
-  (`rover_sim`), and starts BOTH Jetson roles — `ai_stack` voice (you still talk to the
-  robot by real mic/speaker while the body is simulated) and the `isaac_ros` perception
-  container (nvblox/SLAM consuming the sim's /cam_1 depth/RGB). Also switches the brain's
-  `robot_body` to `sim` (cmd_vel becomes TwistStamped on /mecanum_drive_controller/cmd_vel).
-- **`rover`** — the REAL body: starts this Pi5's micro-ROS agent (ESP32 wheels) and
-  the Jetson's perception role (D555 + cuVSLAM + nvblox + Nav2 + the phase-4 VLM
-  bridge). Perception owns the 8 GB Orin, so Jetson voice is OFF in this mode —
-  the Pi5's own voice trio runs here instead (`langrobo-voice` user unit,
-  starts at boot; CPU-only, fits alongside), or use Telegram. Switches
-  `robot_body` back to `rover` (plain Twist on `/cmd_vel`).
-
-  **`./scripts/fleet.sh rover` does not start the Jetson's VLM bridge.** Without
-  `./rover vlm` over there, `look()` has no camera frame and
-  `approach_described_object` has no depth grounding.
-- **`stop`** parks the robot: stops the body (sim + Jetson roles) but keeps `langrobo-brain`
-  + `langrobo-discovery` up, so chat/Telegram keeps listening. No password.
+- **`rover`** — the REAL body: starts this Pi5's micro-ROS agent (ESP32 wheels)
+  and, if the Jetson stack is not already up, runs `./rover up` there (every
+  layer in order with its own PASS/FAIL gate — camera, lidar, pose, fused,
+  slam, map, nav, vlm — then Studio on this Pi5 and RViz on the laptop;
+  ~10 min from cold). Voice is the Pi5's own trio (`langrobo-voice` user
+  unit, starts at boot). Switches `robot_body` to `rover` (plain Twist on
+  `/cmd_vel`).
+- **`sim`** — the SIMULATION body: sshes the laptop and starts its Gazebo sim +
+  Nav2 (`rover_sim`); voice stays on the Pi5; the Jetson is not used (its old
+  sim roles, `ai_stack` + `isaac_ros`, are retired). Switches `robot_body` to
+  `sim` (TwistStamped on /mecanum_drive_controller/cmd_vel).
+- **`stop`** parks the robot: stops the body (sim + the Jetson's `rover` container) but
+  keeps `langrobo-brain` and voice up, so chat/Telegram keeps listening. No password.
 - **`down`** full shutdown: everything `stop` does PLUS this Pi5's system units (brain,
   micro-ROS, discovery) via sudo. Those units are `enabled`, so a Pi5 reboot restarts them.
-- **`status`** shows who's up everywhere.
+- **`status`** shows who's up everywhere, per Jetson layer.
 
-`langrobo-discovery` (the DDS meeting point) and `langrobo-brain` run here in **both** modes;
-fleet.sh ensures them. Each machine can still be driven on its own — the laptop via
-`rover_sim/.../fleet_sim.sh`, the Jetson via `~/robot/scripts/fleet_role.sh {voice|perception}`.
-Reaches the other machines by mDNS name over passwordless ssh (see NETWORKING.md); the
-laptop's key + sshd were set up 2026-07-07 so the Pi5→laptop hop works.
+**After a power cycle** the Pi5 units come back on their own; the Jetson's container
+does not. `./scripts/fleet.sh rover` (or `ssh rakhi-jetson.local 'cd ~/rover && ./rover up'`)
+is the whole recovery. The Jetson's own STARTUP.md is the layer-by-layer version.
+
+Each machine can still be driven on its own — the laptop via `rover_sim/.../fleet_sim.sh`,
+the Jetson via `~/rover/rover <layer>`. Reaches the other machines by mDNS name over
+passwordless ssh; DDS is plain multicast on domain 0 everywhere (NETWORKING.md).
 
 ## Commands
 
 ```bash
 # Whole robot (see "Fleet start" above)
-./scripts/fleet.sh sim        # simulation body (laptop sim + jetson voice+isaac_ros)
-./scripts/fleet.sh rover      # real body (pi5 microros + jetson perception; voice=Telegram)
+./scripts/fleet.sh rover      # real body (pi5 microros + jetson ./rover up; pi5 voice)
+./scripts/fleet.sh sim        # simulation body (laptop sim; pi5 voice)
 ./scripts/fleet.sh stop       # park robot body (brain stays up)
 ./scripts/fleet.sh down       # full shutdown incl. Pi5 services (sudo)
 ./scripts/fleet.sh status
 
-# Test (pure core — no robot, no LLM server, no keys; 182 tests, ~1.5s)
+# Test (pure core — no robot, no LLM server, no keys; ~300 tests, ~10s)
 cd src/langrobo_core && python3 -m pytest tests/ -q
 
 # Build + deploy after code changes
@@ -162,10 +163,13 @@ that moves wheels).
   fallback; publishes latched `/voice/audio_ready`), `stt_node` and
   `tts_node` follow it and never touch Bluetooth. `bt_audio.py` is the
   pure bluez/PipeWire glue. `/bt-audio` (Claude skill) is the operator
-  checklist. Robot name / wake word: **Mitra** — the acoustic gate is ON
-  (`models/wake/mitra.onnx`; `rakhi.onnx` is the Telugu-trained alternative,
-  both tracked in git), so nothing is transcribed until the name is heard,
-  and it answers "చెప్పండి బాస్" when you pause after it (`wake_cue.py`).
+  checklist. Robot name / wake word: **Mitra**. The acoustic gate is
+  **OFF since 2026-09-26** (owner wants a better-trained model first):
+  `wake_detector: transcript_alias` + `require_wake: true`, so everything is
+  transcribed but only text containing "mitra" / "hey mitra" becomes a turn.
+  The trained `models/wake/mitra.onnx` (and Telugu `rakhi.onnx`) are in git,
+  one `./scripts/wake_switch.py mitra` away. It answers "చెప్పండి బాస్" when
+  you pause after the name (`wake_cue.py`).
   `./scripts/wake_switch.py` swaps model/threshold and restarts the service;
   `./scripts/wake_test.sh` shows a live score bar. WAKE_WORD_INTEGRATION.md
   is the train-and-deploy recipe.
@@ -181,21 +185,20 @@ that moves wheels).
 
 ## Working on the Jetson from here
 
-Passwordless SSH: `ssh rakhi24@rakhi-jetson.local`. The direct ethernet link is
-BACK as of 2026-07-10 (Pi5 192.168.2.10 ↔ Jetson 192.168.2.20) alongside wifi;
-everything stays NAME-based so either link works — mDNS resolves over whatever
-is up, the discovery server binds 0.0.0.0, and the Jetson containers point at
-`rakhi24-desktop.local:11811`. Unplugging a link mid-session needs only a role
-restart (names re-resolve at launch); see NETWORKING.md. The speech_vision repo
-is at `~/robot` on the Jetson (branch dev-1.0.7) and has its own
-CLAUDE.md + VOICE_PIPELINE.md — read those before editing; they document the
-container build/restart procedure and five hard-won gotchas (venv-python
-colcon builds, zombie launch children, pinned pip index, broken torchaudio,
-ec_speaker audio routing). Workflow: edit via ssh/rsync on the host paths
-(`~/robot/ai_ws` is bind-mounted into the `ai_stack` container), build and
-restart via `docker exec`, test over ROS2 topics from this machine, commit in
-`~/robot` over ssh. The `/voice/*` + `/audio/*` topic contract is shared —
-change both repos together or neither.
+Passwordless SSH: `ssh rakhi24@rakhi-jetson.local`. The live repo is **`~/rover`**
+(branch `rover-v1.1.2-refactor`, container `rover`, image `orin-nav:1.1`); read its
+README.md, STARTUP.md (power-on → working), OPERATIONS.md and OPEN_ISSUES.md before
+editing. Its rules: the image has no Dockerfile and must never be modified; nodes are
+host files bind-mounted read-only, so edit on the host and restart the layer
+(`./rover <layer>`); compiled packages are built INSIDE the image with `--user $(id -u)`.
+Test over ROS 2 topics from this machine, commit in `~/rover` over ssh.
+
+The topic contract between the repos is in INTEGRATION_GAPS.md (brain side) and
+`~/rover/phase4` (Jetson side: `/vision/pixel_query` → `/vision/pixel_result`,
+`/goal_exec/*`, `/reach/*`, `/camera/color/image_raw/compressed`) — change both
+together or neither. `~/robot` (the old voice stack, `ai_stack`) and
+`~/langrobo_perception` (the old `isaac_ros` stack) are retired; their containers
+no longer exist.
 
 ## Gotchas
 
@@ -256,9 +259,9 @@ silently on the rover — which is exactly how `navigate_to_pose` was broken for
 months. `ROS2Bridge` handles the cmd_vel shape (`robot_body`), and `NAV_FRAME`
 handles the frame; anything else that differs is on you to check.
 
-- The sim joins our discovery server: on the laptop,
-  `export ROS_DISCOVERY_SERVER=rakhi24-desktop.local:11811` before launching.
-  Then this brain's `navigate_to_pose` tool talks to a real Nav2 server.
+- The sim is on the same plain-multicast DDS graph (domain 0, no
+  `ROS_DISCOVERY_SERVER`), so this brain's `navigate_to_pose` tool talks to
+  the sim's Nav2 server directly.
 - Highlights of the contract: `/navigate_to_pose` (NavigateToPose),
   `/scan` 10 Hz, `/cam_1/color/image_raw` + `/cam_1/depth/image_rect_raw`
   15 Hz (D555 names — nvblox-ready), odom `/mecanum_drive_controller/odom`,
@@ -266,5 +269,5 @@ handles the frame; anything else that differs is on you to check.
   (plain `/cmd_vel` exists only while its Nav2 is up).
 - Sim runs ≈0.1× real time in the furnished house world (laptop iGPU) — don't
   tune wall-clock timeouts against it.
-- Keep the machine/interface details in sync across the three CLAUDE.md files
-  (this repo, `~/robot` on the Jetson, rover_sim) — change all or none.
+- Keep the machine/interface details in sync across this CLAUDE.md, the
+  Jetson's `~/rover` docs, and rover_sim's — change all or none.

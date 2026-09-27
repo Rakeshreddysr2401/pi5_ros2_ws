@@ -32,8 +32,8 @@ Studio attaches beside it, for inspecting the graph on a running robot.
 
 | | `dev.sh` | `start_studio.sh` |
 |---|---|---|
-| micro-ROS agent | starts one (UDP 8888) | none — assumes one is up |
-| discovery | `ROS_DISCOVERY_SERVER=127.0.0.1:11811` | plain SUBNET, matching a running `agent_node` |
+| micro-ROS agent | starts one only if `langrobo-microros` is not running | none — assumes one is up |
+| discovery | plain SUBNET (it runs `start_studio.sh`) | plain SUBNET, matching a running `agent_node` |
 | written for | brain stopped | brain running |
 
 **It knowingly breaks the "never two modes at once" rule above, for `/cmd_vel`
@@ -228,7 +228,7 @@ debugging.
 | Tool calls flaky / early stops | GGUF chat template mislabels control tokens → suspect the quant, and check the server has `--jinja` |
 | "I couldn't measure its distance" | `pixel_to_goal.py` isn't running on the Jetson (`./rover vlm`), or depth had a hole at that pixel — the reason string says which |
 | ESP32 not moving | `langrobo-microros` unit down, or ESP32 not on WiFi → `systemctl status langrobo-microros`, then power-cycle ESP32 |
-| DDS discovery fails Pi5↔Jetson | `ROS_DOMAIN_ID` mismatch, or a stray `ROS_DISCOVERY_SERVER` in the environment. **Prod is plain multicast since 2026-07-16** (the D555 is a raw DDS participant that discovery-server clients cannot see) — every prod script unsets `ROS_DISCOVERY_SERVER`; `langrobo-discovery` remains only for `dev.sh`/`langgraph dev` (127.0.0.1:11811). A client accidentally pointed at it goes silently invisible to the Jetson |
+| DDS discovery fails Pi5↔Jetson | `ROS_DOMAIN_ID` mismatch, or a stray `ROS_DISCOVERY_SERVER` in the environment. **Prod is plain multicast since 2026-07-16** (the D555 is a raw DDS participant that discovery-server clients cannot see) — every prod script unsets `ROS_DISCOVERY_SERVER`; `langrobo-discovery` still starts at boot but nothing uses it (NETWORKING.md). A client accidentally pointed at it goes silently invisible to the Jetson |
 
 ## Pi5 system record
 

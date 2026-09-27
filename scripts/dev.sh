@@ -1,50 +1,50 @@
 #!/usr/bin/env bash
-# Dev loop: micro-ROS agent (UDP) + LangGraph Studio together.
+# Dev loop: LangGraph Studio on :2024, plus a micro-ROS agent if none is up.
 #
 # Usage:
 #   ./scripts/dev.sh          # UDP port 8888 (default)
 #   ./scripts/dev.sh 9999     # custom UDP port
 #
-# Do NOT run alongside the langrobo-brain systemd unit — both drive /cmd_vel
-# and both would bind micro-ROS UDP 8888. Stop it first:
-#   sudo systemctl stop langrobo-brain langrobo-microros
+# Studio itself is scripts/start_studio.sh — the ONE place that sets its
+# discovery (plain SUBNET, like agent_node and the Jetson) and loads the
+# calibration in ~/.langrobo/brain.env. This used to set its own
+# ROS_DISCOVERY_SERVER, which put Studio on a separate DDS graph from the
+# rest of the robot: it started cleanly and saw no robot at all.
 #
-# Ctrl+C stops both cleanly.
+# Studio and langrobo-brain run the SAME graph and both can drive; only
+# agent_node hears the Nav2 arrival report. To drive from Studio, stop the
+# brain first:  sudo systemctl stop langrobo-brain
+#
+# Ctrl+C stops both.
 
 set -eo pipefail
 UDP_PORT="${1:-8888}"
 
-set +u
-source /opt/ros/jazzy/setup.bash
-source ~/microros_ws/install/setup.bash
-source ~/ros2_ws/install/setup.bash
-set -u
-
-export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-# Find the Jetson via the "meeting point" (Fast DDS Discovery Server on this
-# Pi5) BY NAME — no hardcoded IPs, works on any network. See NETWORKING.md.
-# The meeting point runs ON this Pi5, so local clients use loopback — the
-# mDNS name resolves IPv6-first on WiFi-only boots and the server is UDPv4,
-# which silently broke registration (2026-07-06). The NAME is only for the
-# Jetson side (pinned to IPv4 there — see NETWORKING.md).
-export ROS_DISCOVERY_SERVER="127.0.0.1:11811"
-unset ROS_LOCALHOST_ONLY
-
-echo "==> micro-ROS agent: UDP port $UDP_PORT"
-echo "==> LangGraph Studio: http://127.0.0.1:2024"
-echo "(Ctrl+C to stop both)"
-
-ros2 run micro_ros_agent micro_ros_agent udp4 --port "$UDP_PORT" &
-MICRO_ROS_PID=$!
+MICRO_ROS_PID=""
+if systemctl is-active --quiet langrobo-microros; then
+    echo "==> micro-ROS agent: already running (langrobo-microros) — not starting a second"
+else
+    set +u
+    source /opt/ros/jazzy/setup.bash
+    source ~/microros_ws/install/setup.bash
+    set -u
+    unset ROS_DISCOVERY_SERVER || true
+    echo "==> micro-ROS agent: UDP port $UDP_PORT"
+    ros2 run micro_ros_agent micro_ros_agent udp4 --port "$UDP_PORT" &
+    MICRO_ROS_PID=$!
+fi
 
 cleanup() {
     echo ""
     echo "==> Stopping..."
-    kill "$MICRO_ROS_PID" 2>/dev/null || true
+    [ -n "$MICRO_ROS_PID" ] && kill "$MICRO_ROS_PID" 2>/dev/null || true
     exit 0
 }
 trap cleanup INT TERM
 
-cd ~/ros2_ws
-langgraph dev
+echo "==> LangGraph Studio: http://127.0.0.1:2024"
+echo "    from the laptop: ssh -N -L 2024:localhost:2024 rakhi24@rakhi24-desktop.local"
+echo "    then open https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024"
+"$(dirname "$0")/start_studio.sh" &
+wait $!
+cleanup
