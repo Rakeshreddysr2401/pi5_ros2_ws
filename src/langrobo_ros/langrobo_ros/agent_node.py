@@ -203,7 +203,7 @@ class AgentNode(Node):
         self._queue_lock     = threading.Lock()
         self._user_pending:   str | None = None
         self._user_pending_at: float = 0.0
-        self._system_pending: list[str] = []
+        self._system_pending: list[tuple[str, bool]] = []   # (text, quiet)
         self._telegram_pending: list = []
         self._input_event    = threading.Event()
         # Barge-in: set when a NEW user utterance arrives while a turn is
@@ -340,10 +340,20 @@ class AgentNode(Node):
             routing = (f" (This navigation was requested by {req.get('sender')} "
                        f"over Telegram — send this report to them with "
                        f"send_telegram_message instead of saying it aloud.)")
+        # A photo asked for mid-drive is sent HERE, by code, on arrival (and
+        # dropped on failure); the note stops the model sending a second one.
+        from langrobo_core.tools.telegram import send_pending_photo
+        photo_note = send_pending_photo(success)
+        if photo_note:
+            routing += f" ({photo_note})"
         self.get_logger().info(
             f"nav report queued -> channel={req.get('channel') or 'voice'} "
-            f"sender={req.get('sender') or '-'} routed={bool(routing)}")
-        self._enqueue_system(f"[SYSTEM] {status}: {message}{routing}")
+            f"sender={req.get('sender') or '-'} routed={bool(routing)} photo={photo_note!r}")
+        # Routed to Telegram = QUIET: the report goes to the phone, and nothing
+        # of this turn reaches the speaker. It used to say "one moment" and
+        # then the model's leftover text aloud to an empty room (2026-09-27).
+        self._enqueue_system(f"[SYSTEM] {status}: {message}{routing}",
+                             quiet=req.get("channel") == "telegram")
 
     # ── Two-slot queue (spin thread → worker thread) ──────────────────────
 
@@ -439,10 +449,11 @@ class AgentNode(Node):
                 span.end(outputs={k: meta.get(k) for k in
                                   ("ok", "latency_ms", "audio_ms", "rtf", "fell_back")})
 
-    def _enqueue_system(self, text: str) -> None:
-        """Enqueue a system event — never dropped, fires after current graph run."""
+    def _enqueue_system(self, text: str, quiet: bool = False) -> None:
+        """Enqueue a system event — never dropped, fires after current graph run.
+        quiet: the turn's reply goes out by a tool (Telegram), never the speaker."""
         with self._queue_lock:
-            self._system_pending.append(text)
+            self._system_pending.append((text, quiet))
         self._input_event.set()
 
     def _on_telegram_inbound(self, inbound) -> None:
@@ -470,9 +481,9 @@ class AgentNode(Node):
             # discarded: whatever stays pending keeps the event armed for the
             # next loop.
             with self._queue_lock:
-                telegram = None
+                telegram, quiet = None, False
                 if self._system_pending:
-                    text, is_system = self._system_pending.pop(0), True
+                    (text, quiet), is_system = self._system_pending.pop(0), True
                 elif self._user_pending is not None:
                     text, is_system = self._user_pending, False
                     self._user_pending = None
@@ -488,7 +499,7 @@ class AgentNode(Node):
             if text:
                 if not is_system and telegram is None:
                     text = self._await_continuation(text)
-                self._process(text, is_system, telegram=telegram)
+                self._process(text, is_system, telegram=telegram, quiet=quiet)
 
     def _await_continuation(self, text: str) -> str:
         """Hold a voice utterance that ends mid-thought and merge what follows.
@@ -619,10 +630,13 @@ class AgentNode(Node):
 
     # ── Graph invocation (worker thread) ──────────────────────────────────
 
-    def _process(self, text: str, is_system: bool = False, telegram=None) -> None:
+    def _process(self, text: str, is_system: bool = False, telegram=None,
+                 quiet: bool = False) -> None:
         """One turn. `telegram` (a TelegramInbound) switches the reply sink:
         voice turns stream to TTS; telegram turns answer the sender's chat and
-        never touch the speaker. Both share the same history and graph."""
+        never touch the speaker. Both share the same history and graph.
+        `quiet` (a system turn whose report goes out by Telegram tool): no
+        speech, no cue, no thinking light -- the reply text is only logged."""
         from langchain_core.messages import HumanMessage
         trace = new_trace()   # stamps every log line + timing event this turn
         # One word for where this turn came from — used for the LangSmith run
@@ -642,7 +656,7 @@ class AgentNode(Node):
             self._turn_interrupt.clear()
             self._turn_channel = "telegram" if telegram else "voice"
             self._turn_active = True
-        if not telegram:
+        if not telegram and not quiet:
             # /brain/thinking drives the robot's physical "thinking" cue —
             # meaningless (and misleading) for a phone conversation.
             self._pub_thinking.publish(Bool(data=True))
@@ -715,7 +729,7 @@ class AgentNode(Node):
             # phone message, and nothing may reach the speaker.
             speech_stream = (
                 SpeechStreamHandler(self._bridge.publish_speech_chunk)
-                if self._stream_speech and not telegram else None
+                if self._stream_speech and not telegram and not quiet else None
             )
             callbacks = [self._timing_handler] + ([speech_stream] if speech_stream else [])
 
@@ -739,7 +753,7 @@ class AgentNode(Node):
             # Mac Mini unreachable) and silence reads as a dead robot — so say
             # "one moment". Voice only: a Telegram sender gets typing dots.
             slow_cue = None
-            if not telegram:
+            if not telegram and not quiet:
                 def _say_one_moment():
                     if speech_stream is None or not speech_stream.chunks_sent:
                         self.get_logger().info("turn is slow — cueing 'one moment'")
@@ -823,7 +837,9 @@ class AgentNode(Node):
             with self._history_lock:
                 self._history, history_reset = trim_history(new_history, self._max_history)
 
-            if telegram:
+            if quiet:
+                self.get_logger().info(f"→ (quiet, not spoken): {response[:120]}")
+            elif telegram:
                 # Reply sink: the sender's chat, never the speaker.
                 self.get_logger().info(f"→ Telegram ({telegram.name}): {response[:120]}")
                 err = self._telegram.send_message(telegram.chat_id, response)
@@ -864,7 +880,7 @@ class AgentNode(Node):
             apology = "I'm having trouble right now. Please try again in a moment."
             if telegram:
                 self._telegram.send_message(telegram.chat_id, apology)
-            else:
+            elif not quiet:
                 self._bridge.publish_speech(apology)
         finally:
             # The cue must never outlive the turn — a late "one moment" after
@@ -879,7 +895,7 @@ class AgentNode(Node):
             self._last_turn_ts = time.time()
             metrics.set_gauge("last_turn_duration_seconds",
                               round(time.time() - turn_start, 3))
-            if not telegram:
+            if not telegram and not quiet:
                 self._pub_thinking.publish(Bool(data=False))
 
     # ── KV-cache warming (background) ─────────────────────────────────────

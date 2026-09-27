@@ -19,8 +19,19 @@ from ..prompts import render_tools
 from ..registry import AgentSpec
 from ..services.llm import get_llm
 from ..utils.message_utils import prepare_messages_for_agent, safe_invoke
+from ..utils.speech_stream import strip_thought_residue
 
 logger = logging.getLogger(__name__)
+
+
+def _is_blank(msg) -> bool:
+    """No tool call and no text worth keeping (markers and "thought" only)."""
+    if getattr(msg, "tool_calls", None):
+        return False
+    content = msg.content
+    if isinstance(content, list):
+        return False          # multimodal content is never this failure
+    return not strip_thought_residue(content or "").strip()
 
 
 def build_agent(spec: AgentSpec):
@@ -49,6 +60,22 @@ def build_agent(spec: AgentSpec):
         # line: slot_for(None) reports the GLOBAL slot and would misattribute
         # e.g. local_agent's calls (slot 1) to chat's slot 0.
         response = safe_invoke(llm, msgs, logger, agent=spec.name)
+        if _is_blank(response):
+            # Gemma 4 on this llama.cpp sometimes wraps its answer in channel
+            # markers; STREAMED, the server then files the whole answer as
+            # hidden reasoning and the reply arrives empty (a Telegram user got
+            # "Sorry, I couldn't come up with a reply" 2026-09-27). Unstreamed,
+            # the same answer comes back in the text with its markers, which
+            # strip_thought_residue removes. Only this failure pays the retry.
+            logger.warning("empty reply from %s — retrying once unstreamed", spec.name)
+            retry = get_llm(spec.name)
+            if getattr(retry, "streaming", False):
+                retry = retry.model_copy(update={"streaming": False})
+            response = safe_invoke(retry.bind_tools(spec.tools), msgs, logger, agent=spec.name)
+        if isinstance(response.content, str):
+            cleaned = strip_thought_residue(response.content)
+            if cleaned != response.content:   # never spoken, sent or kept in history
+                response = response.model_copy(update={"content": cleaned})
         return {"messages": [response], "active_agent": spec.name}
 
     node.__name__ = f"{spec.name}_node"

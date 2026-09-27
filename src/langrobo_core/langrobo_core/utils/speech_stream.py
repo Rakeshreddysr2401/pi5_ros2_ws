@@ -79,6 +79,32 @@ _EMOJI = re.compile(
     "\U00002190-\U000021FF\U0000FE00-\U0000FE0F\U00002B00-\U00002BFF]+")
 
 
+# Gemma 4's hidden-thinking opener is banned (services.llm, logit_bias on
+# <|channel>), and the model then sometimes writes the channel NAME as plain
+# text instead: a reply of just "thought", or "thought" on its own first line.
+# Seen live 2026-09-27 -- the robot said "thought" out loud after a Telegram
+# navigation report. Never a real reply: a line that is exactly "thought".
+_THOUGHT_RESIDUE = re.compile(r"\A(?:\s*thought[ \t]*(?:\n|\Z))+", re.IGNORECASE)
+
+
+# The channel markers themselves can also reach the text: with <|channel>
+# banned the model writes the CLOSER, "<channel|>thought\n<channel|>answer"
+# (replayed 2026-09-27). The answer is what follows the last closer.
+_CHANNEL_CLOSE = "<channel|>"
+_CHANNEL_OPEN = "<|channel>"
+
+
+def strip_thought_residue(text: str) -> str:
+    """Return only the answer: drop Gemma channel markers and anything before
+    the last closer, then leading lines that are exactly "thought"."""
+    if not text:
+        return text
+    if _CHANNEL_CLOSE in text:
+        text = text.rsplit(_CHANNEL_CLOSE, 1)[1]
+    text = text.replace(_CHANNEL_OPEN, "")
+    return _THOUGHT_RESIDUE.sub("", text).lstrip() if _THOUGHT_RESIDUE.match(text) else text
+
+
 def clean_for_speech(text: str) -> str:
     """Strip anything the voice would read out as characters.
 
@@ -89,7 +115,7 @@ def clean_for_speech(text: str) -> str:
     """
     if not text:
         return ""
-    out = _CODE_FENCE.sub("", text)
+    out = _CODE_FENCE.sub("", strip_thought_residue(text))
     out = _IMAGE.sub(r"\1", out)
     out = _LINK.sub(r"\1", out)
     out = _BARE_URL.sub("a link", out)

@@ -393,3 +393,74 @@ def _doc_update(chat_id, file_name, caption=None, size=1000, update_id=1):
     return {"update_id": update_id, "message": msg}
 
 
+
+
+# ── A photo asked for mid-drive waits for the arrival (2026-09-27) ──────────
+# "Go near the black bag and send me a pic": the photo went out the moment the
+# drive STARTED, captioned "I have reached the black bag", and the drive then
+# failed. Now it is held, sent by code on arrival, and dropped on failure.
+
+class _DrivingBridge(_FakeBridge):
+    def __init__(self, driving=True, frame=b"\xff\xd8arrived"):
+        super().__init__(frame)
+        self.driving = driving
+
+    def navigation_active(self):
+        return self.driving
+
+
+@pytest.fixture
+def driving(monkeypatch, fake_channel):
+    import langrobo_core.tools.telegram as tt
+    monkeypatch.setattr(tt, "_pending_photo", None)
+    monkeypatch.setattr(tt.time, "sleep", lambda s: None)
+    bridge = _DrivingBridge()
+    monkeypatch.setattr(_bridge, "_instance", bridge)
+    return bridge
+
+
+def test_photo_mid_drive_is_held_not_sent(driving, fake_channel):
+    out = send_telegram_photo.func(recipient="Rakesh", caption="at the bag", state={})
+    assert "Not sent yet" in out and "do not say you have arrived" in out
+    assert fake_channel.sent == []
+
+
+def test_held_photo_goes_out_on_arrival_once(driving, fake_channel):
+    from langrobo_core.tools.telegram import send_pending_photo
+    send_telegram_photo.func(recipient="Rakesh", caption="at the bag", state={})
+    driving.driving = False
+    note = send_pending_photo(arrived=True)
+    assert "has been sent" in note
+    assert fake_channel.sent == [("photo", 111)]
+    assert send_pending_photo(arrived=True) is None     # never twice
+
+
+def test_held_photo_is_dropped_when_the_drive_fails(driving, fake_channel):
+    from langrobo_core.tools.telegram import send_pending_photo
+    send_telegram_photo.func(recipient="Rakesh", caption="at the bag", state={})
+    note = send_pending_photo(arrived=False)
+    assert "NOT sent" in note
+    assert fake_channel.sent == []
+
+
+def test_a_stale_held_photo_never_fires(driving, fake_channel, monkeypatch):
+    import langrobo_core.tools.telegram as tt
+    send_telegram_photo.func(recipient="Rakesh", caption="", state={})
+    tt._pending_photo["at"] -= tt._PENDING_PHOTO_MAX_AGE_S + 1
+    assert tt.send_pending_photo(arrived=True) is None
+    assert fake_channel.sent == []
+
+
+# ── The "thought" residue of Gemma's banned thinking channel ────────────────
+
+@pytest.mark.parametrize("raw, clean", [
+    ("thought", ""),
+    ("thought\nI have arrived.", "I have arrived."),
+    ("Thought\n\nHi", "Hi"),
+    ("I thought so.", "I thought so."),
+    ("thoughtful of you", "thoughtful of you"),
+])
+def test_thought_residue_is_stripped_and_nothing_else(raw, clean):
+    from langrobo_core.utils.speech_stream import clean_for_speech, strip_thought_residue
+    assert strip_thought_residue(raw) == clean
+    assert clean_for_speech(raw) == clean

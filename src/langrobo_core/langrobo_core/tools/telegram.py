@@ -15,6 +15,7 @@ the message text (it's the household's private chatter).
 """
 
 import logging
+import time
 from typing import Annotated
 
 from langchain_core.tools import tool
@@ -97,10 +98,27 @@ def send_telegram_photo(recipient: str, caption: str,
     svc, member, refusal = _gate(state, permissions.CAP_PHOTO, recipient)
     if refusal:
         return refusal
+    bridge = get_bridge()
+    if getattr(bridge, "navigation_active", lambda: False)():
+        # "Go to the bag and send me a pic": approach returns as soon as the
+        # drive STARTS, and the model then sent the photo at once, captioned
+        # "I have reached the black bag" -- a picture of the way there, and a
+        # drive that then failed (2026-09-27). Held here instead, and sent by
+        # the brain itself when the arrival report comes (send_pending_photo);
+        # dropped if the drive fails. Code, not a prompt rule: the model was
+        # already told the drive continues in the background.
+        global _pending_photo
+        _pending_photo = {"chat_id": member.chat_id, "name": member.name,
+                          "caption": caption, "sender": sender, "at": time.time()}
+        _audit(sender, permissions.CAP_PHOTO, member.name, "held_until_arrival")
+        return (f"Not sent yet: I am still driving, so a photo now would show the "
+                f"way, not the place. It will go to {member.name} automatically "
+                f"when I arrive (and not at all if I can't get there). Tell them "
+                f"that; do not say you have arrived.")
     # Same staleness contract as look(): a continuously-publishing camera whose
     # last frame is old means the feed is down — admit blindness, don't send
     # a long-gone scene as "current".
-    frame = get_bridge().get_frame(max_age_s=10.0)
+    frame = bridge.get_frame(max_age_s=10.0)
     if frame is None:
         _audit(sender, permissions.CAP_PHOTO, member.name, "no_frame")
         return ("No current camera frame is available — the camera feed appears "
@@ -110,6 +128,36 @@ def send_telegram_photo(recipient: str, caption: str,
     if err:
         return f"{err} Tell the user the photo to {member.name} did not go through."
     return f"Photo sent to {member.name} on Telegram."
+
+
+# A photo asked for while the robot was still driving (send_telegram_photo).
+_pending_photo: dict | None = None
+_PENDING_PHOTO_MAX_AGE_S = 600.0   # a drive cancelled without a report must not
+                                   # leave a photo to fire at some later arrival
+
+
+def send_pending_photo(arrived: bool) -> str | None:
+    """Called by agent_node when a drive reports. On arrival, sends the photo
+    held by send_telegram_photo and returns a note for the report turn (so the
+    model does not send a second one); on failure, drops it. None when there
+    was nothing held."""
+    global _pending_photo
+    held, _pending_photo = _pending_photo, None
+    if not held or time.time() - held["at"] > _PENDING_PHOTO_MAX_AGE_S:
+        return None
+    if not arrived:
+        _audit(held["sender"], permissions.CAP_PHOTO, held["name"], "dropped_nav_failed")
+        return (f"The photo {held['name']} asked for was NOT sent, because I did "
+                f"not get there.")
+    time.sleep(1.0)    # let the camera settle on the arrival view
+    frame = get_bridge().get_frame(max_age_s=3.0)
+    svc = telegram_service.get()
+    err = ("no fresh camera frame" if frame is None
+           else svc.send_photo(held["chat_id"], frame, held["caption"]) if svc else "telegram is off")
+    _audit(held["sender"], permissions.CAP_PHOTO, held["name"], "error" if err else "sent_on_arrival")
+    if err:
+        return f"The photo {held['name']} asked for could not be sent ({err})."
+    return f"The photo {held['name']} asked for has been sent from here; do not send another."
 
 
 TELEGRAM_TOOLS = [send_telegram_message, send_telegram_photo]

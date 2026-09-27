@@ -740,6 +740,12 @@ class ROS2Bridge:
     # nav2 by itself when reach_node is not running.
     NAV_BACKEND = os.environ.get("LANGROBO_NAV_BACKEND", "reach").strip().lower()
 
+    def navigation_active(self) -> bool:
+        """True while a background drive (start_nav_to_pose) is still running --
+        the robot is on its way and has not arrived or failed yet."""
+        with self._nav_lock:
+            return bool(self._nav_thread and self._nav_thread.is_alive())
+
     def start_nav_to_pose(self, x: float, y: float, yaw_deg: float, label: str = "") -> None:
         """Start driving to (x, y, yaw) in NAV_FRAME asynchronously -- through
         reach_node, or plain Nav2 (see NAV_BACKEND).

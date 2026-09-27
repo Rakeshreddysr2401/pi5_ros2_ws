@@ -156,6 +156,9 @@ class StubBridge:
     def cancel_navigation(self) -> None:
         logger.info("[STUB] cancel_navigation()")
 
+    def navigation_active(self) -> bool:
+        return False
+
     # The flag is real state, as on ROS2Bridge: agent_node sets it on EVERY
     # utterance, so a tool that reads it without clearing it first fails on
     # every voice turn. A stub that always answered False hid exactly that in
