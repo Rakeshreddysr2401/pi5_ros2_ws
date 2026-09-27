@@ -12,8 +12,9 @@ the cached static prefix in front of it survives.
 """
 
 import logging
+import re
 
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
 from ..prompts import render_tools
 from ..registry import AgentSpec
@@ -22,6 +23,20 @@ from ..utils.message_utils import prepare_messages_for_agent, safe_invoke
 from ..utils.speech_stream import strip_thought_residue
 
 logger = logging.getLogger(__name__)
+
+
+# Sentences in a tool result that talk TO THE MODEL, not to the user.
+_FOR_THE_MODEL = re.compile(
+    r"tell (the user|them)|do not|don't|never|the robot has moved|camera view has "
+    r"changed|any photo|call look|\(tool|nothing i do", re.IGNORECASE)
+
+
+def reply_from_tool(text: str, max_sentences: int = 2) -> str:
+    """The user-facing part of a tool result: its first sentences, minus the
+    ones addressed to the model. "" when nothing is left."""
+    sentences = re.split(r"(?<=[.!?])\s+", " ".join((text or "").split()))
+    keep = [x for x in sentences if x and not _FOR_THE_MODEL.search(x)]
+    return " ".join(keep[:max_sentences])
 
 
 def _is_blank(msg) -> bool:
@@ -72,6 +87,16 @@ def build_agent(spec: AgentSpec):
             if getattr(retry, "streaming", False):
                 retry = retry.model_copy(update={"streaming": False})
             response = safe_invoke(retry.bind_tools(spec.tools), msgs, logger, agent=spec.name)
+            if _is_blank(response) and msgs and isinstance(msgs[-1], ToolMessage):
+                # Still nothing, straight after a tool: the tool's own words
+                # are the answer ("I can see the white box -- about 1.1 m
+                # away. On my way..."). Seen 3 times on 2026-09-27, each
+                # leaving a Telegram user with no reply at all.
+                said = reply_from_tool(str(msgs[-1].content))
+                if said:
+                    logger.warning("empty reply from %s after retry — answering "
+                                   "with the tool's result", spec.name)
+                    response = AIMessage(content=said)
         if isinstance(response.content, str):
             cleaned = strip_thought_residue(response.content)
             if cleaned != response.content:   # never spoken, sent or kept in history

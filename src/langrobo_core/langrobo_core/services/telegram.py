@@ -69,6 +69,7 @@ class TelegramService:
         self._lock = threading.Lock()
         self._last_send_ts: float | None = None
         self._last_error: str | None = None
+        self._last_network_error = False
         # Inbound (start_polling)
         self._offset_path = os.path.expanduser(offset_path)
         self._deferred_path = os.path.expanduser(_DEFAULT_DEFERRED_PATH)
@@ -109,9 +110,23 @@ class TelegramService:
 
     # ── Sending (None = delivered, str = honest error for the tool) ────────
 
-    def send_message(self, chat_id: int, text: str) -> str | None:
-        return self._post("sendMessage", data={
+    # A text that failed for NETWORK reasons is queued and resent from the
+    # poll loop once Telegram answers again. 2026-09-27: the house internet
+    # dropped DNS for minutes at a time, and replies and arrival reports
+    # ("I've arrived at the white chair") were lost for good. Not for API
+    # refusals (resending would fail the same way), and not past this age --
+    # an answer arriving an hour late reads as a new message.
+    RETRY_FOR_S = 1800.0
+
+    def send_message(self, chat_id: int, text: str, queue_on_failure: bool = True) -> str | None:
+        err = self._post("sendMessage", data={
             "chat_id": chat_id, "text": text[:_TEXT_LIMIT]})
+        if err and queue_on_failure and self._last_network_error:
+            self.defer(chat_id, text, retry_until=time.time() + self.RETRY_FOR_S)
+            return (f"{QUEUED_PREFIX} Telegram is unreachable right now (no internet); "
+                    f"the message is queued and will be sent automatically when the "
+                    f"connection is back.")
+        return err
 
     def send_photo(self, chat_id: int, jpeg: bytes, caption: str = "") -> str | None:
         data = {"chat_id": str(chat_id)}
@@ -137,12 +152,15 @@ class TelegramService:
             return start <= now_minutes < end
         return now_minutes >= start or now_minutes < end   # overnight wrap
 
-    def defer(self, chat_id: int, text: str) -> None:
+    def defer(self, chat_id: int, text: str, retry_until: float | None = None) -> None:
         """Persist a proactive ping until quiet hours end (survives restarts)."""
         import json
         with self._lock:
             deferred = self._load_deferred()
-            deferred.append({"chat_id": chat_id, "text": text[:_TEXT_LIMIT]})
+            entry = {"chat_id": chat_id, "text": text[:_TEXT_LIMIT]}
+            if retry_until is not None:
+                entry["retry_until"] = retry_until     # a network retry, not a quiet-hours hold
+            deferred.append(entry)
             try:
                 os.makedirs(os.path.dirname(self._deferred_path), exist_ok=True)
                 tmp = self._deferred_path + ".tmp"
@@ -156,13 +174,22 @@ class TelegramService:
     def flush_deferred(self) -> None:
         """Send queued pings once outside quiet hours. Called from the poll
         loop (~once per poll cycle) — failed sends stay queued for retry."""
-        if self.quiet_now():
-            return
+        quiet = self.quiet_now()
         with self._lock:
             deferred = self._load_deferred()
         if not deferred:
             return
-        kept = [d for d in deferred if self.send_message(d["chat_id"], d["text"])]
+        now = time.time()
+
+        def still_pending(d) -> bool:
+            if "retry_until" in d:                 # a reply that failed on the network
+                if now > d["retry_until"]:
+                    return False                   # too late to be useful: dropped
+            elif quiet:
+                return True                        # a proactive ping: wait out quiet hours
+            return bool(self.send_message(d["chat_id"], d["text"], queue_on_failure=False))
+
+        kept = [d for d in deferred if still_pending(d)]
         if len(kept) != len(deferred):
             logger.info("Flushed %d deferred telegram ping(s)", len(deferred) - len(kept))
         import json
@@ -414,13 +441,29 @@ class TelegramService:
             # attempt only — the tool reports honestly instead of stalling
             # the turn on retries.
             self._last_error = f"{type(e).__name__}: {e}"
+            self._last_network_error = _is_network_error(e)
             metrics.inc("telegram_send_errors_total")
             logger.warning("telegram %s failed — %s", method, self._last_error)
             return f"Sending over Telegram failed ({type(e).__name__})."
         self._last_send_ts = time.time()
         self._last_error = None
+        self._last_network_error = False
         metrics.inc("telegram_sends_total")
         return None
+
+
+QUEUED_PREFIX = "Queued:"
+
+
+def _is_network_error(e: Exception) -> bool:
+    """The network failed (DNS, connect, timeout) -- not an API refusal."""
+    try:
+        import httpx
+        if isinstance(e, httpx.TransportError):
+            return True
+    except ImportError:
+        pass
+    return isinstance(e, (OSError, TimeoutError))
 
 
 # Module-level singleton — the entry point

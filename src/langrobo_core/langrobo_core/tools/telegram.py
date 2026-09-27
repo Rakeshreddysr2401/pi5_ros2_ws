@@ -80,6 +80,8 @@ def send_telegram_message(recipient: str, message: str,
     err = svc.send_message(member.chat_id, message)
     _audit(sender, permissions.CAP_RELAY, member.name, "error" if err else "sent")
     if err:
+        if err.startswith(telegram_service.QUEUED_PREFIX):
+            return err            # it WILL arrive: say that, not "did not go through"
         return f"{err} Tell the user the message to {member.name} did not go through."
     return f"Message delivered to {member.name} on Telegram."
 

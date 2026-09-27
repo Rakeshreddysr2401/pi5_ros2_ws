@@ -464,3 +464,66 @@ def test_thought_residue_is_stripped_and_nothing_else(raw, clean):
     from langrobo_core.utils.speech_stream import clean_for_speech, strip_thought_residue
     assert strip_thought_residue(raw) == clean
     assert clean_for_speech(raw) == clean
+
+
+# ── Replies survive an internet outage (2026-09-27) ─────────────────────────
+# DNS dropped for minutes at a time; "I've arrived at the white chair" and
+# several replies were lost for good. Network failures queue; refusals don't.
+
+def _flaky_service(tmp_path, down):
+    import httpx
+    sent = []
+
+    def handler(request):
+        if down["on"]:
+            raise httpx.ConnectError("Temporary failure in name resolution")
+        sent.append(request.content)
+        return httpx.Response(200, json={"ok": True, "result": {}})
+
+    svc = TelegramService(_CFG, transport=httpx.MockTransport(handler))
+    svc._deferred_path = str(tmp_path / "deferred.json")
+    return svc, sent
+
+
+def test_network_failure_queues_and_resends_once(tmp_path):
+    down = {"on": True}
+    svc, sent = _flaky_service(tmp_path, down)
+    err = svc.send_message(111, "I've arrived at the white chair.")
+    assert err.startswith(telegram_service.QUEUED_PREFIX)
+    svc.flush_deferred()                       # still down: stays queued, not duplicated
+    assert len(svc._load_deferred()) == 1 and sent == []
+    down["on"] = False
+    svc.flush_deferred()
+    assert len(sent) == 1 and b"white+chair" in sent[0]
+    assert svc._load_deferred() == []
+
+
+def test_a_stale_queued_reply_is_dropped_not_sent(tmp_path):
+    down = {"on": True}
+    svc, sent = _flaky_service(tmp_path, down)
+    svc.send_message(111, "old news")
+    q = svc._load_deferred()
+    q[0]["retry_until"] = 0
+    import json
+    with open(svc._deferred_path, "w") as f:
+        json.dump(q, f)
+    down["on"] = False
+    svc.flush_deferred()
+    assert sent == [] and svc._load_deferred() == []
+
+
+def test_an_api_refusal_is_not_queued(tmp_path):
+    import httpx
+    svc = TelegramService(_CFG, transport=httpx.MockTransport(
+        lambda r: httpx.Response(400, json={"ok": False, "description": "chat not found"})))
+    svc._deferred_path = str(tmp_path / "deferred.json")
+    err = svc.send_message(111, "hi")
+    assert err and not err.startswith(telegram_service.QUEUED_PREFIX)
+    assert svc._load_deferred() == []
+
+
+def test_the_message_tool_says_queued_not_failed(fake_channel):
+    fake_channel.send_message = lambda chat_id, text: (
+        f"{telegram_service.QUEUED_PREFIX} Telegram is unreachable right now")
+    out = send_telegram_message.func(recipient="Mom", message="hi", state=_explicit())
+    assert out.startswith("Queued:") and "did not go through" not in out

@@ -57,3 +57,19 @@ def test_normal_and_tool_call_replies_are_not_retried(monkeypatch):
     tc = AIMessage(content="", tool_calls=[{"name": "move_robot", "args": {"command": "S"}, "id": "1"}])
     _, calls = _run(monkeypatch, [tc])
     assert calls == [True]
+
+
+def test_still_blank_after_a_tool_answers_with_the_tools_words(monkeypatch):
+    """Seen 3x on 2026-09-27: "On my way" never reached the Telegram user."""
+    from langchain_core.messages import ToolMessage
+    fake = _FakeLLM([AIMessage(content=""), AIMessage(content="")])
+    monkeypatch.setattr(factory, "get_llm", lambda name: fake)
+    node, _ = factory.build_agent(SPECS["navigate"])
+    tool = ToolMessage(content="I can see the white box — about 1.1 m away. On my way; "
+                               "I'll say when I'm there. The robot has MOVED, so the "
+                               "camera view has changed.", tool_call_id="1")
+    out = node({"messages": [HumanMessage(content="go to the white box"),
+                             AIMessage(content="", tool_calls=[{"name": "approach_described_object",
+                                                               "args": {}, "id": "1"}]), tool]})
+    assert out["messages"][0].content == ("I can see the white box — about 1.1 m away. "
+                                          "On my way; I'll say when I'm there.")

@@ -972,7 +972,12 @@ class ROS2Bridge:
                 if final:
                     d = final[-1]
                     if d["result"] == "reached":
-                        self._fire_nav_done(True, f"I've arrived at {dest}.")
+                        # reach's "note": at the spot, but the final turn to
+                        # face the goal heading was blocked (usually by the
+                        # object itself) -- arrived, just not squared up.
+                        extra = (" I couldn't turn all the way to face it -- "
+                                 "something is right beside me." if d.get("note") else "")
+                        self._fire_nav_done(True, f"I've arrived at {dest}.{extra}")
                     elif d["result"] == "cancelled":
                         self._fire_nav_done(False, f"Navigation to {dest} cancelled")
                     else:
