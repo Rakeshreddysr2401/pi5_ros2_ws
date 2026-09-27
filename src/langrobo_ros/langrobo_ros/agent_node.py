@@ -992,4 +992,8 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        # try_: on SIGINT/SIGTERM rclpy's own signal handler has already shut
+        # the context down, and a second shutdown() raised RCLError -- which
+        # made every clean `systemctl restart` log "process has died, exit
+        # code 1" like a crash.
+        rclpy.try_shutdown()
