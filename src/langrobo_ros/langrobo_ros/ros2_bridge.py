@@ -241,9 +241,71 @@ class ROS2Bridge:
             node.create_subscription(CompressedImage, "/camera/color/image_raw/compressed",
                                      self._on_compressed_image, 1)
 
+        # ── Object memory -> RViz (/brain/objects) ─────────────────────────
+        # What the brain has located, drawn where it is: a sphere and a label
+        # ("orange bottle, 3 min ago") per remembered object, in NAV_FRAME.
+        # Without it, "go to the bottle" was a goal arrow appearing from
+        # nowhere; now the laptop shows what was found before the drive starts.
+        # Latched, so an RViz started later still gets the current set.
+        from rclpy.qos import DurabilityPolicy, QoSProfile
+        from visualization_msgs.msg import Marker, MarkerArray
+        self._Marker, self._MarkerArray = Marker, MarkerArray
+        self._objects_pub = node.create_publisher(
+            MarkerArray, "/brain/objects",
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        self._objects_sig = None
+        node.create_timer(2.0, self._publish_object_markers)
+
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 1 — Topics
     # ══════════════════════════════════════════════════════════════════════════
+
+    def _publish_object_markers(self) -> None:
+        """Object memory -> MarkerArray. Republishes only when the set or an
+        age label changes. Memory is a display here: any failure is logged
+        once per kind and never reaches a turn."""
+        from langrobo_core.services import object_memory
+        try:
+            now = time.time()
+            entries = (object_memory.recall("", self._origin_epoch, now=now)
+                       if self._origin_epoch is not None else [])
+            labels = [f"{e['description']}, {object_memory.describe_age(now - e.get('seen_at', now))}"
+                      for e in entries]
+            sig = tuple((e.get("id"), round(e["x"], 2), round(e["y"], 2), lab)
+                        for e, lab in zip(entries, labels))
+            if sig == self._objects_sig:
+                return
+            self._objects_sig = sig
+            M = self._Marker
+            clear = M(action=M.DELETEALL)
+            clear.header.frame_id = self.NAV_FRAME
+            out = [clear]
+            stamp = self._node.get_clock().now().to_msg()
+            for i, (e, lab) in enumerate(zip(entries, labels)):
+                # Fresh sightings solid, hour-old ones faint (MAX_AGE_S drops them).
+                alpha = max(0.35, 1.0 - (now - e.get("seen_at", now)) / object_memory.MAX_AGE_S)
+                for kind in ("dot", "label"):
+                    m = M()
+                    m.header.frame_id, m.header.stamp = self.NAV_FRAME, stamp
+                    m.ns, m.id, m.action = f"brain_objects_{kind}", i, M.ADD
+                    m.pose.position.x, m.pose.position.y = float(e["x"]), float(e["y"])
+                    m.pose.orientation.w = 1.0
+                    m.color.r, m.color.g, m.color.b, m.color.a = 1.0, 0.55, 0.0, alpha
+                    if kind == "dot":
+                        m.type = M.SPHERE
+                        m.pose.position.z = 0.10
+                        m.scale.x = m.scale.y = m.scale.z = 0.14
+                    else:
+                        m.type, m.text = M.TEXT_VIEW_FACING, lab
+                        m.pose.position.z = 0.35
+                        m.scale.z = 0.10
+                        m.color.r = m.color.g = m.color.b = 1.0
+                    out.append(m)
+            self._objects_pub.publish(self._MarkerArray(markers=out))
+        except Exception as e:   # noqa: BLE001 - a display must never break the brain
+            if getattr(self, "_objects_err", None) != type(e).__name__:
+                self._objects_err = type(e).__name__
+                self._node.get_logger().warning(f"/brain/objects not published: {e!r}")
 
     # ── Callbacks (ROS2 spin thread) ───────────────────────────────────────
 
