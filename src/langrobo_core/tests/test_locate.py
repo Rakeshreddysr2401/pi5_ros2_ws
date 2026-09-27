@@ -44,6 +44,24 @@ def test_local_agent_has_locate_object():
     assert "locate_object" in {t.name for t in LOCAL_AGENT_TOOLS}
 
 
+def test_utterance_stop_flag_does_not_fail_the_measurement(monkeypatch):
+    """agent_node calls request_motion_stop() on every utterance, before the
+    graph runs. The question's own utterance must not make its measurement
+    fail — it did, on every voice turn, as "no fresh image" (2026-09-27)."""
+    import langrobo_core.tools.approach as ap
+    _patch(monkeypatch)
+    monkeypatch.setattr(lo, "_capture", ap._capture)      # the real one
+    b = _bridge.get()
+    monkeypatch.setattr(b, "get_frame_stamped", lambda max_age_s=0.8: (b"jpeg", None))
+    b.request_motion_stop()          # what the utterance did on arrival
+    try:
+        out = locate_object.invoke({"description": "chair", "state": VOICE_STATE})
+    finally:
+        b.clear_motion_stop()
+    assert "fresh image" not in out
+    assert "1.4" in out
+
+
 # ── Bearing phrasing (pure) ─────────────────────────────────────────────────
 
 @pytest.mark.parametrize("deg, expect", [

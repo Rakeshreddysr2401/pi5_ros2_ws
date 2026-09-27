@@ -156,14 +156,20 @@ class StubBridge:
     def cancel_navigation(self) -> None:
         logger.info("[STUB] cancel_navigation()")
 
+    # The flag is real state, as on ROS2Bridge: agent_node sets it on EVERY
+    # utterance, so a tool that reads it without clearing it first fails on
+    # every voice turn. A stub that always answered False hid exactly that in
+    # locate_object (2026-09-27).
     def request_motion_stop(self) -> None:
         logger.info("[STUB] request_motion_stop()")
+        self._motion_interrupt = True
 
     def clear_motion_stop(self) -> None:
         logger.info("[STUB] clear_motion_stop()")
+        self._motion_interrupt = False
 
     def motion_interrupted(self) -> bool:
-        return False
+        return getattr(self, "_motion_interrupt", False)
 
     # ── Exact moves (Jetson goal_exec) ────────────────────────────────────
     # No Jetson: "unavailable", which is the real bridge's answer when

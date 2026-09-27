@@ -105,6 +105,12 @@ def locate_object(description: str,
     both coordinate pairs; they were 1.05 m apart.)
     """
     bridge = _bridge.get()
+    # agent_node raises the motion-stop flag on every utterance (so a new
+    # command halts a hunt in progress), and _capture bails out while it is
+    # up. Without this, the very utterance that asked "how far is the chair?"
+    # made its own measurement fail in 13 ms as "no fresh image" -- on every
+    # voice turn (2026-09-27). The motion tools clear it the same way.
+    bridge.clear_motion_stop()
 
     frame, capture = _capture(bridge)
     if frame is None:
