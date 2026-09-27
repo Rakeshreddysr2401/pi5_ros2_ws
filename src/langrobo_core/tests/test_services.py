@@ -175,3 +175,29 @@ def test_a_buildable_fallback_still_arms():
         base_url="", configured=True))
     assert llm_service.get_fallback_llm() is not None
     assert llm_service.status()["fallback"] == "openai/gpt-4o-mini"
+
+
+# ── the Gemma thinking-loop ban (llama.cpp only) ────────────────────────────
+
+def _extra_body(provider, monkeypatch, env=None):
+    from langrobo_core.services import llm
+    if env is None:
+        monkeypatch.delenv("LANGROBO_LLAMACPP_BANNED_TOKENS", raising=False)
+    else:
+        monkeypatch.setenv("LANGROBO_LLAMACPP_BANNED_TOKENS", env)
+    llm.configure(provider, "default", "http://127.0.0.1:1", "none", 100,
+                  {"chat": {"slot": 0}})
+    return llm.get_llm("chat").extra_body or {}
+
+
+def test_llamacpp_bans_the_thinking_token(monkeypatch):
+    """A Telegram "Hey" got no reply: at temperature 0 Gemma looped on
+    <|channel>thought until max_tokens, all of it hidden (2026-09-27)."""
+    body = _extra_body("llamacpp", monkeypatch)
+    assert body["id_slot"] == 0
+    assert body["logit_bias"] == [["<|channel>", False]]
+
+
+def test_ban_is_llamacpp_only_and_can_be_switched_off(monkeypatch):
+    assert "logit_bias" not in _extra_body("openai", monkeypatch)
+    assert "logit_bias" not in _extra_body("llamacpp", monkeypatch, env="")

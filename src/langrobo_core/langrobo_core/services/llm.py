@@ -20,6 +20,7 @@ safe_invoke() in utils.message_utils drives this policy per call.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 
@@ -172,6 +173,26 @@ def status() -> dict:
 
 # ── Factories ───────────────────────────────────────────────────────────────
 
+# Gemma 4 opens its hidden "thinking" channel with the special token
+# <|channel>. At temperature 0 it can fall into emitting "<|channel>thought\n"
+# forever: llama.cpp routes that into reasoning_content, which langchain drops,
+# so the turn runs to max_tokens (3000 tokens, ~4 min) and answers with
+# NOTHING. Seen live 2026-09-27: a Telegram "Hey" got no reply at all.
+# Reproduced by replaying the exact request; enable_thinking=false and a
+# temperature bump did not help, repeat_penalty did but misrouted the turn.
+# Banning the one token fixes it (1.7 s, correct reply) and costs nothing --
+# no agent uses thinking. llama.cpp tokenizes a string bias, so with a
+# DIFFERENT model this string could split into ordinary tokens and ban those:
+# set LANGROBO_LLAMACPP_BANNED_TOKENS="" (or that model's marker) when
+# switching models.
+_DEFAULT_BANNED_TOKENS = "<|channel>"
+
+
+def _banned_tokens() -> list[str]:
+    raw = os.environ.get("LANGROBO_LLAMACPP_BANNED_TOKENS", _DEFAULT_BANNED_TOKENS)
+    return [t.strip() for t in raw.split(",") if t.strip()]
+
+
 def get_llm(agent: str | None = None):
     """Return a fresh LLM instance for `agent` (or the global default).
 
@@ -279,8 +300,15 @@ def _build(cfg: dict):
             kwargs["base_url"] = base_url
         # Pin a llama.cpp KV-cache slot for this agent (server needs --parallel N).
         # Forwarded verbatim into the request body via the OpenAI client's extra_body.
+        extra: dict = {}
         if slot is not None and slot >= 0:
-            kwargs["extra_body"] = {"id_slot": slot}
+            extra["id_slot"] = slot
+        if provider == "llamacpp":
+            banned = _banned_tokens()
+            if banned:
+                extra["logit_bias"] = [[t, False] for t in banned]
+        if extra:
+            kwargs["extra_body"] = extra
         if cfg.get("streaming"):
             # invoke() streams under the hood and fires on_llm_new_token so the
             # speech stream handler can chunk sentences to TTS mid-generation.
