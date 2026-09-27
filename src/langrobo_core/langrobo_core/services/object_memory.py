@@ -34,10 +34,14 @@ import math
 import os
 import re
 import tempfile
+import threading
 import time
 
 SAME_OBJECT_M = 0.35       # a sighting this close to an entry that matches is that entry
-MAX_ENTRIES = 50
+MAX_ENTRIES = 150          # photo surveys (tools/survey.py) add ~5 per photo
+# remember/forget are read-modify-write on one file, and the background photo
+# survey writes while tools read and write: one lock for all of it.
+_lock = threading.RLock()
 MAX_AGE_S = 3600.0         # older than this is not worth turning for
 
 _STOP = {"the", "a", "an", "my", "your", "his", "her", "our", "their", "its",
@@ -104,6 +108,12 @@ def _save(entries: list, epoch) -> None:
 
 def remember(description: str, x: float, y: float, seen_from, epoch,
              when: float | None = None, **meta) -> dict:
+    with _lock:
+        return _remember(description, x, y, seen_from, epoch, when, **meta)
+
+
+def _remember(description: str, x: float, y: float, seen_from, epoch,
+              when: float | None = None, **meta) -> dict:
     """Record a sighting. A matching entry within SAME_OBJECT_M is updated in
     place (it is the same object); otherwise a new entry is added.
     seen_from: (x, y, yaw_deg) of the robot, or None."""
@@ -143,6 +153,11 @@ def recall(query: str, epoch, now: float | None = None, max_age_s: float = MAX_A
 
 
 def forget(entry_id: str, epoch) -> bool:
+    with _lock:
+        return _forget(entry_id, epoch)
+
+
+def _forget(entry_id: str, epoch) -> bool:
     entries = _load(epoch)
     kept = [e for e in entries if e.get("id") != entry_id]
     if len(kept) == len(entries):

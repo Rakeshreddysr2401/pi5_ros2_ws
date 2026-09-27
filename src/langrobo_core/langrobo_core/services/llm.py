@@ -193,16 +193,19 @@ def _banned_tokens() -> list[str]:
     return [t.strip() for t in raw.split(",") if t.strip()]
 
 
-def get_llm(agent: str | None = None):
+def get_llm(agent: str | None = None, **overrides):
     """Return a fresh LLM instance for `agent` (or the global default).
 
     Merges the global config with any per-agent override.  For llama.cpp /
     openai providers, a non-negative `slot` is forwarded as `id_slot` so the
     server keeps that agent's KV cache in its own slot (no cross-agent eviction).
+    overrides: per-call config keys (slot, streaming, max_tokens) on top of
+    both -- e.g. the photo survey runs local_agent's model on its own slot.
     """
     cfg = dict(_config)
     if agent and agent in _agent_overrides:
         cfg.update({k: v for k, v in _agent_overrides[agent].items() if v is not None})
+    cfg.update({k: v for k, v in overrides.items() if v is not None})
     return _build(cfg)
 
 

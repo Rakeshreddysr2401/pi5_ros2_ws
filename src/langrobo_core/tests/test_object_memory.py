@@ -136,7 +136,7 @@ def test_recall_everything(robot):
 # ── locate_object writes memory ─────────────────────────────────────────────
 
 def test_locate_remembers_what_it_measured(robot, monkeypatch):
-    monkeypatch.setattr(lo, "_capture", lambda b, settle_s=2.5: (b"jpeg", {"stamp": None, "pose": (0, 0, 0)}))
+    monkeypatch.setattr(lo, "_capture", lambda b, settle_s=2.5, source="search": (b"jpeg", {"stamp": None, "pose": (0, 0, 0)}))
     monkeypatch.setattr(lo, "_vlm_locate", lambda f, d: (100.0, 50.0, None))
     robot.replies = [_grounded(1.2, 0.3)]
     locate_object.invoke({"description": "the orange bottle"})
@@ -146,7 +146,7 @@ def test_locate_remembers_what_it_measured(robot, monkeypatch):
 
 def test_locate_not_in_view_says_where_it_was_seen(robot, monkeypatch):
     om.remember("the orange bottle", 0.0, -2.0, None, EPOCH)
-    monkeypatch.setattr(lo, "_capture", lambda b, settle_s=2.5: (b"jpeg", {"stamp": None, "pose": None}))
+    monkeypatch.setattr(lo, "_capture", lambda b, settle_s=2.5, source="search": (b"jpeg", {"stamp": None, "pose": None}))
     monkeypatch.setattr(lo, "_vlm_locate", lambda f, d: None)
     out = locate_object.invoke({"description": "the orange bottle"})
     assert "can't see" in out and "I saw the orange bottle" in out and "right" in out
@@ -158,7 +158,7 @@ def test_locate_not_in_view_says_where_it_was_seen(robot, monkeypatch):
 def scripted(monkeypatch, fake_twist):
     """Camera and VLM replies in order; every turn recorded."""
     turns, vlm = [], []
-    monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5: (b"jpeg", {"stamp": (1, 2), "pose": b.pose}))
+    monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5, source="search": (b"jpeg", {"stamp": (1, 2), "pose": b.pose}))
     monkeypatch.setattr(ap, "_vlm_locate", lambda f, d: vlm.pop(0) if vlm else None)
     monkeypatch.setattr(mv, "turn_robot", lambda b, deg: (turns.append(round(deg)) or (True, "")))
     return turns, vlm
@@ -187,11 +187,11 @@ def test_straight_ahead_needs_no_turn(robot, scripted):
 
 def test_removed_is_forgotten_said_and_searched_for(robot, scripted):
     """The checker: someone took the bottle. Say so, forget it, search the
-    other three quarters (the faced view was just checked)."""
+    rest of the circle in 45 degree steps (the faced view was just checked)."""
     turns, vlm = scripted
     om.remember("the orange bottle", -1.0, 0.0, None, EPOCH)          # behind
     out = approach_described_object.invoke({"description": "the orange bottle", "state": dict(STATE)})
-    assert [abs(turns[0])] + turns[1:] == [180, 90, 90, 90]   # dead behind: either way round
+    assert [abs(turns[0])] + turns[1:] == [180] + [45] * 7   # dead behind: either way round
     assert "isn't where it was" in out and "full circle" in out
     assert om.recall("bottle", EPOCH) == [] and not robot.navs
 
@@ -202,7 +202,7 @@ def test_removed_but_found_elsewhere_in_the_search(robot, scripted):
     vlm.extend([None, (448.0, 250.0, None)])                          # not there; found one turn later
     robot.replies = [_grounded(-1.5, 0.0)]
     out = approach_described_object.invoke({"description": "the orange bottle", "state": dict(STATE)})
-    assert turns == [90, 90] and "isn't where it was" in out and robot.navs
+    assert turns == [90, 45] and "isn't where it was" in out and robot.navs
     (e,) = om.recall("bottle", EPOCH)
     assert (e["x"], e["y"]) == (-1.5, 0.0)
 
@@ -222,7 +222,7 @@ def test_a_different_colour_is_not_recalled(robot, scripted):
     turns, vlm = scripted
     om.remember("the orange bottle", 0.0, 1.5, None, EPOCH)
     approach_described_object.invoke({"description": "the red bottle", "state": dict(STATE)})
-    assert turns == [90, 90, 90], "a plain search: the orange one is not the red one"
+    assert turns == [45] * 7, "a plain search: the orange one is not the red one"
 
 
 def test_nothing_remembered_is_the_plain_search(robot, scripted):

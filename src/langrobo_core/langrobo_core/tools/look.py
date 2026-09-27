@@ -28,6 +28,7 @@ from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.types import Command
 
 from ..utils import pose_stamp
+from . import survey
 from ._bridge import get
 
 
@@ -50,7 +51,7 @@ def look(tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
     # Reject frames older than this: the camera publishes continuously, so a
     # stale cache means the camera node or the Jetson link is down — describing
     # a long-gone scene as "current" is worse than admitting blindness.
-    frame = bridge.get_frame(max_age_s=10.0)
+    frame, stamp = bridge.get_frame_stamped(max_age_s=10.0)
     if frame is None:
         age = bridge.frame_age()
         detail = (
@@ -72,6 +73,13 @@ def look(tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
     pose = bridge.get_current_pose()
     when = time.time()
     pose_stamp.record_view(pose, when)
+    # Hold this photo's depth and camera pose at the Jetson, and survey it in
+    # the background: everything in view goes into object memory at its room
+    # position, so "go to the chair you saw" works later from anywhere
+    # (tools/survey.py). Nothing here waits on it.
+    if stamp:
+        bridge.hold_frame(stamp)
+        survey.submit(frame, stamp, pose, "look", when=when, epoch=bridge.get_origin_epoch())
 
     b64 = base64.b64encode(frame).decode()
     return Command(update={"messages": [

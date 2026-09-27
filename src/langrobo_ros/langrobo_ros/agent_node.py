@@ -171,6 +171,10 @@ class AgentNode(Node):
         self._warn_if_competing_bridge()
         # Let pure-zone tools inject [SYSTEM] turns into the worker queue.
         self._bridge.register_system_turn_callback(self._enqueue_system)
+        # Background photo survey (every photo -> object memory) waits while
+        # a turn is running: the Mac runs one model and the turn comes first.
+        from langrobo_core.tools import survey
+        survey.set_busy_probe(lambda: self._turn_active or self._user_pending is not None)
 
         # ── Build graph ───────────────────────────────────────────────────
         self._graph   = build_graph()

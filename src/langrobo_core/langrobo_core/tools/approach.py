@@ -33,6 +33,7 @@ from langgraph.prebuilt import InjectedState
 from ..services import object_memory
 from . import _bridge
 from . import movement as _mv
+from . import survey as _survey
 
 # How close the robot parks from the object (metres). Floor: D555 depth goes
 # blind under ~0.4 m, and Nav2 can stop up to xy_goal_tolerance (0.10 m) short
@@ -41,15 +42,17 @@ from . import movement as _mv
 # exporting it once on both machines keeps the two halves agreeing.
 _STANDOFF_M = float(os.environ.get("LANGROBO_STANDOFF_M", "0.45"))
 
-# Search: rotate the base and re-check. Each check is a VLM round-trip
-# (~10-40 s), so the sweep is bounded at one full circle: four views, 90 deg
-# apart, against the colour camera's ~87 deg. There used to be a fifth, a
-# recheck of the start, because the TIMED turns under-rotated; the turns are
-# now closed on the measured heading (movement.turn_robot -> goal_exec), so
-# the fourth turn lands where the first view was. Overlapping views and one
-# VLM call that lists everything are the next step (INTELLIGENCE_PLAN.md B5).
-_SEARCH_STEPS = 4
-_SEARCH_STEP_DEG = 90.0
+# Search: rotate the base and re-check, one full circle. EIGHT views 45 deg
+# apart, not four at 90: against the colour camera's ~87 deg, 90 deg steps
+# left the seams between views at the very edge of both photos, where the VLM
+# misses a half-cut object -- "go near the white chair" failed with the chair
+# at a seam (owner, 2026-09-27). At 45 deg every direction is seen twice, once
+# well inside the frame. A miss costs ~5 s of VLM per view (the reply is one
+# short JSON), so the full circle is ~1-2 min; a hit stops early. Every view
+# also goes to the photo survey (tools/survey.py), so the circle leaves
+# everything it saw in object memory for next time.
+_SEARCH_STEPS = 8
+_SEARCH_STEP_DEG = 45.0
 
 
 def compute_standoff_goal(rx: float, ry: float, ox: float, oy: float,
@@ -80,7 +83,9 @@ def compute_standoff_goal(rx: float, ry: float, ox: float, oy: float,
 # nearest solid slab above the floor inside it (pixel_to_goal.py THE
 # OBJECT'S BOX, NOT ONE PIXEL). A reply with only x, y is still accepted.
 _VLM_LOCATE_PROMPT = (
-    'Look at this image. Find: "{description}". '
+    'Look at this image. Find: "{description}". It counts even if it is only '
+    "partly visible, cut off at the edge of the image, or seen from an unusual "
+    "angle; colours may look different under indoor light. "
     "Reply with ONLY a JSON object, no other text: "
     '{{"found": true, "box": [ymin, xmin, ymax, xmax]}} or {{"found": false}}. '
     "The box is the tight bounding box of the whole object, in normalized "
@@ -102,14 +107,18 @@ def _vlm_locate(frame: bytes, description: str) -> tuple | None:
     from PIL import Image
 
     from ..services.llm import get_llm
+    from ..utils.speech_stream import strip_thought_residue
 
     width, height = Image.open(io.BytesIO(frame)).size
     b64 = base64.b64encode(frame).decode()
-    reply = get_llm("local_agent").invoke([HumanMessage(content=[
+    # Unstreamed: streamed, this llama.cpp files an answer wrapped in Gemma's
+    # channel markers as hidden reasoning, the text arrives empty, and an
+    # empty reply here reads as "not found" -- a silent miss (2026-09-27).
+    reply = get_llm("local_agent", streaming=False).invoke([HumanMessage(content=[
         {"type": "text", "text": _VLM_LOCATE_PROMPT.format(description=description)},
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-    ])])
-    m = re.search(r"\{.*\}", str(reply.content), re.DOTALL)
+    ])], config={"run_name": "vlm_locate", "tags": ["vlm_locate"]})
+    m = re.search(r"\{.*\}", strip_thought_residue(str(reply.content)), re.DOTALL)
     if not m:
         return None
     try:
@@ -135,7 +144,7 @@ def _vlm_locate(frame: bytes, description: str) -> tuple | None:
     return (x * sx, y * sy, None)
 
 
-def _capture(bridge, settle_s: float = 2.5) -> tuple:
+def _capture(bridge, settle_s: float = 2.5, source: str = "search") -> tuple:
     """(jpeg, capture) for a frame taken NOW, or (None, None).
 
     capture = {"stamp": the photo's camera stamp or None, "pose": where the
@@ -162,7 +171,10 @@ def _capture(bridge, settle_s: float = 2.5) -> tuple:
             return None, None
     if stamp:
         bridge.hold_frame(stamp)
-    return frame, {"stamp": stamp, "pose": bridge.get_current_pose()}
+    pose, when = bridge.get_current_pose(), time.time()
+    # Every photo also feeds object memory with everything in it (survey.py).
+    _survey.submit(frame, stamp, pose, source, when=when, epoch=bridge.get_origin_epoch())
+    return frame, {"stamp": stamp, "pose": pose, "when": when}
 
 
 # The photo's own depth and pose are gone (the hold did not arrive, or the
@@ -245,11 +257,18 @@ def approach_described_object(description: str,
     If the robot has seen it earlier this session, it first turns to face
     where it was and checks it is still there (someone may have moved it);
     if it has gone, it says so and searches. Otherwise, or then, it turns in
-    exact 90 degree steps and re-checks, up to a full circle (each check takes
-    a while — the vision model looks at a fresh photo every step).
+    exact 45 degree steps and re-checks, up to a full circle (each check takes
+    a few seconds — the vision model looks at a fresh photo every step).
 
     Returns once the object is found and the drive starts — the drive
     continues in the background and a system message reports arrival."""
+    # No photo survey while searching: the Mac runs one model, and every view
+    # of the search waits on it. The views are queued and surveyed after.
+    with _survey.paused():
+        return _approach(description, state)
+
+
+def _approach(description: str, state: dict) -> str:
     bridge = _bridge.get()
     description = description.strip()
     # for the replies: "the orange bottle" -> "orange bottle", so the text does
@@ -319,7 +338,7 @@ def approach_described_object(description: str,
             else:
                 checked = entry
 
-    # ── 2. Search: the view ahead, then exact 90 degree turns ────────────────
+    # ── 2. Search: the view ahead, then exact 45 degree turns ────────────────
     for step in range(first_view, _SEARCH_STEPS if uv is None else 0):
         if bridge.motion_interrupted():
             return f"Stopped searching for the {name}."

@@ -112,7 +112,7 @@ def locate_object(description: str,
     # voice turn (2026-09-27). The motion tools clear it the same way.
     bridge.clear_motion_stop()
 
-    frame, capture = _capture(bridge)
+    frame, capture = _capture(bridge, source="locate")
     if frame is None:
         return ("My camera feed isn't giving me a fresh image right now, so I "
                 "can't measure anything.")

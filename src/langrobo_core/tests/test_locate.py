@@ -30,7 +30,7 @@ _OK_REPLY = {
 
 
 def _patch(monkeypatch, uv=(200.0, 252.0), reply=None):
-    monkeypatch.setattr(lo, "_capture", lambda b, settle_s=2.5: (b"jpeg", None))
+    monkeypatch.setattr(lo, "_capture", lambda b, settle_s=2.5, source="search": (b"jpeg", None))
     monkeypatch.setattr(lo, "_vlm_locate", lambda frame, desc: uv)
     monkeypatch.setattr(_bridge.get(), "ground_pixel",
                         lambda u, v, timeout=4.0, stamp=None, box=None: reply or dict(_OK_REPLY))
@@ -247,14 +247,14 @@ def test_old_jetson_without_relative_degrades_but_stays_truthful(monkeypatch):
 
 
 def test_dead_camera_feed_admits_blindness(monkeypatch):
-    monkeypatch.setattr(lo, "_capture", lambda b, settle_s=2.5: (None, None))
+    monkeypatch.setattr(lo, "_capture", lambda b, settle_s=2.5, source="search": (None, None))
     out = locate_object.invoke({"description": "chair", "state": dict(VOICE_STATE)})
     assert "can't measure" in out
     assert "m away" not in out
 
 
 def test_vlm_error_is_reported_not_swallowed(monkeypatch):
-    monkeypatch.setattr(lo, "_capture", lambda b, settle_s=2.5: (b"jpeg", None))
+    monkeypatch.setattr(lo, "_capture", lambda b, settle_s=2.5, source="search": (b"jpeg", None))
 
     def _boom(frame, desc):
         raise RuntimeError("model down")

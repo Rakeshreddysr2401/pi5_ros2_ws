@@ -149,6 +149,13 @@ that moves wheels).
   registry.py), entry routing (sticky agent, else chat), handover + loop guards
 - `langrobo_core/agents/` — `factory.py` builds EVERY agent from its spec;
   there are no hand-written nodes
+- **Every photo becomes object memory** (`tools/survey.py`, 2026-09-27): look(),
+  each search view and locate_object hold the photo's depth + camera pose at the
+  Jetson (`hold_frame`, 24 kept) and queue it; in the background — only while no
+  turn or search is running, on llama.cpp slot 3, unstreamed — the VLM lists the
+  objects and the Jetson places each one using THAT photo's pose. So "go to the
+  chair" later is worked out from where the robot is now (approach.py step 1).
+  The search itself is 8 views, 45° apart (90° steps missed objects at the seams).
 - `langrobo_core/tools/` — @tool functions; per-agent sets in `__init__.py`;
   robot I/O via `_bridge.get()`. Keep the sets SHORT: every tool is shipped as
   a schema on every turn to that agent, forever.

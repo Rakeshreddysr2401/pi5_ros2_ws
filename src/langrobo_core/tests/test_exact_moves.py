@@ -223,7 +223,7 @@ def _vlm_says(monkeypatch, text):
     buf = io.BytesIO()
     Image.new("RGB", (896, 504)).save(buf, "JPEG")
     from langrobo_core.services import llm
-    monkeypatch.setattr(llm, "get_llm", lambda slot: type("L", (), {"invoke": lambda self, m: _Reply(text)})())
+    monkeypatch.setattr(llm, "get_llm", lambda agent, **kw: type("L", (), {"invoke": lambda self, m, **kw: _Reply(text)})())
     return ap._vlm_locate(buf.getvalue(), "the orange bottle")
 
 
