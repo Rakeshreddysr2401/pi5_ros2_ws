@@ -100,6 +100,16 @@ class Robot(StubBridge):
     def start_nav_to_pose(self, x, y, yaw_deg, label=""):
         self.navs.append((x, y, yaw_deg, label))
 
+    legs = None          # None = reach not running; else a list of results
+    def reach_and_wait(self, x, y, yaw_deg, timeout=240.0):
+        if self.legs is None:
+            return super().reach_and_wait(x, y, yaw_deg, timeout)
+        self.leg_goals = getattr(self, "leg_goals", []) + [(x, y, yaw_deg)]
+        res = self.legs.pop(0)
+        if res.get("ok"):
+            self.pose = (x, y, yaw_deg)          # drove there
+        return res
+
 
 @pytest.fixture
 def robot(monkeypatch):
@@ -188,26 +198,72 @@ def test_straight_ahead_needs_no_turn(robot, scripted):
     assert turns == []
 
 
-def test_removed_is_forgotten_said_and_searched_for(robot, scripted):
-    """The checker: someone took the bottle. Say so, forget it, search the
-    rest of the circle in 45 degree steps (the faced view was just checked)."""
+def test_removed_is_forgotten_after_searching_its_spot(robot, scripted):
+    """The checker, close by: someone took the bottle. Already at the
+    viewpoint, so no drive: search that spot in 45 degree steps (the faced
+    view was just checked), then say so and forget it."""
     turns, vlm = scripted
-    om.remember("the orange bottle", -1.0, 0.0, None, EPOCH)          # behind
+    om.remember("the orange bottle", -1.0, 0.0, None, EPOCH)          # behind, 1 m
     out = approach_described_object.invoke({"description": "the orange bottle", "state": dict(STATE)})
     assert [abs(turns[0])] + turns[1:] == [180] + [45] * 7   # dead behind: either way round
-    assert "isn't where it was" in out and "full circle" in out
+    assert "looked all around that spot" in out and "isn't there any more" in out
     assert om.recall("bottle", EPOCH) == [] and not robot.navs
 
 
-def test_removed_but_found_elsewhere_in_the_search(robot, scripted):
+def test_cannot_reach_its_spot_searches_here_and_does_not_forget(robot, scripted):
+    """Not visible from 1.5 m and reach is down: search from here, and keep
+    the memory -- nobody has looked at that spot up close."""
     turns, vlm = scripted
-    om.remember("the orange bottle", 0.0, 1.5, None, EPOCH)           # +90
-    vlm.extend([None, (448.0, 250.0, None)])                          # not there; found one turn later
+    om.remember("the orange bottle", 0.0, 1.5, None, EPOCH)           # +90, 1.5 m
+    vlm.extend([None, (448.0, 250.0, None)])                          # not seen; then found ahead
     robot.replies = [_grounded(-1.5, 0.0)]
     out = approach_described_object.invoke({"description": "the orange bottle", "state": dict(STATE)})
-    assert turns == [90, 45] and "isn't where it was" in out and robot.navs
-    (e,) = om.recall("bottle", EPOCH)
-    assert (e["x"], e["y"]) == (-1.5, 0.0)
+    assert turns == [90] and "couldn't get to that spot" in out and robot.navs
+    assert len(om.recall("bottle", EPOCH)) == 2, "the old spot is not forgotten"
+
+
+# ── far away: go to where it was, then look (owner, 2026-09-27) ─────────────
+
+def test_far_away_drives_to_its_spot_then_looks_and_goes(robot, scripted):
+    turns, vlm = scripted
+    om.remember("the white chair", 4.0, 0.0, None, EPOCH)             # 4 m ahead
+    robot.legs = [{"ok": True, "result": "reached"}]
+    vlm.append((448.0, 250.0, None))                                  # there, from the viewpoint
+    robot.replies = [_grounded(4.02, 0.01)]
+    out = approach_described_object.invoke({"description": "white chair", "state": dict(STATE)})
+    assert robot.leg_goals == [(3.0, 0.0, 0.0)], "1 m in front of where it was, facing it"
+    assert turns == [] and "still where I saw it" in out and robot.navs
+
+
+def test_far_away_and_gone_searches_that_spot_then_forgets(robot, scripted):
+    turns, vlm = scripted
+    om.remember("the white chair", 4.0, 0.0, None, EPOCH)
+    robot.legs = [{"ok": True, "result": "reached"}]
+    out = approach_described_object.invoke({"description": "white chair", "state": dict(STATE)})
+    assert robot.pose[:2] == (3.0, 0.0) and turns == [45] * 7, "the circle is around THAT spot"
+    assert "looked all around that spot" in out
+    assert om.recall("chair", EPOCH) == []
+
+
+def test_found_near_its_old_spot_is_the_same_entry_updated(robot, scripted):
+    turns, vlm = scripted
+    om.remember("the white chair", 4.0, 0.0, None, EPOCH)
+    robot.legs = [{"ok": True, "result": "reached"}]
+    vlm.extend([None, None, (448.0, 250.0, None)])                    # found two turns into the spot search
+    robot.replies = [_grounded(4.1, 0.9)]
+    out = approach_described_object.invoke({"description": "white chair", "state": dict(STATE)})
+    assert turns == [45, 45] and "moved about 0.9 m" in out
+    (e,) = om.recall("chair", EPOCH)
+    assert (e["x"], e["y"]) == (4.1, 0.9)
+
+
+def test_a_new_command_stops_the_drive_to_its_spot(robot, scripted):
+    turns, vlm = scripted
+    om.remember("the white chair", 4.0, 0.0, None, EPOCH)
+    robot.legs = [{"ok": False, "result": "interrupted"}]
+    out = approach_described_object.invoke({"description": "white chair", "state": dict(STATE)})
+    assert out.startswith("Stopped") and not robot.navs and turns == []
+    assert len(om.recall("chair", EPOCH)) == 1
 
 
 def test_found_but_moved_far_replaces_the_old_spot(robot, scripted):

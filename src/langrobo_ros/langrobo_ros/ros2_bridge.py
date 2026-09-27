@@ -1005,6 +1005,45 @@ class ROS2Bridge:
             with self._status_lock:
                 self._reach_status.pop(key, None)
 
+    def reach_and_wait(self, x: float, y: float, yaw_deg: float,
+                       timeout: float = 240.0) -> dict:
+        """Drive to (x, y, yaw) in NAV_FRAME through reach_node and WAIT for it
+        -- a leg inside a tool (approach: "go to where I saw it, then look"),
+        so no [SYSTEM] arrival report. Cancels any background drive first.
+        {"ok", "result": reached|failed|interrupted|unavailable|timeout, "why",
+         "note"}. A new utterance (motion stop) cancels it."""
+        if self._reach_goal_pub.get_subscription_count() == 0:
+            return {"ok": False, "result": "unavailable",
+                    "why": "reach is not running on the Jetson (./rover nav)"}
+        self.cancel_navigation()
+        stamp, key = self._stamp_now()
+        self._reach_current_key = key
+        self._reach_goal_pub.publish(self._pose_msg(x, y, math.radians(yaw_deg), stamp))
+        t0 = time.monotonic()
+        try:
+            while time.monotonic() - t0 < timeout:
+                if self.motion_interrupted():
+                    self._reach_cancel_pub.publish(self._Empty())
+                    return {"ok": False, "result": "interrupted", "why": "stopped by a new command"}
+                with self._status_lock:
+                    lines = list(self._reach_status.get(key, []))
+                final = [d for d in lines if "result" in d]
+                if final:
+                    d = final[-1]
+                    tried = d.get("tried") or []
+                    return {"ok": d["result"] == "reached", "result": d["result"],
+                            "why": tried[-1] if tried else d.get("why", ""),
+                            "note": d.get("note")}
+                if not lines and time.monotonic() - t0 > 10.0:
+                    return {"ok": False, "result": "unavailable",
+                            "why": "the Jetson's reach node did not answer"}
+                time.sleep(0.2)
+            self._reach_cancel_pub.publish(self._Empty())
+            return {"ok": False, "result": "timeout", "why": f"not there after {timeout:.0f} s"}
+        finally:
+            with self._status_lock:
+                self._reach_status.pop(key, None)
+
     def _fire_nav_done(self, success: bool, message: str) -> None:
         # Logged unconditionally, and says whether a listener existed. A silent
         # arrival is indistinguishable from a nav that never finished unless

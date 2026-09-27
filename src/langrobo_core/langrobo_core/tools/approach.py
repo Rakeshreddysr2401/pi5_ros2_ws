@@ -244,6 +244,21 @@ def _remember(bridge, description: str, res: dict, capture: dict | None) -> dict
 # A remembered object this close to straight ahead is already in the middle of
 # the colour camera's ~87 deg view: look without turning.
 _FACE_WITHIN_DEG = 20.0
+# Memory step (see approach step 1). Judge from here only when close: at 2.5 m
+# a bottle is a few dozen pixels and easily hidden. The viewpoint is 1 m in
+# front of where it was -- far enough that the camera (blind under ~0.4 m,
+# ~87 deg wide) sees it and its surroundings, close enough to see it well.
+_JUDGE_FROM_HERE_M = 2.5
+_VIEW_FROM_M = 1.0
+_ALREADY_THERE_M = 0.3    # within this of the viewpoint: look without driving
+
+
+def _face(bridge, bearing_deg: float) -> tuple:
+    """Turn to a bearing (0 = ahead) unless it is already in the middle of the
+    view. (ok, why) as movement.turn_robot."""
+    if abs(bearing_deg) <= _FACE_WITHIN_DEG:
+        return True, ""
+    return _mv.turn_robot(bridge, bearing_deg)
 
 
 @tool
@@ -254,11 +269,12 @@ def approach_described_object(description: str,
     not saved as a location: "the red coffee mug", "my black backpack", "the
     chair", "the surf excel packet".
 
-    If the robot has seen it earlier this session, it first turns to face
-    where it was and checks it is still there (someone may have moved it);
-    if it has gone, it says so and searches. Otherwise, or then, it turns in
-    exact 45 degree steps and re-checks, up to a full circle (each check takes
-    a few seconds — the vision model looks at a fresh photo every step).
+    If the robot has seen it before (in any photo, from anywhere), it goes to
+    where it was -- turning to it if it is close, driving over if it is far or
+    out of view -- checks it is still there, and if not, searches around that
+    spot. Otherwise it turns in exact 45 degree steps and re-checks, up to a
+    full circle (each check takes a few seconds — the vision model looks at a
+    fresh photo every step). This can take a minute or two; call it once.
 
     Returns once the object is found and the drive starts — the drive
     continues in the background and a system message reports arrival."""
@@ -292,51 +308,98 @@ def _approach(description: str, state: dict) -> str:
     note = ""            # what the memory check found, said before the rest
     checked = None       # the memory entry a fresh look has just confirmed
     first_view = 0       # 1 = the view ahead has been checked already
+    at_the_spot = None   # the memory entry whose spot the robot went to and searched
 
-    # ── 1. Memory first (INTELLIGENCE_PLAN.md B3) ────────────────────────────
-    # Seen earlier this session: face where it was, from where the robot is
-    # NOW, and look once -- the checker. Confirmed -> go (re-grounded, so a
-    # small move is picked up). Not there -> forget it, say so, and search.
+    # ── 1. Memory first: seen before -> go to where it was, THEN look ───────
+    # Object memory holds WHERE things are in the room (x, y in odom), placed
+    # from the photo they were seen in (survey.py) -- so from wherever the
+    # robot is now, the bearing and distance to them are known.
+    #   a) close enough to judge from here: face it and look. There -> go.
+    #   b) not seen from here -- far away, hidden behind something, an old
+    #      sighting: DRIVE to a viewpoint in front of where it was, look
+    #      again, and if it still isn't there, search AROUND THAT SPOT
+    #      (step 2 runs there). Only then is it "not where I saw it".
+    # Before (b), a remembered object not visible from across the room was
+    # forgotten on the spot and searched for from where the robot stood
+    # (owner, 2026-09-27: "go to that area and check; if not found, search").
     epoch = bridge.get_origin_epoch()
     try:
         known = object_memory.recall(description, epoch)
     except OSError:
         known = []
-    rel = object_memory.relative(known[0], bridge.get_current_pose()) if known else None
-    if rel is not None and (abs(rel[1]) <= _FACE_WITHIN_DEG or Twist is not None):
+    pose = bridge.get_current_pose()
+    rel = object_memory.relative(known[0], pose) if known else None
+    if rel is not None:
         entry = known[0]
         age = object_memory.describe_age(time.time() - entry.get("seen_at", 0))
-        faced = True
-        if abs(rel[1]) > _FACE_WITHIN_DEG:
-            ok, why = _mv.turn_robot(bridge, rel[1])
-            if not ok:
+        dist, bearing = rel
+
+        looked_here = False
+
+        # a) judge from here
+        if dist <= _JUDGE_FROM_HERE_M and (abs(bearing) <= _FACE_WITHIN_DEG or Twist is not None):
+            ok, why = _face(bridge, bearing)
+            if why == "interrupted":
+                return f"Stopped looking for the {name}."
+            if ok:
+                frame, capture = _capture(bridge)
+                if frame is None:
+                    if bridge.motion_interrupted():
+                        return f"Stopped looking for the {name}."
+                    return ("My camera feed isn't giving me a fresh image right now, "
+                            "so I can't look for it.")
+                try:
+                    uv = _vlm_locate(frame, description)
+                except Exception as e:
+                    return (f"I couldn't analyse the camera image (vision model error: "
+                            f"{type(e).__name__}). Try again in a moment.")
+                looked_here = True
+                if uv is not None:
+                    checked = entry
+
+        # b) not seen from here: go to where it was, and look there
+        if uv is None and Twist is not None:
+            went = True
+            drove = dist > _VIEW_FROM_M + _ALREADY_THERE_M
+            if drove:
+                vx, vy, vyaw = compute_standoff_goal(pose[0], pose[1], entry["x"], entry["y"],
+                                                     _VIEW_FROM_M)
+                leg = bridge.reach_and_wait(round(vx, 2), round(vy, 2), round(vyaw, 1))
+                if leg.get("result") == "interrupted":
+                    return f"Stopped going to look for the {name}."
+                if not leg.get("ok"):
+                    went = False
+                    note = (f"I saw the {name} {age} over there, but couldn't get to that "
+                            f"spot ({leg.get('why') or leg.get('result')}), so I'm "
+                            f"searching from here. ")
+            if went and not drove and looked_here:
+                # already at the viewpoint and just looked: search this spot
+                at_the_spot, first_view = entry, 1
+                note = (f"The {name} wasn't right where I saw it {age}, so I'm "
+                        f"looking around that spot. ")
+            elif went:
+                rel2 = object_memory.relative(entry, bridge.get_current_pose())
+                ok, why = _face(bridge, rel2[1] if rel2 else 0.0)
                 if why == "interrupted":
                     return f"Stopped looking for the {name}."
-                faced = False
-                note = (f"I remembered the {name} from {age}, but couldn't turn "
-                        f"to face it ({why}), so I'm searching instead. ")
-        if faced:
-            frame, capture = _capture(bridge)
-            if frame is None:
-                if bridge.motion_interrupted():
-                    return f"Stopped looking for the {name}."
-                return ("My camera feed isn't giving me a fresh image right now, "
-                        "so I can't look for it.")
-            try:
-                uv = _vlm_locate(frame, description)
-            except Exception as e:
-                return (f"I couldn't analyse the camera image (vision model error: "
-                        f"{type(e).__name__}). Try again in a moment.")
-            if uv is None:
+                frame, capture = _capture(bridge)
+                if frame is None:
+                    if bridge.motion_interrupted():
+                        return f"Stopped looking for the {name}."
+                    return ("My camera feed isn't giving me a fresh image right now, "
+                            "so I can't look for it.")
                 try:
-                    object_memory.forget(entry["id"], epoch)
-                except OSError:
-                    pass
-                note = (f"The {description} I saw {age} isn't where it was any more "
-                        f"— someone may have moved it. ")
-                first_view = 1
-            else:
-                checked = entry
+                    uv = _vlm_locate(frame, description)
+                except Exception as e:
+                    return (f"I couldn't analyse the camera image (vision model error: "
+                            f"{type(e).__name__}). Try again in a moment.")
+                if uv is not None:
+                    checked = entry
+                else:
+                    at_the_spot = entry        # search around HERE; forget only if that fails
+                    first_view = 1
+                    note = (f"The {name} wasn't right where I saw it {age}, so I'm "
+                            f"looking around that spot. ")
 
     # ── 2. Search: the view ahead, then exact 45 degree turns ────────────────
     for step in range(first_view, _SEARCH_STEPS if uv is None else 0):
@@ -366,9 +429,18 @@ def _approach(description: str, state: dict) -> str:
             break
 
     if uv is None:
+        if at_the_spot is not None:
+            try:
+                object_memory.forget(at_the_spot["id"], epoch)
+            except OSError:
+                pass
+            return (f"I went to where I saw the {name} and looked all around that spot, "
+                    f"but it isn't there any more — someone may have moved it.")
         return (note + f"I turned a full circle and looked carefully, but I couldn't "
                 f"spot the {name} anywhere around me.")
 
+    if checked is None and at_the_spot is not None:
+        checked = at_the_spot          # found near its old spot: same "moved?" check
     res, capture = _ground_retrying(bridge, description, uv, capture)
     if not res.get("ok"):
         reason = res.get("reason", "unknown")

@@ -159,6 +159,13 @@ class StubBridge:
     def navigation_active(self) -> bool:
         return False
 
+    def reach_and_wait(self, x: float, y: float, yaw_deg: float,
+                       timeout: float = 240.0) -> dict:
+        """No Jetson: "unavailable", which is the real bridge's answer when
+        reach is not running, so tools search from where they are."""
+        logger.info("[STUB] reach_and_wait(%.2f, %.2f, %.0f)", x, y, yaw_deg)
+        return {"ok": False, "result": "unavailable", "why": "no Jetson (stub bridge)"}
+
     # The flag is real state, as on ROS2Bridge: agent_node sets it on EVERY
     # utterance, so a tool that reads it without clearing it first fails on
     # every voice turn. A stub that always answered False hid exactly that in

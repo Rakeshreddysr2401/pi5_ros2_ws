@@ -13,3 +13,14 @@ import pytest
 @pytest.fixture(autouse=True)
 def _isolated_object_memory(tmp_path, monkeypatch):
     monkeypatch.setenv("LANGROBO_OBJECT_MEMORY", str(tmp_path / "object_memory.json"))
+
+
+@pytest.fixture(autouse=True)
+def _no_background_photo_survey(request, monkeypatch):
+    """Tools submit every photo to the background survey (tools/survey.py),
+    whose worker calls the real vision model. Tests queue nothing -- except
+    test_survey.py, which tests the survey itself with its own fakes."""
+    if request.module.__name__.endswith("test_survey"):
+        return
+    from langrobo_core.tools import survey
+    monkeypatch.setattr(survey, "submit", lambda *a, **k: False)
