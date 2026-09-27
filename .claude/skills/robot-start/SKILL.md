@@ -79,10 +79,10 @@ journalctl -u langrobo-brain -f -o cat | grep -E "Step message \[AI|→ TTS"
 - **Traces:** https://smith.langchain.com → project `pi5` (runs `turn:voice`, `turn:telegram`).
 - **RViz:** on the laptop; `./rover view --restart` (on the Jetson) after a config change.
 
-## If the Jetson will not take an ssh login
+## If ssh to the Jetson or laptop hangs
 
-It happens under load (the Jetson is CPU-bound — its OPEN_ISSUES.md #1): ROS
-keeps working while ssh hangs at authentication. `fleet.sh check` still works
-(it uses ROS only). If you must reach it, wait and retry with
-`ssh -o ConnectTimeout=60`; the last resort is a power cycle of the Jetson,
-then Step 2 again.
+Almost always the **ssh agent**, not the machine: a stale `SSH_AUTH_SOCK`
+makes every login hang at authentication with no error. Test with
+`SSH_AUTH_SOCK= ssh rakhi24@rakhi-jetson.local uptime` — if that answers at
+once, the agent was it (fleet.sh already bypasses the agent). `fleet.sh check`
+never needs ssh: it reads everything over ROS.

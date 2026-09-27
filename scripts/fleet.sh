@@ -34,7 +34,11 @@ LAPTOP_HOST="${LANGROBO_LAPTOP_HOST:-rakhi24.local}"
 JETSON_HOST="${LANGROBO_JETSON_HOST:-rakhi-jetson.local}"
 LAPTOP=rakhi24@$LAPTOP_HOST
 JETSON=rakhi24@$JETSON_HOST
-SSH="ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new"
+# IdentityAgent=none: use ~/.ssh/id_ed25519 directly. A shell whose
+# SSH_AUTH_SOCK points at a dead or hung agent (a stale forwarded one, say)
+# makes every ssh hang at authentication, with no error -- on 2026-09-27 that
+# looked for an hour like a Jetson too loaded to log in to.
+SSH="ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new -o IdentityAgent=none"
 
 SIM_SCRIPT=/workspace/ros2_ws/src/rover_sim/rover_bringup/scripts/fleet_sim.sh
 ROVER_DIR="~/rover"
@@ -78,9 +82,9 @@ ensure_local_units() {
 
 reachable() { timeout 4 ping -c1 -W2 "$1" >/dev/null 2>&1; }
 
-# Is the Jetson stack already up? Asked over ROS, NOT ssh: a loaded Jetson
-# can hang an ssh login for minutes while every node runs fine (2026-09-27),
-# and reading that as "down" would run `./rover up`, which RESTARTS the
+# Is the Jetson stack already up? Asked over ROS, NOT ssh: ssh can fail for
+# reasons that say nothing about the robot (a hung agent, a slow login), and
+# reading "ssh failed" as "down" would run `./rover up`, which RESTARTS the
 # container. The fused pose flowing and the VLM bridge listening means every
 # layer up to the last one came up.
 ros_env() {
@@ -198,7 +202,7 @@ status)
     ;;
 check)
     # Proves each link with DATA, from this Pi5, over ROS -- no ssh, so it
-    # still answers when the Jetson is too loaded to accept a login. Each line
+    # still answers when ssh does not. Each line
     # is OK or FAIL plus what to do. Read-only: nothing moves, nothing speaks.
     fails=0
     ok()   { printf "  %-34s OK    %s\n" "$1" "$2"; }
