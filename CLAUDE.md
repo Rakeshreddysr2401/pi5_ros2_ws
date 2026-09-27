@@ -15,6 +15,9 @@ Home robot "Mitra" (renamed from "Rakhi" 2026-09-20; the `rakhi24` username and 
   **Must run with `--jinja --parallel 3`** — one KV slot per agent.
 - **ESP32** — 50 Hz closed-loop PID on four wheels, micro-ROS over WiFi.
 
+**FIND_AND_GO.md is the priority flow** ("what do you see?" … "go near it":
+photo-grounded object positions, go-to-the-spot, search) — read it before
+touching approach/look/survey/photos or the Jetson's pixel_to_goal/reach.
 Read HOW_IT_WORKS.md for the end-to-end walkthrough (boot, turn lifecycle,
 failure paths); **ARCHITECTURE_LLD.md before touching graph/agent code**;
 INTEGRATION_GAPS.md before building anything that touches the world;
