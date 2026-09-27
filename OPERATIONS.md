@@ -223,6 +223,7 @@ debugging.
 |---|---|
 | Spoken "my brain server is offline" | Mac Mini down/unreachable → check server, or arm `LANGROBO_FALLBACK_*` |
 | Every turn slow (~20s before speech) | KV cache cold: the server started without `--parallel 3` (agents share slots and evict each other — the boot log says so), a clock in a prompt, or a mid-history mutation. See ARCHITECTURE_LLD.md §4 |
+| First reply after a change of agent slow (15-27 s; e.g. the turn after a vision question) | The server keeps only ONE slot's cache: serving one agent's slot wipes the others. `python3 scripts/llm_cache_check.py` says PASS/FAIL in ~2 min. FAILED on 2026-09-27 (b9830, Gemma 4 12B). Likely fix on the Mac: add `--swa-full` to llama-server (Gemma's sliding-window cache), re-run the check |
 | "I cannot see right now" | Frame >10s stale or absent. That topic is published by `phase4/nodes/image_bridge.py` **in the perception repo** — start it with `./rover vlm` on the Jetson. It also skips encoding entirely when nothing is subscribed, so check the brain is up before blaming the Jetson |
 | Vision turn slow (~60s end-to-end) | Measured 2026-07-19: router call ~43s + vision call ~16s on the Mac, sequential. `local_agent` is sticky, so the FOLLOW-UP question about the same scene skips the router; the first one still pays it |
 | Tool calls flaky / early stops | GGUF chat template mislabels control tokens → suspect the quant, and check the server has `--jinja` |

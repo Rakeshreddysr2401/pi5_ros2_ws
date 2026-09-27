@@ -93,6 +93,10 @@ pip3 install --break-system-packages -r requirements.txt
    in its own cache. Two agents on one slot evict each other every turn
    (~18-50s of re-prefill). agent_node probes the server's real slot count at
    boot, wraps with modulo, and warns loudly if it had to.
+   **Separate slots are not enough on their own:** as of 2026-09-27 the Mac's
+   server wipes every other slot's cache when one is used (Gemma's
+   sliding-window cache; likely fix `--swa-full`). `scripts/llm_cache_check.py`
+   is the PASS/FAIL test — run it after any change to the server's flags.
 3. **KV-cache discipline** (violations cost ~20s/turn on the 12B model):
    - Never put a clock/timestamp in a system prompt (date only; clock is the
      `get_current_time` tool).
