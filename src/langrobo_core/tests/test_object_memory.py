@@ -36,6 +36,9 @@ STATE = {"channel": "voice", "sender_name": "voice", "messages": []}
     ("my bottles", "the bottle", True),
     ("the red bottle", "the orange bottle", False),        # different colours
     ("the chair", "the orange bottle", False),
+    ("white box", "white chair", False),                   # colour alone is not the thing
+    ("white chair", "chair", True),
+    ("the white one", "white chair", True),                # only a colour asked: colour decides
     ("", "the orange bottle", False),
 ])
 def test_match(query, desc, ok):

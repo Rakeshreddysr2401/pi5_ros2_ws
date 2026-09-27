@@ -81,6 +81,14 @@ def match_score(query: str, description: str) -> float:
     qc, dc = q & _COLOURS, d & _COLOURS
     if qc and dc and not (qc & dc):
         return 0.0
+    # The THING must match, not just the colour: "white box" shares half its
+    # words with "white chair". That was harmless while memory held only what
+    # users named; the photo survey fills it with "white X" / "black Y"
+    # labels, and a colour-only match turned the robot toward the chair,
+    # found no box there, and forgot the chair (review, 2026-09-27).
+    qn, dn = q - _COLOURS, d - _COLOURS
+    if qn and not (qn & dn):
+        return 0.0
     return len(q & d) / len(q)
 
 
