@@ -332,6 +332,32 @@ tell. `move_robot` does not look. ⬜
 
 ---
 
+## 7. The find-and-go wire contract (brain side) ✅
+
+What `ros2_bridge.py` sends and which reply fields the tools read, for the
+flow in FIND_AND_GO.md. The Jetson half is `~/rover/phase4/nodes/pixel_to_goal.py`
+and `~/rover/phase3/nodes/reach_node.py` / goal_exec — **change both or
+neither.** Every pose is in `NAV_FRAME` (`odom`).
+
+| topic | type | brain sends / reads |
+|---|---|---|
+| `/camera/color/image_raw/compressed` | CompressedImage | read; `header.stamp` is the photo's **camera stamp**, the key for everything below |
+| `/vision/pixel_snapshot` | PointStamped | sent the moment a photo is taken (`hold_frame`): `header.stamp` = camera stamp. The Jetson keeps that photo's depth + camera pose (24 held) |
+| `/vision/pixel_query` | PointStamped | `point.x/y` = colour-image pixel (u, v); `header.stamp` = the photo's camera stamp, or zero for "newest depth"; `header.frame_id` = `<id>` or `<id>;box=x0,y0,x1,y1` (the VLM's box, pixels) |
+| `/vision/pixel_result` | String (JSON) | `id`, `ok`, `reason` on failure (`no_depth_frame`, `no_depth_near_stamp`, `snapshot_expired`, `no_depth_at_pixel`, `depth_out_of_range`, …), `object {x, y}`, `goal {x, y, yaw}` (yaw in **radians**, standoff applied), `depth_m`, `at_capture` (grounded with the photo's own depth/pose), `region` (box used), `relative {forward_m, left_m, bearing_deg}` |
+| `/goal_exec/turn`, `/goal_exec/goal` | PoseStamped | the target pose; `header.stamp` doubles as the goal key |
+| `/goal_exec/status` | String (JSON) | `goal_stamp` = `"<sec>.<nanosec 9 digits>"` of that key, `state` (`done` ends it), `result` (`reached` = ok; `refused`/`stalled`/`failed`/`cancelled`), `why` |
+| `/reach/goal` | PoseStamped | same keying as goal_exec |
+| `/reach/status` | String (JSON) | `goal_stamp`, `result` on the final line (`reached`/`failed`/`cancelled`), `tried` (list of attempt notes; the last is shown), `why`, `note` (arrived, final face-turn blocked) |
+| `/goal_exec/cancel`, `/reach/cancel` | Empty | cancel whatever is running |
+| `/fusion/status` | String (JSON) | `origin_epoch` — object memory and saved locations are only valid under the same one |
+
+Superseding a drive: take the new goal's key **before** cancelling the old
+worker (`start_nav_to_pose` and `reach_and_wait` both do), or the old worker's
+`/reach/cancel` can land after the new goal and kill it.
+
+---
+
 ## What I could not check
 
 Neither repo was run. This was read on a laptop with no robot, no Jetson and

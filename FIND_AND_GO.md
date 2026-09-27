@@ -25,6 +25,8 @@ look again to confirm, and go.
 "go near it"         navigate -> approach_described_object(description)   (tools/approach.py)
 
  0. THE PHOTO WE TALKED ABOUT  newest 2 photos in the conversation:
+                               the survey already placed a match FROM that
+                               photo -> use it (no VLM call); else
                                VLM "where is <it> in THIS photo?" -> box
                                Jetson places the box with THAT photo's depth + pose
                                (photo depth gone and robot unmoved -> newest depth)
@@ -35,8 +37,9 @@ look again to confirm, and go.
                                                         -> there: go
                                not there -> 2. around THAT spot, then forget it
                                can't get there -> 2. from here, memory kept
- 2. SEARCH                     8 views, 45 deg apart; a refused turn finishes
-                               the circle the other way
+ 2. SEARCH                     8 views, 45 deg apart, each aimed from the
+                               measured heading; a refused turn finishes the
+                               circle the other way (from wherever it stopped)
  3. GO                         ground the fresh sighting -> reach (nav2 + exact
                                finish) in the background -> "[SYSTEM] arrived"
                                (Telegram requests: report to the phone, quiet;
@@ -50,7 +53,7 @@ look again to confirm, and go.
 | photo stamp + pose register | `tools/photos.py` | — |
 | hold a photo's depth + pose | `bridge.hold_frame` | `phase4/nodes/pixel_to_goal.py` snapshots (24; depth-gap fallback) |
 | pixel/box -> room x, y | `bridge.ground_pixel` | `pixel_to_goal.py` `_on_query` (nearest solid slab in the box) |
-| background survey | `tools/survey.py` (idle only, slot 3) | same queries |
+| background survey | `tools/survey.py` (idle only, slot 3; a turn cancels it mid-photo, it resumes after) | same queries |
 | object memory | `services/object_memory.py` (`~/.langrobo/object_memory.json`) | — |
 | the steps above | `tools/approach.py` | — |
 | drive, waited on | `bridge.reach_and_wait` | `phase3/nodes/reach_node.py` |
@@ -64,6 +67,7 @@ Brain: `journalctl -u langrobo-brain -o cat | grep -E "Invoking graph|Step messa
 | you see | it means |
 |---|---|
 | `photo survey (look): 0 object(s) placed` | the photo's depth was not held — check the Jetson line below |
+| `fleet.sh check`: `photo survey … errors`, 0 placed | every survey is failing (`last:` says why — a missing slot 3, the Mac down); `curl -s localhost:8090/status \| jq .runtime.photo_survey` for the counters |
 | `snapshot …: no_depth_near_stamp:7112ms` (Jetson `/tmp/pixel_to_goal.log`) | the depth stream stalled at the photo; followed by `(after a depth gap, camera still)` = recovered, or `moved_before_depth` = the robot moved first |
 | `query …: snapshot_expired` | more than 24 photos since, or the gap was not recovered |
 | tool: `It's still where I saw it` | step 1 confirmed it |

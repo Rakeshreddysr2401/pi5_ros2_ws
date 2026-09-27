@@ -10,7 +10,7 @@ answers and routes, `local_agent` sees, `navigate` moves. Every agent is one
 slot map all derive from it.
 
 ```
-Mac Mini  ──────  llama.cpp — Gemma multimodal GGUF, --parallel 3 (one KV slot per agent)
+Mac Mini  ──────  llama.cpp — Gemma multimodal GGUF, --parallel 4 (one KV slot per agent + the photo survey)
 Jetson    ──────  ~/rover: D555 + RPLidar · fused pose · slam · nvblox · Nav2 + exact moves · VLM pixel→goal
 Laptop    ──────  RViz (pushed and started by the Jetson's `./rover view`) · Gazebo sim body
 Pi 5      ──────  THIS REPO — LangGraph brain + STT/TTS + micro-ROS agent
@@ -112,7 +112,7 @@ ros2 launch langrobo_ros brain_launch.py
 
 ```
 
-The llama.cpp server needs **`--parallel 3`** — one KV-cache slot per agent.
+The llama.cpp server needs **`--parallel 4`** — one KV-cache slot per agent, and slot 3 for the background photo survey.
 With fewer, agents share a slot and evict each other's cached prompt prefix;
 agent_node warns at boot when that happens. See ARCHITECTURE_LLD.md §4.1.
 

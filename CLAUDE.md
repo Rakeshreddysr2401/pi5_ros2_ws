@@ -12,7 +12,7 @@ Home robot "Mitra" (renamed from "Rakhi" 2026-09-20; the `rakhi24` username and 
   Repo: **`~/rover`** on the Jetson (container `rover`), brought up with
   `./rover up`. (`~/langrobo_perception` and `~/robot` are the old stacks.)
 - **Mac Mini** — the LLM and VLM (llama.cpp, `singireddys-mac-mini.local:8080`).
-  **Must run with `--jinja --parallel 3`** — one KV slot per agent.
+  **Must run with `--jinja --parallel 4`** — one KV slot per agent, plus slot 3 for the photo survey.
 - **ESP32** — 50 Hz closed-loop PID on four wheels, micro-ROS over WiFi.
 
 **FIND_AND_GO.md is the priority flow** ("what do you see?" … "go near it":
@@ -92,8 +92,8 @@ pip3 install --break-system-packages -r requirements.txt
    that need ROS message types import them lazily *inside* the function body.
 2. **One llama.cpp KV slot per agent.** Slots are declared in `registry.py`
    (`AgentSpec.slot`), NOT as ROS params. Start the server with
-   `--parallel 3`: each agent's ~900-token prompt prefix then stays resident
-   in its own cache. Two agents on one slot evict each other every turn
+   `--parallel 4` (slot 3 is the background photo survey's): each agent's
+   ~900-token prompt prefix then stays resident in its own cache. Two agents on one slot evict each other every turn
    (~18-50s of re-prefill). agent_node probes the server's real slot count at
    boot, wraps with modulo, and warns loudly if it had to.
    **Separate slots are not enough on their own:** as of 2026-09-27 the Mac's
@@ -190,8 +190,9 @@ that moves wheels).
 
 ## Config split
 
-- `src/langrobo_ros/config/agent_params.yaml` — LLM provider/model/slots,
-  locations (ROS params)
+- `src/langrobo_ros/config/agent_params.yaml` — LLM provider/model, robot_body
+  (ROS params). KV slots are in `registry.py`; named places only come from
+  `save_location` (no configured defaults — odom restarts at every boot)
 - `.env` (validated fail-fast at startup) — keys + LANGROBO_* service settings;
   full table in OPERATIONS.md; template in example.env
 - Robot state lives in `~/.langrobo/` (locations.json, telegram_offset,
@@ -239,7 +240,7 @@ no longer exist.
   none are servos), `/audio/music_*`. Check for a publisher before building on
   a topic here.
 - Streaming tool calls need the llama.cpp server started with
-  `--jinja --parallel 3` (one slot per agent: chat/local_agent/navigate).
+  `--jinja --parallel 4` (one slot per agent: chat/local_agent/navigate, + 3 for the photo survey).
 - Pi5↔Jetson clocks drift ~1.5s (chrony peering pending) — latency_replay
   flags negative deltas.
 - **A prompt rule the model has to follow is not a fix — it is a thing to
