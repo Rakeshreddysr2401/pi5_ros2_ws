@@ -1,5 +1,56 @@
 # TODO — pending on-device work
 
+## NEEDS YOU — from the 2026-09-27 integration pass (branch `dev-1.3.6-fleet-integration`)
+
+The robot was brought up from a power cycle, every link checked, and the
+fixes below committed on new branches (Pi 5 `dev-1.3.6-fleet-integration`,
+Jetson `~/rover` `rover-v1.1.4-fleet-integration`; neither pushed). These are
+the things only you can do, most useful first:
+
+1. **Mac Mini: restart llama-server with `--swa-full`** (keep `--jinja
+   --parallel 4`). Today the server keeps only ONE slot's prompt cache —
+   using any slot wipes the others — so every change of agent (the reply
+   after a vision question, every handover) re-reads the whole ~3k-token
+   prompt: 15-27 s instead of ~1 s. This is the single biggest thing between
+   the robot and fast conversation. Then run
+   `python3 scripts/llm_cache_check.py` — PASS means fixed. (I have no ssh
+   key for the Mac, so I could not do it.)
+2. **Floor-test the driving with you watching** — I did not drive the robot
+   on purpose, with one exception I owe you: during a MANUAL-mode refusal
+   test I switched teleop back to AUTO while a "look around the room" turn
+   was still being decided, and it turned ~120° in place (pose ended at
+   heading 138°, ~17 cm from start) before MANUAL stopped it. It is still.
+   Still to grade from before: `L:90` x6 each way, a sequence, a reach
+   through a gap, and "go to the <object>" end to end (see below).
+3. **Teleop is left in MANUAL** after that — the safe state while nobody
+   watches. Flip it to AUTO on the phone page (port 8091) before asking it
+   to move; every driving tool refuses (and says why) until you do.
+4. **The Pi 5 sudo password was typed into a chat on 2026-09-26** — change it
+   (carried over from the rover repo's OPEN_ISSUES).
+5. **boAt Stone 650 is no longer paired** with the Pi 5; voice runs on the
+   OnePlus Buds Z2. If you want the Stone back: `/bt-audio` (pairing is a
+   human step).
+6. **Case clash: `Todo.md` (your brief) and `TODO.md` (this file)** differ
+   only by case — a clone on macOS/Windows keeps one of them. Your brief is
+   left untracked, untouched; rename or fold it in when you have read this.
+7. Decide whether to disable `langrobo-discovery` (nothing uses it since the
+   fleet went multicast; harmless): `sudo systemctl disable --now langrobo-discovery`.
+8. Jetson `~/rover` has three untracked files that are not mine
+   (`IMG_1603.JPG`, `IMG_1604.JPG`, `phase1/nodes/rate_probe.py`) — keep or delete.
+
+**What works, verified live today:** power-on bring-up (`./scripts/fleet.sh
+rover` → the Jetson's `./rover up`, every gate OK, Studio up, RViz on the
+laptop); `./scripts/fleet.sh check` all OK; voice → brain → Mac LLM → speech;
+vision (`look()`); depth-measured "how far is the backpack" (1.16 m, fixed
+today — it failed on every voice turn before); routing to `navigate` and the
+right motion tool for "go to the backpack" / "turn left"; object markers and
+goal arrows in RViz; LangSmith traces (project `pi5`).
+
+**How to use it:** `/robot-start` and `/robot-stop` (Claude Code skills), or
+`./scripts/fleet.sh {rover|check|status|stop|down}` — README.md "Run".
+
+---
+
 ## BUILT 2026-09-26, floor test pending: move_robot turns and moves run on the Jetson's goal_exec
 
 Every `move_robot` step, the approach search and `scan_surroundings` now go to the
