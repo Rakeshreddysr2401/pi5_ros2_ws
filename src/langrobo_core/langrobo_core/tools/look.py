@@ -28,7 +28,7 @@ from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.types import Command
 
 from ..utils import pose_stamp
-from . import survey
+from . import photos, survey
 from ._bridge import get
 
 
@@ -79,7 +79,9 @@ def look(tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
     # (tools/survey.py). Nothing here waits on it.
     if stamp:
         bridge.hold_frame(stamp)
-        survey.submit(frame, stamp, pose, "look", when=when, epoch=bridge.get_origin_epoch())
+        epoch = bridge.get_origin_epoch()
+        photos.record(frame, stamp, pose, when, epoch, "look")   # "go near it" grounds in THIS photo
+        survey.submit(frame, stamp, pose, "look", when=when, epoch=epoch)
 
     b64 = base64.b64encode(frame).decode()
     return Command(update={"messages": [

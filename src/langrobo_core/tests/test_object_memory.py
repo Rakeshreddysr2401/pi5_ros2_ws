@@ -334,3 +334,37 @@ def test_two_matches_far_apart_says_there_is_another(robot, scripted):
     robot.replies = [_grounded(1.15, -0.12)]
     out = approach_described_object.invoke({"description": "white rectangular box", "state": dict(STATE)})
     assert "also remember another white rectangular box about 1.4 m away" in out
+
+
+# ── "go near it" means the thing IN THE PHOTO we talked about ───────────────
+
+def test_go_near_it_grounds_in_the_conversation_photo_not_by_name(robot, scripted):
+    """Floor test 2026-09-27, replayed: "what do you see?" -> a white box,
+    photographed facing -169 deg from (-0.6, -0.2). Teleoped away to
+    (0.54, -0.09) facing +15. A DIFFERENT white box sits in memory right in
+    front. "Go near it" must go to the one in the photo, 2 m behind."""
+    import base64
+    from langchain_core.messages import HumanMessage
+    from langrobo_core.tools import photos
+    turns, vlm = scripted
+    jpeg = b"\xff\xd8the-look-photo"
+    photos.record(jpeg, (100, 5), (-0.6, -0.2, -169.0), time.time() - 90, EPOCH, "look")
+    om.remember("white box", 1.15, -0.12, None, EPOCH)               # the wrong one, ahead
+    robot.pose = (0.54, -0.09, 15.0)
+    robot.legs = [{"ok": True, "result": "reached"}]
+    state = dict(STATE, messages=[
+        HumanMessage(content=[{"type": "text", "text": "[Camera view ...]"},
+                              {"type": "image_url", "image_url": {
+                                  "url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()}}]),
+        HumanMessage(content="go near it")])
+    vlm.extend([(300.0, 250.0, (250.0, 200.0, 350.0, 300.0)),        # in the photo
+                (448.0, 250.0, None)])                               # seen again from the viewpoint
+    robot.replies = [_grounded(-1.35, -0.28), _grounded(-1.34, -0.27)]
+    out = approach_described_object.invoke(
+        {"description": "the white rectangular box on the marble floor", "state": state})
+    # 1.9 m away: close enough to judge from here -> turn round to it and look
+    assert len(turns) == 1 and abs(turns[0]) == pytest.approx(171, abs=2), \
+        "turned to the box IN THE PHOTO, behind"
+    assert robot.navs and "also remember" not in out and "still where I saw it" in out
+    nav_x, nav_y = robot.navs[0][:2]
+    assert nav_x < 0, "the final drive is to the box behind, not the one ahead"

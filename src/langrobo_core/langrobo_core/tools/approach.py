@@ -33,6 +33,7 @@ from langgraph.prebuilt import InjectedState
 from ..services import object_memory
 from . import _bridge
 from . import movement as _mv
+from . import photos as _photos
 from . import survey as _survey
 
 # How close the robot parks from the object (metres). Floor: D555 depth goes
@@ -171,9 +172,10 @@ def _capture(bridge, settle_s: float = 2.5, source: str = "search") -> tuple:
             return None, None
     if stamp:
         bridge.hold_frame(stamp)
-    pose, when = bridge.get_current_pose(), time.time()
+    pose, when, epoch = bridge.get_current_pose(), time.time(), bridge.get_origin_epoch()
+    _photos.record(frame, stamp, pose, when, epoch, source)
     # Every photo also feeds object memory with everything in it (survey.py).
-    _survey.submit(frame, stamp, pose, source, when=when, epoch=bridge.get_origin_epoch())
+    _survey.submit(frame, stamp, pose, source, when=when, epoch=epoch)
     return frame, {"stamp": stamp, "pose": pose, "when": when}
 
 
@@ -251,6 +253,34 @@ _FACE_WITHIN_DEG = 20.0
 _JUDGE_FROM_HERE_M = 2.5
 _VIEW_FROM_M = 1.0
 _ALREADY_THERE_M = 0.3    # within this of the viewpoint: look without driving
+
+
+def _in_conversation_photos(bridge, description: str, state: dict, epoch) -> dict | None:
+    """Find the object in the newest photos of the conversation and place it
+    in the room from THAT photo (its held depth + camera pose at the Jetson).
+    Returns the object-memory entry it was stored as, or None."""
+    for jpeg, rec in _photos.in_conversation((state or {}).get("messages", []), limit=2):
+        if rec.get("epoch") != epoch or bridge.motion_interrupted():
+            continue                           # odom restarted: that pose means nothing now
+        try:
+            uv = _vlm_locate(jpeg, description)
+        except Exception:
+            continue
+        if uv is None:
+            continue
+        u, v, *rest = uv
+        res = bridge.ground_pixel(u, v, stamp=rec["stamp"], box=rest[0] if rest else None)
+        if not res.get("ok") or not res.get("at_capture"):
+            continue                           # that photo's depth is gone
+        obj = res.get("object") or {}
+        try:
+            return object_memory.remember(
+                description, obj["x"], obj["y"], rec["pose"], epoch, when=rec["when"],
+                depth_m=res.get("depth_m"), at_capture=True, region=bool(res.get("region")),
+                source=f"conversation:{rec.get('source')}")
+        except (OSError, KeyError, TypeError, ValueError):
+            continue
+    return None
 
 
 def _also_remembered(known: list, pose, name: str) -> str:
@@ -344,13 +374,22 @@ def _approach(description: str, state: dict) -> str:
     # forgotten on the spot and searched for from where the robot stood
     # (owner, 2026-09-27: "go to that area and check; if not found, search").
     epoch = bridge.get_origin_epoch()
-    try:
-        known = object_memory.recall(description, epoch)
-    except OSError:
-        known = []
     pose = bridge.get_current_pose()
+    # 0. The photo we talked about. "What do you see?" -> "a white box" ->
+    #    "go near it": the object is the one IN THAT PHOTO. Ask the vision model
+    #    where it is in that photo and let the Jetson place it with THAT
+    #    photo's depth and pose -- no name matching (owner, 2026-09-27).
+    from_photo = _in_conversation_photos(bridge, description, state, epoch)
+    if from_photo is not None:
+        known, also = [from_photo], ""
+    else:
+        # the remembered list: only for things no longer in the conversation
+        try:
+            known = object_memory.recall(description, epoch)
+        except OSError:
+            known = []
+        also = _also_remembered(known, pose, name)
     rel = object_memory.relative(known[0], pose) if known else None
-    also = _also_remembered(known, pose, name)
     if rel is not None:
         entry = known[0]
         age = object_memory.describe_age(time.time() - entry.get("seen_at", 0))
