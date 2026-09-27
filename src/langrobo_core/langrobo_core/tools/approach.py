@@ -268,10 +268,11 @@ def _in_conversation_photos(bridge, description: str, state: dict, epoch) -> dic
             continue
         if uv is None:
             continue
-        u, v, *rest = uv
-        res = bridge.ground_pixel(u, v, stamp=rec["stamp"], box=rest[0] if rest else None)
-        if not res.get("ok") or not res.get("at_capture"):
-            continue                           # that photo's depth is gone
+        # at the photo's own depth and pose; if that depth is gone and the
+        # robot has not moved since the photo, the newest depth is the same view
+        res = _ground(bridge, uv, {"stamp": rec["stamp"], "pose": rec["pose"]})
+        if not res.get("ok"):
+            continue
         obj = res.get("object") or {}
         try:
             return object_memory.remember(
@@ -463,18 +464,30 @@ def _approach(description: str, state: dict) -> str:
                             f"looking around that spot. ")
 
     # ── 2. Search: the view ahead, then exact 45 degree turns ────────────────
-    for step in range(first_view, _SEARCH_STEPS if uv is None else 0):
+    # Views are kept as headings relative to where the search started. Left
+    # first; when a turn is refused (something in the swing -- 2026-09-27, a
+    # box 0.33 m away ended the search after 2 views), the rest of the circle
+    # is covered from the other side, and only both ways blocked gives up.
+    seen = {0} if first_view else set()
+    offset, direction = 0, 1
+    while uv is None and len(seen) < _SEARCH_STEPS:
         if bridge.motion_interrupted():
             return f"Stopped searching for the {name}."
-        if step > 0:
+        if 0 in seen:
             if Twist is None:
                 break
-            ok, why = _mv.turn_robot(bridge, _SEARCH_STEP_DEG)
+            k = next(k for k in range(1, _SEARCH_STEPS + 1)
+                     if (offset + direction * k * _SEARCH_STEP_DEG) % 360 not in seen)
+            ok, why = _mv.turn_robot(bridge, direction * k * _SEARCH_STEP_DEG)
             if not ok:
                 if why == "interrupted":
                     return f"Stopped searching for the {name}."
-                return (note + f"I couldn't turn to keep looking for the {name} "
-                        f"({why}). It isn't in the {step} view(s) I checked.")
+                if direction == 1:
+                    direction = -1            # blocked this way: finish the circle the other way
+                    continue
+                return (note + f"I couldn't turn either way to keep looking for the "
+                        f"{name} ({why}). It isn't in the {len(seen)} view(s) I checked.")
+            offset = int(offset + direction * k * _SEARCH_STEP_DEG) % 360
         frame, capture = _capture(bridge)
         if frame is None:
             if bridge.motion_interrupted():
@@ -486,8 +499,7 @@ def _approach(description: str, state: dict) -> str:
         except Exception as e:
             return (f"I couldn't analyse the camera image (vision model error: "
                     f"{type(e).__name__}). Try again in a moment.")
-        if uv is not None:
-            break
+        seen.add(offset)
 
     if uv is None:
         if at_the_spot is not None:

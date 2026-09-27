@@ -368,3 +368,57 @@ def test_go_near_it_grounds_in_the_conversation_photo_not_by_name(robot, scripte
     assert robot.navs and "also remember" not in out and "still where I saw it" in out
     nav_x, nav_y = robot.navs[0][:2]
     assert nav_x < 0, "the final drive is to the box behind, not the one ahead"
+
+
+# ── a refused turn does not end the search (floor test 2026-09-27) ──────────
+
+def _turns_refused_after(n_ok, refuse_left_only=True):
+    """turn_robot that allows n_ok left turns, then refuses left (or both)."""
+    done = []
+
+    def turn(bridge, deg):
+        if deg > 0 and sum(1 for d in done if d > 0) >= n_ok:
+            return False, "refused: something 0.33 m away is in the +45 deg swing"
+        if deg < 0 and not refuse_left_only:
+            return False, "refused: something 0.30 m away is in the -45 deg swing"
+        done.append(round(deg))
+        return True, ""
+    return turn, done
+
+
+def test_left_blocked_finishes_the_circle_from_the_right(robot, scripted, monkeypatch):
+    turns, vlm = scripted
+    turn, done = _turns_refused_after(1)
+    monkeypatch.setattr(mv, "turn_robot", turn)
+    vlm.extend([None, None, None, (448.0, 250.0, None)])             # found at the 4th view
+    robot.replies = [_grounded(1.0, -1.0)]
+    out = approach_described_object.invoke({"description": "blue and white robot", "state": dict(STATE)})
+    # views: 0, +45 (left), then -45 (a 90 deg turn back past 0), then -90
+    assert done == [45, -90, -45] and robot.navs and "couldn't turn" not in out
+
+
+def test_blocked_both_ways_says_so(robot, scripted, monkeypatch):
+    turns, vlm = scripted
+    turn, done = _turns_refused_after(1, refuse_left_only=False)
+    monkeypatch.setattr(mv, "turn_robot", turn)
+    out = approach_described_object.invoke({"description": "blue and white robot", "state": dict(STATE)})
+    assert "couldn't turn either way" in out and "2 view(s)" in out and not robot.navs
+
+
+def test_photo_without_depth_uses_the_newest_if_the_robot_has_not_moved(robot, scripted):
+    """The photo landed in a depth gap (no_depth_near_stamp); the robot is
+    where it took it, so the newest depth is the same view."""
+    import base64
+    from langchain_core.messages import HumanMessage
+    from langrobo_core.tools import photos
+    turns, vlm = scripted
+    jpeg = b"\xff\xd8photo-in-a-depth-gap"
+    photos.record(jpeg, (200, 7), (0.0, 0.0, 0.0), time.time() - 60, EPOCH, "look")
+    state = dict(STATE, messages=[HumanMessage(content=[
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()}}])])
+    vlm.extend([(300.0, 250.0, None), (448.0, 250.0, None)])
+    robot.replies = [{"ok": False, "reason": "no_depth_near_stamp"},  # the photo's own depth
+                     _grounded(1.2, 0.1),                             # newest depth, robot still
+                     _grounded(1.2, 0.1)]                             # the final look
+    out = approach_described_object.invoke({"description": "blue and white robot", "state": state})
+    assert robot.navs and "still where I saw it" in out
