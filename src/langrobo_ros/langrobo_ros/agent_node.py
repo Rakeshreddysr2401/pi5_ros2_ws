@@ -354,6 +354,12 @@ class AgentNode(Node):
         # motion tool (visual servoing / timed drive), then replaces pending input.
         self._bridge.cancel_navigation()
         self._bridge.request_motion_stop()
+        # ...and shuts the robot up. The graph-level interrupt below only fires
+        # while a turn is RUNNING; measured 2026-09-26, a reply whose graph had
+        # already finished kept playing for 14-17s with nothing able to stop
+        # it, because tts_node still had synthesised sentences queued. Whoever
+        # just spoke has the floor. A no-op when nothing is playing.
+        self._bridge.publish_speech_stop()
         with self._queue_lock:
             now = time.monotonic()
             if (self._user_pending is not None and self._merge_window > 0
