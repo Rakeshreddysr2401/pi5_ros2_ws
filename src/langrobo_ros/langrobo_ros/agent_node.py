@@ -112,7 +112,15 @@ class AgentNode(Node):
         # how many slots it has and wrap with modulo. Fewer slots than agents
         # just means some agents share again — it never breaks, it only costs.
         # A failed probe leaves the map alone (the server may still be booting).
+        #
+        # The background photo survey (tools/survey.py) needs one more slot of
+        # its own (LANGROBO_SURVEY_SLOT, default 3), so the server wants
+        # --parallel 4. On a smaller server that slot does not exist and every
+        # survey request would fail: fold it onto local_agent's (the same
+        # vision model), never chat's, which the cache warmer keeps hot.
+        from langrobo_core.tools import survey
         slots = dict(registry.SLOTS)
+        need = len(slots) + 1
         if provider == "llamacpp":
             total = self._probe_total_slots(base_url)
             if total and total < len(slots):
@@ -121,9 +129,15 @@ class AgentNode(Node):
                     f"llama.cpp reports {total} slots for {len(registry.SLOTS)} "
                     f"agents — they will share and evict each other's prompt "
                     f"prefix. Start the server with "
-                    f"--parallel {len(registry.SLOTS)}. Slot map: {slots}")
+                    f"--parallel {need}. Slot map: {slots}")
             else:
                 self.get_logger().info(f"KV slot map (one per agent): {slots}")
+            if total and survey.SURVEY_SLOT >= total:
+                survey.SURVEY_SLOT = slots["local_agent"]
+                self.get_logger().warning(
+                    f"llama.cpp has {total} slots: the photo survey shares "
+                    f"local_agent's (slot {survey.SURVEY_SLOT}) and evicts its "
+                    f"image prefix. Start the server with --parallel {need}.")
 
         agent_overrides = {name: {"slot": slot} for name, slot in slots.items()}
         # local_agent may run a different GGUF than the text agents.
@@ -131,18 +145,13 @@ class AgentNode(Node):
             agent_overrides["local_agent"]["model"] = local_agent_model
 
         # ── Named map locations (navigate_to_pose targets) ────────────────
-        # Placeholders until real coordinates exist. The reliable way to fill
-        # them is to drive there and say "save this location as X" — that
-        # writes ~/.langrobo/locations.json, which shadows these on name
-        # collision and survives restarts.
-        self.declare_parameter("locations.kitchen",     [2.5,  1.0,  0.0])
-        self.declare_parameter("locations.living_room", [0.0,  3.0, 90.0])
-        self.declare_parameter("locations.bedroom",     [-2.0, 2.0, 180.0])
-        self.declare_parameter("locations.entrance",    [0.0,  0.0,  0.0])
-        known_locations = {
-            name: tuple(self.get_parameter(f"locations.{name}").value)
-            for name in ("kitchen", "living_room", "bedroom", "entrance")
-        }
+        # Only the ones saved on the robot ("save this location as X" ->
+        # ~/.langrobo/locations.json, served only under the odom origin they
+        # were saved in). No configured defaults: odom starts at zero wherever
+        # the robot boots, so fixed coordinates -- the four placeholder rooms
+        # that used to be here -- were a different spot every power-on, and
+        # were served with no origin check at all.
+        known_locations: dict = {}
 
         # ── Robot body: real rover (ESP32) vs Gazebo sim (rover_sim) ────────
         # Only affects the cmd_vel wire shape/topic in ROS2Bridge — see
@@ -173,7 +182,6 @@ class AgentNode(Node):
         self._bridge.register_system_turn_callback(self._enqueue_system)
         # Background photo survey (every photo -> object memory) waits while
         # a turn is running: the Mac runs one model and the turn comes first.
-        from langrobo_core.tools import survey
         survey.set_busy_probe(lambda: self._turn_active or self._user_pending is not None)
 
         # ── Build graph ───────────────────────────────────────────────────
@@ -280,7 +288,21 @@ class AgentNode(Node):
             "queued_telegram_messages": queued_telegram,
             "user_input_pending": user_pending,
             "telegram": self._telegram.status(),
+            "photo_survey": self._survey_status(),
         }
+
+    def _survey_status(self) -> dict:
+        """Photo survey counters plus how much object memory holds now: "the
+        robot doesn't remember anything" should be one line of /status."""
+        from langrobo_core.services import object_memory
+        from langrobo_core.tools import survey
+        out = survey.status()
+        try:
+            out["remembered_objects"] = len(
+                object_memory.recall("", self._bridge.get_origin_epoch()))
+        except OSError:
+            out["remembered_objects"] = None
+        return out
 
     # ── Startup readiness check ───────────────────────────────────────────
 

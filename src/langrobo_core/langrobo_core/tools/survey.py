@@ -27,6 +27,16 @@ Rules that keep it from getting in the way:
     runs one model; a survey competing with a turn slows the turn).
     set_busy_probe() is how agent_node says "a turn is running"; approach
     wraps its search in paused().
+  * And it GIVES WAY mid-photo: a turn that starts during the VLM call
+    cancels it (the connection closes and llama.cpp stops generating), and
+    one that starts while the objects are being placed stops the placing.
+    The photo goes back to the front of the queue -- with its object list
+    if it already has one, so the VLM is not asked twice -- and resumes once
+    the brain is idle. Before this, a survey that had just started made the
+    next reply wait up to ~40 s for it.
+  * Each object remembers WHICH photo placed it (`photo`: the camera stamp),
+    so "go near it" about a photo the survey has done needs no VLM call at
+    all (approach._in_conversation_photos).
   * On its own llama.cpp slot (LANGROBO_SURVEY_SLOT, default 3 -- the free one),
     unstreamed (streamed, this server files marked-up answers as hidden text).
   * Only photo-time grounding is kept (at_capture): an object placed with
@@ -76,7 +86,25 @@ _cv = threading.Condition()
 _paused = 0
 _thread: threading.Thread | None = None
 _busy_probe = lambda: False       # noqa: E731 -- set by agent_node
-stats = {"photos": 0, "objects": 0, "skipped": 0, "errors": 0}
+stats = {"photos": 0, "objects": 0, "skipped": 0, "errors": 0, "yielded": 0,
+         "last_error": None, "last_photo_at": None}
+
+
+class Yielded(Exception):
+    """A turn or search started: this photo was put back to finish later."""
+
+
+def _should_yield() -> bool:
+    return bool(_paused) or _busy_probe()
+
+
+def status() -> dict:
+    """For /status and `fleet.sh check`: is the survey keeping up, and is
+    it failing?"""
+    with _cv:
+        queued = len(_queue)
+    return {**stats, "queued": queued, "slot": SURVEY_SLOT,
+            "running": bool(_thread and _thread.is_alive())}
 
 
 def set_busy_probe(probe) -> None:
@@ -128,12 +156,18 @@ def _worker() -> None:
             while not _queue or _paused:
                 _cv.wait(timeout=1.0)
             rec = _queue.popleft()
-        while _busy_probe() or _paused:        # a turn or search is running
+        while _should_yield():                 # a turn or search is running
             time.sleep(0.5)
         try:
             survey_photo(rec)
+        except Yielded:
+            stats["yielded"] += 1
+            with _cv:
+                if len(_queue) < MAX_QUEUE:    # full: newer photos win
+                    _queue.appendleft(rec)     # first in line once idle
         except Exception as e:                 # a survey must never kill the thread
             stats["errors"] += 1
+            stats["last_error"] = f"{type(e).__name__}: {e}"[:200]
             logger.warning("photo survey failed (%s): %s", rec["source"], e)
 
 
@@ -164,7 +198,9 @@ def parse_objects(text: str, width: int, height: int) -> list:
 
 
 def list_objects(frame: bytes) -> list:
-    """Ask the vision model what is in the photo: [(label, box px)]."""
+    """Ask the vision model what is in the photo: [(label, box px)].
+    Raises Yielded if a turn starts while it is waiting on the model."""
+    import asyncio
     import base64
     import io
 
@@ -177,11 +213,32 @@ def list_objects(frame: bytes) -> list:
     width, height = Image.open(io.BytesIO(frame)).size
     b64 = base64.b64encode(frame).decode()
     llm = get_llm("local_agent", slot=SURVEY_SLOT, streaming=False, max_tokens=600)
-    reply = llm.invoke([HumanMessage(content=[
+    msgs = [HumanMessage(content=[
         {"type": "text", "text": _PROMPT.format(n=MAX_OBJECTS)},
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-    ])], config={"run_name": "photo_survey", "tags": ["photo_survey"]})
+    ])]
+    reply = asyncio.run(_invoke_unless_needed(llm, msgs))
     return parse_objects(strip_thought_residue(str(reply.content)), width, height)
+
+
+async def _invoke_unless_needed(llm, msgs):
+    """llm.ainvoke, cancelled the moment a turn wants the Mac. Cancelling
+    the task closes the HTTP connection, and llama.cpp drops a request whose
+    client has gone -- so the model is free for the turn at once, not after
+    this photo's ~5-40 s."""
+    import asyncio
+    task = asyncio.ensure_future(llm.ainvoke(
+        msgs, config={"run_name": "photo_survey", "tags": ["photo_survey"]}))
+    while not task.done():
+        if _should_yield():
+            task.cancel()
+            try:
+                await task
+            except BaseException:          # CancelledError, or it failed anyway
+                pass
+            raise Yielded()
+        await asyncio.wait({task}, timeout=0.2)
+    return task.result()
 
 
 def survey_photo(rec: dict) -> int:
@@ -195,8 +252,12 @@ def survey_photo(rec: dict) -> int:
     if time.time() - rec["when"] > _MAX_PHOTO_AGE_S:
         stats["skipped"] += 1
         return 0
-    placed = 0
-    for label, box in list_objects(rec["frame"]):
+    if "objects" not in rec:                   # not already listed before a yield
+        rec["objects"] = list_objects(rec["frame"])
+    while rec["objects"]:
+        if _should_yield():
+            raise Yielded()                    # the rest is placed after the turn
+        label, box = rec["objects"].pop(0)
         u, v = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
         res = bridge.ground_pixel(u, v, stamp=rec["stamp"], box=box)
         if not res.get("ok") or not res.get("at_capture"):
@@ -206,11 +267,14 @@ def survey_photo(rec: dict) -> int:
             object_memory.remember(
                 label, obj["x"], obj["y"], rec["pose"], epoch, when=rec["when"],
                 depth_m=res.get("depth_m"), at_capture=True,
-                region=bool(res.get("region")), source=f"survey:{rec['source']}")
-            placed += 1
+                region=bool(res.get("region")), source=f"survey:{rec['source']}",
+                photo=list(rec["stamp"]))
+            rec["placed"] = rec.get("placed", 0) + 1
         except (OSError, KeyError, TypeError, ValueError):
             continue
+    placed = rec.get("placed", 0)
     stats["photos"] += 1
+    stats["last_photo_at"] = time.time()
     stats["objects"] += placed
     logger.info("photo survey (%s): %d object(s) placed", rec["source"], placed)
     return placed

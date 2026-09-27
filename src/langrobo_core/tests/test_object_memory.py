@@ -181,8 +181,17 @@ def scripted(monkeypatch, fake_twist):
     turns, vlm = [], []
     monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5, source="search": (b"jpeg", {"stamp": (1, 2), "pose": b.pose}))
     monkeypatch.setattr(ap, "_vlm_locate", lambda f, d: vlm.pop(0) if vlm else None)
-    monkeypatch.setattr(mv, "turn_robot", lambda b, deg: (turns.append(round(deg)) or (True, "")))
+    monkeypatch.setattr(mv, "turn_robot", lambda b, deg: (turns.append(round(deg)) or _rotate(b, deg)))
     return turns, vlm
+
+
+def _rotate(bridge, deg):
+    """The pose turns with the robot, as fusion's does: the search aims each
+    view from the measured heading."""
+    if bridge.pose:
+        x, y, h = bridge.pose
+        bridge.pose = (x, y, (h + deg + 180.0) % 360.0 - 180.0)
+    return True, ""
 
 
 def test_remembered_and_still_there_turns_to_it_and_goes(robot, scripted):
@@ -372,17 +381,19 @@ def test_go_near_it_grounds_in_the_conversation_photo_not_by_name(robot, scripte
 
 # ── a refused turn does not end the search (floor test 2026-09-27) ──────────
 
-def _turns_refused_after(n_ok, refuse_left_only=True):
-    """turn_robot that allows n_ok left turns, then refuses left (or both)."""
+def _turns_refused_after(n_ok, refuse_left_only=True, swung=0.0):
+    """turn_robot that allows n_ok left turns, then refuses left (or both).
+    swung: how far a refused left turn got before goal_exec stopped it."""
     done = []
 
     def turn(bridge, deg):
         if deg > 0 and sum(1 for d in done if d > 0) >= n_ok:
+            _rotate(bridge, swung)
             return False, "refused: something 0.33 m away is in the +45 deg swing"
         if deg < 0 and not refuse_left_only:
             return False, "refused: something 0.30 m away is in the -45 deg swing"
         done.append(round(deg))
-        return True, ""
+        return _rotate(bridge, deg)
     return turn, done
 
 
@@ -395,6 +406,18 @@ def test_left_blocked_finishes_the_circle_from_the_right(robot, scripted, monkey
     out = approach_described_object.invoke({"description": "blue and white robot", "state": dict(STATE)})
     # views: 0, +45 (left), then -45 (a 90 deg turn back past 0), then -90
     assert done == [45, -90, -45] and robot.navs and "couldn't turn" not in out
+
+
+def test_a_refused_turn_that_swung_part_way_is_turned_back_from(robot, scripted, monkeypatch):
+    """goal_exec stopped the refused +45 after 20 deg: the next view (-45 from
+    the start) is 65 deg back from where the robot really is, not 90."""
+    turns, vlm = scripted
+    turn, done = _turns_refused_after(1, swung=20.0)
+    monkeypatch.setattr(mv, "turn_robot", turn)
+    vlm.extend([None, None, (448.0, 250.0, None)])                   # found at the 3rd view
+    robot.replies = [_grounded(1.0, -1.0)]
+    approach_described_object.invoke({"description": "blue and white robot", "state": dict(STATE)})
+    assert done == [45, -110] and robot.pose[2] == pytest.approx(-45.0)
 
 
 def test_blocked_both_ways_says_so(robot, scripted, monkeypatch):
@@ -422,3 +445,42 @@ def test_photo_without_depth_uses_the_newest_if_the_robot_has_not_moved(robot, s
                      _grounded(1.2, 0.1)]                             # the final look
     out = approach_described_object.invoke({"description": "blue and white robot", "state": state})
     assert robot.navs and "still where I saw it" in out
+
+
+# ── "go near it" about a photo the survey has already done: no VLM call ─────
+
+def _conversation_photo(jpeg, stamp):
+    import base64
+    from langchain_core.messages import HumanMessage
+    from langrobo_core.tools import photos
+    photos.record(jpeg, stamp, (0.0, 0.0, 0.0), time.time() - 30, EPOCH, "look")
+    return dict(STATE, messages=[HumanMessage(content=[
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()}}])])
+
+
+def test_a_surveyed_photo_is_answered_from_memory_without_asking_the_vlm(robot, scripted, monkeypatch):
+    turns, vlm = scripted
+    asked = []
+    monkeypatch.setattr(ap, "_vlm_locate", lambda f, d: asked.append(f) or (vlm.pop(0) if vlm else None))
+    jpeg = b"\xff\xd8the-surveyed-photo"
+    state = _conversation_photo(jpeg, (300, 9))
+    om.remember("white box", 1.0, 0.0, (0.0, 0.0, 0.0), EPOCH, photo=[300, 9])    # the survey's entry
+    vlm.append((448.0, 250.0, None))                                  # the confirming look
+    robot.replies = [_grounded(1.0, 0.0)]
+    out = approach_described_object.invoke({"description": "the white rectangular box", "state": state})
+    assert jpeg not in asked, "the conversation photo was sent to the VLM"
+    assert asked == [b"jpeg"] and "still where I saw it" in out and robot.navs
+
+
+def test_a_match_from_another_photo_does_not_stand_for_this_one(robot, scripted, monkeypatch):
+    """Memory's white box came from a different photo: the photo we talked
+    about is still asked about -- it may show a different white box."""
+    turns, vlm = scripted
+    asked = []
+    monkeypatch.setattr(ap, "_vlm_locate", lambda f, d: asked.append(f) or (vlm.pop(0) if vlm else None))
+    jpeg = b"\xff\xd8the-photo-we-talked-about"
+    state = _conversation_photo(jpeg, (301, 1))
+    om.remember("white box", 3.0, 3.0, (0.0, 0.0, 0.0), EPOCH, photo=[999, 1])
+    vlm.extend([None])                                                # not in the photo
+    approach_described_object.invoke({"description": "white box", "state": state})
+    assert asked and asked[0] == jpeg

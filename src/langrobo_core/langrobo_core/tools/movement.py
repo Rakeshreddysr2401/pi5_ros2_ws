@@ -518,10 +518,10 @@ def navigate_to_pose(location: str,
     """Send the robot to a saved named location. Nav2 plans the route and
     avoids obstacles on the way.
 
-    Use for places the robot already knows: 'kitchen', 'bedroom', 'entrance',
-    or anything saved with save_location. Call list_saved_locations if you are
-    not sure a name exists. For something the user describes rather than names
-    ("the red bottle"), use approach_described_object instead.
+    Use for places saved with save_location (e.g. 'kitchen', once someone has
+    saved it there). Call list_saved_locations if you are not sure a name
+    exists. For something the user describes rather than names ("the red
+    bottle"), use approach_described_object instead.
 
     Returns immediately — the robot drives in the background. A system message
     arrives when it gets there, or fails."""
@@ -536,8 +536,10 @@ def navigate_to_pose(location: str,
     loc = location.lower().strip()
 
     if loc not in known:
-        available = ", ".join(known.keys()) if known else "none configured yet"
-        return f"Unknown location '{location}'. Available: {available}"
+        if not known:
+            return (f"I don't know where '{location}' is: no places are saved yet. "
+                    f"Drive me there and say 'save this location as {loc}'.")
+        return f"Unknown location '{location}'. Available: {', '.join(known.keys())}"
 
     global _last_nav_requester
     _last_nav_requester = {

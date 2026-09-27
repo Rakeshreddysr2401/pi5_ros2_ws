@@ -225,19 +225,36 @@ check)
     done
     [ "$(systemctl --user is-active langrobo-voice)" = active ] && ok "langrobo-voice" "" \
         || bad "langrobo-voice" "systemctl --user restart langrobo-voice"
-    audio=$(journalctl --user -u langrobo-voice -b -o cat 2>/dev/null | grep -E "audio ready:|no audio device" | tail -1 | sed 's/.*pi5_audio_device\]: //')
+    # `|| true` on every lookup below: the script runs under pipefail, and a
+    # grep that finds nothing (no speaker this boot) or a curl that fails
+    # ended the WHOLE check there, silently, instead of printing its FAIL.
+    audio=$(journalctl --user -u langrobo-voice -b -o cat 2>/dev/null | grep -E "audio ready:|no audio device" | tail -1 | sed 's/.*pi5_audio_device\]: //' || true)
     case "$audio" in *"audio ready"*) ok "speaker + mic" "${audio#audio ready: }" ;;
                      *) bad "speaker + mic" "${audio:-none yet} -- switch the earbuds/speaker on (/bt-audio)" ;; esac
-    st=$(curl -s -m4 localhost:8090/status)
+    st=$(curl -s -m4 localhost:8090/status || true)
     if [ -z "$st" ]; then
         bad "brain health API :8090" "brain not answering -- journalctl -u langrobo-brain -n 50"
     else
         echo "$st" | grep -q '"primary_available": *true' && ok "LLM (Mac Mini) via brain" "" \
             || bad "LLM (Mac Mini) via brain" "check llama.cpp on singireddys-mac-mini.local:8080"
+        # Photo survey = object memory. Failing with nothing placed is how a
+        # missing slot or a dead depth hold looks: the robot remembers nothing.
+        sv=$(echo "$st" | python3 -c '
+import sys, json
+s = json.load(sys.stdin).get("runtime", {}).get("photo_survey")
+if s:
+    d = "%s photos, %s placed, %s remembered, %s queued, %s errors (slot %s)" % (
+        s["photos"], s["objects"], s.get("remembered_objects"), s["queued"], s["errors"], s["slot"])
+    if s["errors"] and not s["objects"]:
+        print("bad|" + d + " -- last: " + str(s.get("last_error")))
+    else:
+        print("ok|" + d)' 2>/dev/null || true)
+        case "$sv" in ok\|*)  ok "photo survey" "${sv#ok|}" ;;
+                      bad\|*) bad "photo survey" "${sv#bad|}" ;; esac
     fi
-    n=$(curl -s -m4 http://singireddys-mac-mini.local:8080/slots | python3 -c "import sys,json;print(len(json.load(sys.stdin)))" 2>/dev/null)
-    at_least "$n" 3 && ok "LLM KV slots" "$n (need >= 3)" || bad "LLM KV slots" "${n:-none} -- restart llama.cpp with --jinja --parallel 3"
-    m=$(curl -s -m4 localhost:8091/mode)
+    n=$(curl -s -m4 http://singireddys-mac-mini.local:8080/slots | python3 -c "import sys,json;print(len(json.load(sys.stdin)))" 2>/dev/null || true)
+    at_least "$n" 4 && ok "LLM KV slots" "$n (need >= 4: 3 agents + photo survey)" || bad "LLM KV slots" "${n:-none} -- restart llama.cpp with --jinja --parallel 4"
+    m=$(curl -s -m4 localhost:8091/mode || true)
     case "$m" in *'"manual": false'*|*'"manual":false'*) ok "teleop" "AUTO" ;;
                  "") bad "teleop :8091" "not answering (~/langrobo_teleop/teleop_web.py)" ;;
                  *) bad "teleop" "MANUAL -- it streams zeros and cancels nav2; flip to AUTO" ;; esac

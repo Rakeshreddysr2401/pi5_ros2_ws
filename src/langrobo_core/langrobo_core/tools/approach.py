@@ -258,10 +258,29 @@ _ALREADY_THERE_M = 0.3    # within this of the viewpoint: look without driving
 def _in_conversation_photos(bridge, description: str, state: dict, epoch) -> dict | None:
     """Find the object in the newest photos of the conversation and place it
     in the room from THAT photo (its held depth + camera pose at the Jetson).
-    Returns the object-memory entry it was stored as, or None."""
-    for jpeg, rec in _photos.in_conversation((state or {}).get("messages", []), limit=2):
-        if rec.get("epoch") != epoch or bridge.motion_interrupted():
-            continue                           # odom restarted: that pose means nothing now
+    Returns the object-memory entry it was stored as, or None.
+
+    Free first: the background survey has usually already listed and placed
+    everything in these photos, each entry tagged with the photo it came
+    from. A match placed FROM ONE OF THESE PHOTOS is the thing in the photo
+    -- no VLM call (each costs 5-40 s). Only a photo the survey has not
+    done, or that has no such match, is asked about."""
+    shown = [(jpeg, rec) for jpeg, rec in
+             _photos.in_conversation((state or {}).get("messages", []), limit=2)
+             if rec.get("epoch") == epoch]     # odom restarted: that pose means nothing now
+    if not shown:
+        return None
+    try:
+        remembered = object_memory.recall(description, epoch)
+    except OSError:
+        remembered = []
+    for _, rec in shown:                       # newest photo first
+        for e in remembered:                   # best match first
+            if list(e.get("photo") or ()) == list(rec["stamp"]):
+                return e
+    for jpeg, rec in shown:
+        if bridge.motion_interrupted():
+            return None
         try:
             uv = _vlm_locate(jpeg, description)
         except Exception:
@@ -278,7 +297,7 @@ def _in_conversation_photos(bridge, description: str, state: dict, epoch) -> dic
             return object_memory.remember(
                 description, obj["x"], obj["y"], rec["pose"], epoch, when=rec["when"],
                 depth_m=res.get("depth_m"), at_capture=True, region=bool(res.get("region")),
-                source=f"conversation:{rec.get('source')}")
+                source=f"conversation:{rec.get('source')}", photo=list(rec["stamp"]))
         except (OSError, KeyError, TypeError, ValueError):
             continue
     return None
@@ -468,8 +487,12 @@ def _approach(description: str, state: dict) -> str:
     # first; when a turn is refused (something in the swing -- 2026-09-27, a
     # box 0.33 m away ended the search after 2 views), the rest of the circle
     # is covered from the other side, and only both ways blocked gives up.
+    # Each turn is aimed from the MEASURED heading, not the planned one: a
+    # refused turn may already have swung part-way (goal_exec stops where the
+    # obstacle is), and turning on from the plan would skew every later view.
     seen = {0} if first_view else set()
     offset, direction = 0, 1
+    start = bridge.get_current_pose()
     while uv is None and len(seen) < _SEARCH_STEPS:
         if bridge.motion_interrupted():
             return f"Stopped searching for the {name}."
@@ -478,7 +501,11 @@ def _approach(description: str, state: dict) -> str:
                 break
             k = next(k for k in range(1, _SEARCH_STEPS + 1)
                      if (offset + direction * k * _SEARCH_STEP_DEG) % 360 not in seen)
-            ok, why = _mv.turn_robot(bridge, direction * k * _SEARCH_STEP_DEG)
+            now = bridge.get_current_pose()
+            drift = 0.0
+            if start and now:
+                drift = (offset - (now[2] - start[2]) + 180.0) % 360.0 - 180.0
+            ok, why = _mv.turn_robot(bridge, direction * k * _SEARCH_STEP_DEG + drift)
             if not ok:
                 if why == "interrupted":
                     return f"Stopped searching for the {name}."

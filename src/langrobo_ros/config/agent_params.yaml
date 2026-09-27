@@ -54,13 +54,12 @@ agent_node:
     # Set to your multimodal GGUF if the global model is text-only.
     local_agent_model: ""
 
-    # ── Named map locations (phase-2 nav/SLAM slot) ───────────────────────
-    # navigate_to_pose() targets. Update with real coordinates once a SLAM map
-    # exists (drive to each spot, read /visual_slam/tracking/odometry).
-    locations.kitchen:     [2.5,  1.0,   0.0]   # [x_m, y_m, yaw_deg]
-    locations.living_room: [0.0,  3.0,  90.0]
-    locations.bedroom:     [-2.0, 2.0, 180.0]
-    locations.entrance:    [0.0,  0.0,   0.0]
+    # ── Named locations: none configured here, on purpose ─────────────────
+    # Places come only from "save this location as X" (save_location ->
+    # ~/.langrobo/locations.json, stamped with the odom origin). There used to
+    # be four placeholder rooms here, but odom restarts at zero wherever the
+    # robot boots, so fixed coordinates pointed at a different spot every
+    # power-on and were offered as if they were real.
 
     # ── Robot body (sim vs rover) ──────────────────────────────────────────
     # Which physical/simulated body this brain is driving cmd_vel to. The real

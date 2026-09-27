@@ -117,3 +117,70 @@ def test_nothing_is_surveyed_while_paused_or_busy(monkeypatch):
         assert done.wait(3.0), "never surveyed once idle"
     finally:
         sv.set_busy_probe(lambda: False)
+
+
+# ── giving way to a turn mid-photo ──────────────────────────────────────────
+
+def test_placed_objects_remember_their_photo(monkeypatch):
+    monkeypatch.setattr(_bridge, "_instance", _Bridge([_grounded(1.5, 0.4)]))
+    monkeypatch.setattr(sv, "list_objects", lambda f: [("white chair", (100, 50, 300, 250))])
+    sv.survey_photo(_rec())
+    (chair,) = om.recall("white chair", EPOCH)
+    assert chair["photo"] == [100, 5]
+
+
+def test_a_turn_during_placing_puts_the_rest_back_without_asking_again(monkeypatch):
+    bridge = _Bridge([_grounded(1.5, 0.4), _grounded(-0.8, 2.0)])
+    monkeypatch.setattr(_bridge, "_instance", bridge)
+    listed = []
+    monkeypatch.setattr(sv, "list_objects", lambda f: listed.append(1) or [
+        ("white chair", (100, 50, 300, 250)), ("black bag", (500, 300, 600, 400))])
+    busy = {"on": False}
+    real = bridge.ground_pixel
+
+    def ground_then_turn(*a, **k):
+        busy["on"] = True                        # someone speaks after the first object
+        return real(*a, **k)
+    bridge.ground_pixel = ground_then_turn
+    sv.set_busy_probe(lambda: busy["on"])
+    try:
+        rec = _rec()
+        with pytest.raises(sv.Yielded):
+            sv.survey_photo(rec)
+        assert len(om.recall("", EPOCH)) == 1 and [o[0] for o in rec["objects"]] == ["black bag"]
+        busy["on"] = False
+        bridge.ground_pixel = real
+        assert sv.survey_photo(rec) == 2         # resumed: both counted, VLM asked once
+        assert listed == [1] and len(om.recall("", EPOCH)) == 2
+    finally:
+        sv.set_busy_probe(lambda: False)
+
+
+def test_a_turn_cancels_the_vlm_call_in_flight(monkeypatch):
+    """The Mac is freed at once: the request is cancelled, not waited out."""
+    import asyncio
+    cancelled = threading.Event()
+
+    class SlowLLM:
+        async def ainvoke(self, msgs, config=None):
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+    busy = {"on": False}
+    sv.set_busy_probe(lambda: busy["on"])
+    threading.Timer(0.3, lambda: busy.update(on=True)).start()
+    t0 = time.time()
+    try:
+        with pytest.raises(sv.Yielded):
+            asyncio.run(sv._invoke_unless_needed(SlowLLM(), []))
+    finally:
+        sv.set_busy_probe(lambda: False)
+    assert cancelled.is_set() and time.time() - t0 < 2.0
+
+
+def test_status_reports_counts_and_queue():
+    s = sv.status()
+    assert {"photos", "objects", "errors", "yielded", "queued", "slot"} <= set(s)

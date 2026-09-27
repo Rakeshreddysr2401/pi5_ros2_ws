@@ -78,3 +78,32 @@ def test_frame_eviction_keeps_newest_two():
     tombstones = [m for m in out if isinstance(m, HumanMessage)
                   and isinstance(m.content, str) and "frame removed" in m.content]
     assert len(tombstones) >= 1
+
+
+def _telegram_photo_turn():
+    return HumanMessage(content=[
+        {"type": "text", "text": "[Telegram from Mom — photo attached] is this my bag?"},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,PHOTO"}},
+    ])
+
+
+def test_a_telegram_photo_is_a_user_turn_not_a_camera_frame():
+    from langrobo_core.utils.history import is_camera_frame
+    assert is_camera_frame(_frame(0))
+    assert not is_camera_frame(_telegram_photo_turn())
+
+
+def test_the_user_query_is_the_request_not_look_s_frame():
+    """'look, then go near the box': local_agent's look() puts a frame after
+    the request, and the handover note must still quote the request."""
+    from langrobo_core.graph.handover_resolver import last_user_query
+    msgs = [
+        HumanMessage(content="look and go near the white box"),
+        AIMessage(content="", tool_calls=[
+            {"name": "look", "args": {}, "id": "l1", "type": "tool_call"}]),
+        ToolMessage(content="Captured the current camera view.", name="look", tool_call_id="l1"),
+        _frame(1),
+    ]
+    assert last_user_query({"messages": msgs}) == "look and go near the white box"
+    photo = _telegram_photo_turn()
+    assert last_user_query({"messages": [photo]}).endswith("is this my bag?")

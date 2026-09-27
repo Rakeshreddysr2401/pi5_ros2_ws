@@ -1015,9 +1015,12 @@ class ROS2Bridge:
         if self._reach_goal_pub.get_subscription_count() == 0:
             return {"ok": False, "result": "unavailable",
                     "why": "reach is not running on the Jetson (./rover nav)"}
-        self.cancel_navigation()
+        # Key first, THEN cancel -- same order as start_nav_to_pose: a
+        # background drive woken by the cancel must already see it has been
+        # superseded, or its /reach/cancel can land after this goal and kill it.
         stamp, key = self._stamp_now()
         self._reach_current_key = key
+        self.cancel_navigation()
         self._reach_goal_pub.publish(self._pose_msg(x, y, math.radians(yaw_deg), stamp))
         t0 = time.monotonic()
         try:

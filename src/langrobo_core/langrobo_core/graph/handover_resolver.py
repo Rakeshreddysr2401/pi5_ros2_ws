@@ -15,6 +15,7 @@ from langgraph.types import Command
 from .state import AgentState
 from ..agent_ids import ROUTABLE
 from ..registry import AGENTS
+from ..utils.history import is_camera_frame
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +52,14 @@ def last_user_query(state: AgentState) -> str:
     """The text of this turn's real user message -- the last HumanMessage in
     history, regardless of how many handover hops came after it. Public: also
     used by graph/build.py's vision-question backstop, which needs the same
-    "what did the person actually ask" signal outside a handover."""
+    "what did the person actually ask" signal outside a handover.
+
+    Skips look()'s camera frames: they are HumanMessages too (images only
+    reach llama.cpp in user-role messages), so "look, then go near the box"
+    used to hand navigate the note 'The user said: "[Camera view — taken
+    at ...]"' instead of the request."""
     for msg in reversed(state["messages"]):
-        if isinstance(msg, HumanMessage):
+        if isinstance(msg, HumanMessage) and not is_camera_frame(msg):
             c = msg.content
             return c if isinstance(c, str) else " ".join(
                 p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text"

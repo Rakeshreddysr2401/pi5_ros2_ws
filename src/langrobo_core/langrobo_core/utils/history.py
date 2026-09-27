@@ -35,15 +35,19 @@ def has_image(msg) -> bool:
 
 
 def is_camera_frame(msg) -> bool:
-    """True for a look()-injected camera-view HumanMessage (live or evicted)."""
+    """True for a look()-injected camera-view HumanMessage (live or evicted).
+
+    Decided by look()'s label, not by carrying an image: a Telegram photo
+    turn carries one too, and it is a real user message -- a turn boundary
+    for trimming, and the request last_user_query must return."""
     if not isinstance(msg, HumanMessage):
         return False
     content = msg.content
     if isinstance(content, str):
         return content.startswith(CAMERA_VIEW_MARKER)
     if isinstance(content, list):
-        return has_image(msg) or any(
-            isinstance(p, dict) and CAMERA_VIEW_MARKER in p.get("text", "")
+        return any(
+            isinstance(p, dict) and p.get("text", "").startswith(CAMERA_VIEW_MARKER)
             for p in content
         )
     return False
