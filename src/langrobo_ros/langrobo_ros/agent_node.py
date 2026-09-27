@@ -294,15 +294,18 @@ class AgentNode(Node):
     def _warn_if_competing_bridge(self) -> None:
         """Say so if another graph is on the bus driving the same robot.
 
-        LangGraph Studio raises /studio_bridge beside /agent_node, runs the
-        same graph, polls the same Telegram bot and publishes the same
-        /cmd_vel. Whichever picks up a request runs it -- and Studio's bridge
-        registers no nav-done callback, so navigations it takes finish
-        silently. From the Telegram side the two are indistinguishable until a
-        report goes missing, which is exactly how 2026-09-10 was spent.
+        LangGraph Studio raises /studio_bridge beside /agent_node and runs the
+        same graph on the same /cmd_vel. It takes input ONLY from the Studio
+        page -- it never subscribes to /voice/user_input and never polls
+        Telegram (graph_studio.py only configures the send side), so it cannot
+        steal a spoken or Telegram request. What it can do is drive: a
+        navigation started from Studio registers no nav-done callback and
+        finishes with nobody told. On 2026-09-10 that looked, from Telegram,
+        like reports going missing.
 
-        Advisory only. Studio is a legitimate thing to run; it just must not
-        run at the same time as this, and the log should say which one it is.
+        Advisory only, and a WARNING: the Jetson's `./rover up` starts Studio
+        on every cold boot, so this fires on healthy boots and must read as
+        information, not as a fault.
         """
         # NAMED, not a "*_bridge" wildcard. The first version of this check
         # matched any node ending in _bridge and immediately fired on
@@ -317,12 +320,11 @@ class AgentNode(Node):
         except Exception:
             return
         if others:
-            self.get_logger().error(
-                f"another bridge is live on this bus: {', '.join(others)}. It "
-                f"runs the same graph and polls the same Telegram bot, and a "
-                f"navigation it picks up will finish with no listener and "
-                f"report to nobody. Stop it before driving from Telegram: "
-                f"pkill -f 'langgrap[h] dev'")
+            self.get_logger().warning(
+                f"Studio is running beside this brain ({', '.join(others)}). "
+                f"Voice and Telegram still come here only; but a drive started "
+                f"FROM the Studio page reports its arrival to nobody. To drive "
+                f"from Studio, stop this brain first.")
 
     def _on_nav_done(self, success: bool, message: str) -> None:
         """Called by bridge when Nav2 goal finishes. Injects system message.
