@@ -396,6 +396,9 @@ def scan_surroundings() -> str:
     the robot hasn't seen from all sides.
 
     Takes about 15 seconds."""
+    refusal = _mv.blocked_by_manual()     # a full turn against MANUAL's zeros goes nowhere
+    if refusal:
+        return refusal
     bridge = _bridge.get()
     bridge.clear_motion_stop()
 

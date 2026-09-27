@@ -379,6 +379,14 @@ def move_robot(command: str) -> str:
     except ValueError as e:
         return f"Bad movement command ({e}). Nothing was moved."
 
+    # MANUAL zeroes /cmd_vel at 10 Hz: an exact move then stalls against it
+    # and a timed one reports "done" having gone nowhere. A pure stop ("S")
+    # is what MANUAL does anyway, so only a step that moves is refused.
+    if any(c != "S" for c, _ in steps):
+        refusal = blocked_by_manual()
+        if refusal:
+            return refusal
+
     labels = [_label(c, v) for c, v in steps]
     bridge.clear_motion_stop()   # this is a deliberate move - start with a clean slate
 

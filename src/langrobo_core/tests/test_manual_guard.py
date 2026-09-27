@@ -15,8 +15,8 @@ import pytest
 
 from langrobo_core.bridges import StubBridge
 from langrobo_core.tools import _bridge
-from langrobo_core.tools.approach import approach_described_object
-from langrobo_core.tools.movement import blocked_by_manual, navigate_to_pose
+from langrobo_core.tools.approach import approach_described_object, scan_surroundings
+from langrobo_core.tools.movement import blocked_by_manual, move_robot, navigate_to_pose
 import langrobo_core.tools.approach as ap
 import langrobo_core.tools.movement as mv
 
@@ -68,7 +68,7 @@ def test_refusal_says_who_can_fix_it(monkeypatch):
     assert "AUTO" in msg
 
 
-# ── Both driving tools honour it ────────────────────────────────────────────
+# ── Every driving tool honours it ────────────────────────────────────────────
 
 def test_navigate_to_pose_refuses_in_manual(monkeypatch):
     monkeypatch.setattr(mv, "teleop_is_manual", lambda: True)
@@ -116,3 +116,32 @@ def test_approach_proceeds_normally_in_auto(monkeypatch):
         {"description": "white bucket", "state": dict(VOICE_STATE)})
     assert "MANUAL" not in out
     assert started, "a Nav2 goal should have been sent"
+
+
+def test_move_robot_refuses_in_manual(monkeypatch):
+    """An exact move stalls against MANUAL's zeros; a timed one would report
+    "done" having gone nowhere -- the 2026-09-10 failure in a new tool."""
+    monkeypatch.setattr(mv, "teleop_is_manual", lambda: True)
+    moved = []
+    monkeypatch.setattr(mv, "exact_turn", lambda b, d: moved.append(("turn", d)))
+    monkeypatch.setattr(mv, "exact_drive", lambda b, m: moved.append(("drive", m)))
+    monkeypatch.setattr(_bridge.get(), "publish_twist", lambda *a, **k: moved.append("twist"))
+    out = move_robot.invoke({"command": "L:90,F:20"})
+    assert "MANUAL" in out
+    assert moved == []
+
+
+def test_move_robot_stop_still_works_in_manual(monkeypatch):
+    """"S" is what MANUAL does anyway; refusing it would be absurd."""
+    monkeypatch.setattr(mv, "teleop_is_manual", lambda: True)
+    out = move_robot.invoke({"command": "S"})
+    assert "MANUAL" not in out
+
+
+def test_scan_surroundings_refuses_in_manual(monkeypatch):
+    monkeypatch.setattr(mv, "teleop_is_manual", lambda: True)
+    turned = []
+    monkeypatch.setattr(mv, "exact_turn", lambda b, d: turned.append(d))
+    out = scan_surroundings.invoke({})
+    assert "MANUAL" in out
+    assert turned == []
