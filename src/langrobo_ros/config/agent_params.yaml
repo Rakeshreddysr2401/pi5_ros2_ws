@@ -44,8 +44,8 @@ agent_node:
     # fold-when-out-of-range algorithm in agent_node, which is a lot of moving
     # parts for "give each agent its own cache".
     #
-    # What you DO need: start the llama.cpp server with --parallel 3, one slot
-    # per agent (chat, local_agent, navigate). agent_node probes the server's
+    # What you DO need: start the llama.cpp server with --parallel 4, one slot
+    # per agent (chat, local_agent, navigate) + the photo survey. agent_node probes the server's
     # real slot count at boot and warns — loudly — if it is lower, because
     # sharing a slot means each call evicts the other agent's prompt prefix and
     # pays it back as ~18-50s of re-prefill on the next turn.

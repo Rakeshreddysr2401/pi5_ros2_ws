@@ -241,7 +241,7 @@ production ingredient the sim lacks — or was fixed by a commit since 07-06.
 and reminders (which produced the [SYSTEM] turns above) are both gone. The
 [SYSTEM] turn producer in this build is **navigation arrival**, so:
 
-1. Start llama.cpp with `--parallel 3` and confirm the brain logs
+1. Start llama.cpp with `--parallel 4` and confirm the brain logs
    `KV slot map (one per agent): {'chat': 0, 'local_agent': 1, 'navigate': 2}`.
 2. Drive two goals in a row (`"go to the kitchen"`, wait for arrival, repeat).
    Each arrival is a [SYSTEM] turn, which now enters at **chat**.

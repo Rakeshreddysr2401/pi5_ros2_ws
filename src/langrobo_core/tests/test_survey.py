@@ -125,3 +125,11 @@ def test_status_reports_counters_and_queue():
     with sv.paused():
         assert sv.status()["paused"] is True
     assert sv.status()["paused"] is False
+
+
+def test_survey_slot_fits_a_smaller_server(monkeypatch):
+    """--parallel 3 has slots 0-2: slot 3 does not exist, so share local_agent's."""
+    monkeypatch.setattr(sv, "SURVEY_SLOT", 3)
+    assert sv.fit_slot(4, 1) == 3          # --parallel 4: its own slot
+    assert sv.fit_slot(None, 1) == 3       # probe failed: leave it
+    assert sv.fit_slot(3, 1) == 1          # --parallel 3: share local_agent's

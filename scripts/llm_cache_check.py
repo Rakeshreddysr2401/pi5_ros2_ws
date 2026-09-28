@@ -74,7 +74,7 @@ def main() -> int:
         return 0
     print("FAIL: using slot 2 wiped slot 3's cache. Every agent change re-reads the")
     print("      whole prompt. Restart llama-server with --swa-full (Gemma's")
-    print("      sliding-window cache), keep --jinja --parallel 3+, and re-run.")
+    print("      sliding-window cache), keep --jinja --parallel 4, and re-run.")
     return 1
 
 

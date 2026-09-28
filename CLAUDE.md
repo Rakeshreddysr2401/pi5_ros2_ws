@@ -12,7 +12,7 @@ Home robot "Mitra" (renamed from "Rakhi" 2026-09-20; the `rakhi24` username and 
   Repo: **`~/rover`** on the Jetson (container `rover`), brought up with
   `./rover up`. (`~/langrobo_perception` and `~/robot` are the old stacks.)
 - **Mac Mini** — the LLM and VLM (llama.cpp, `singireddys-mac-mini.local:8080`).
-  **Must run with `--jinja --parallel 3`** — one KV slot per agent.
+  **Must run with `--jinja --parallel 4`** — one KV slot per agent + one for the photo survey.
 - **ESP32** — 50 Hz closed-loop PID on four wheels, micro-ROS over WiFi.
 
 **FIND_AND_GO.md is the priority flow** ("what do you see?" … "go near it":
@@ -92,7 +92,8 @@ pip3 install --break-system-packages -r requirements.txt
    that need ROS message types import them lazily *inside* the function body.
 2. **One llama.cpp KV slot per agent.** Slots are declared in `registry.py`
    (`AgentSpec.slot`), NOT as ROS params. Start the server with
-   `--parallel 3`: each agent's ~900-token prompt prefix then stays resident
+   `--parallel 4` (slot 3 is the photo survey's; `survey.fit_slot` shares
+   local_agent's on a smaller server): each agent's ~900-token prompt prefix then stays resident
    in its own cache. Two agents on one slot evict each other every turn
    (~18-50s of re-prefill). agent_node probes the server's real slot count at
    boot, wraps with modulo, and warns loudly if it had to.
@@ -239,7 +240,7 @@ no longer exist.
   none are servos), `/audio/music_*`. Check for a publisher before building on
   a topic here.
 - Streaming tool calls need the llama.cpp server started with
-  `--jinja --parallel 3` (one slot per agent: chat/local_agent/navigate).
+  `--jinja --parallel 4` (one slot per agent: chat/local_agent/navigate, + the survey).
 - Pi5↔Jetson clocks drift ~1.5s (chrony peering pending) — latency_replay
   flags negative deltas.
 - **A prompt rule the model has to follow is not a fix — it is a thing to

@@ -27,7 +27,8 @@ Rules that keep it from getting in the way:
     runs one model; a survey competing with a turn slows the turn).
     set_busy_probe() is how agent_node says "a turn is running"; approach
     wraps its search in paused().
-  * On its own llama.cpp slot (LANGROBO_SURVEY_SLOT, default 3 -- the free one),
+  * On its own llama.cpp slot (LANGROBO_SURVEY_SLOT, default 3 -- the free one
+    with --parallel 4; on a smaller server it shares local_agent's, see fit_slot),
     unstreamed (streamed, this server files marked-up answers as hidden text).
   * Only photo-time grounding is kept (at_capture): an object placed with
     depth taken after the robot moved would be in the wrong place.
@@ -85,6 +86,19 @@ def status() -> dict:
         queued, paused_now = len(_queue), bool(_paused)
     return {**stats, "queued": queued, "paused": paused_now,
             "worker_alive": bool(_thread and _thread.is_alive())}
+
+
+def fit_slot(total_slots: int | None, fallback: int | None) -> int | None:
+    """Make SURVEY_SLOT fit the server agent_node found. A server started with
+    fewer slots than SURVEY_SLOT + 1 (the docs said --parallel 3 until
+    2026-09-28: slots 0-2) has no slot 3, and every survey call failed there,
+    counted only in stats["errors"]. Then share `fallback` (local_agent's slot:
+    same model, and the survey runs only while no turn does). Returns the slot
+    now used."""
+    global SURVEY_SLOT
+    if total_slots and SURVEY_SLOT >= total_slots:
+        SURVEY_SLOT = fallback
+    return SURVEY_SLOT
 
 
 def set_busy_probe(probe) -> None:

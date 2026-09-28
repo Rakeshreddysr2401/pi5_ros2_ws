@@ -250,7 +250,7 @@ turn only pays for the *new* tokens; a cold one re-processes ~2k+ tokens
 
 - **One slot per agent**: chat=0, local_agent=1, navigate=2. Three agents,
   three caches, nothing ever evicts anything. The map is declared beside the
-  agents in `registry.py`; start llama.cpp with `--parallel 3`. This matters
+  agents in `registry.py`; start llama.cpp with `--parallel 4` (slot 3: the photo survey). This matters
   because it was measured: when two agents shared a slot (2026-07-06), each
   call evicted the other's prefix and cost 18-50s of full-history re-prefill
   on the next turn.

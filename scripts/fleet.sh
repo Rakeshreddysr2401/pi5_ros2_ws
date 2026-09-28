@@ -249,7 +249,7 @@ print("%s object(s) remembered; survey: %s photo(s), %s queued, %s error(s)" % (
         [ -n "$seen" ] && printf "  %-34s --    %s\n" "object memory / photo survey" "$seen"
     fi
     n=$(curl -s -m4 http://singireddys-mac-mini.local:8080/slots | python3 -c "import sys,json;print(len(json.load(sys.stdin)))" 2>/dev/null || true)
-    at_least "$n" 3 && ok "LLM KV slots" "$n (need >= 3)" || bad "LLM KV slots" "${n:-none} -- restart llama.cpp with --jinja --parallel 3"
+    at_least "$n" 4 && ok "LLM KV slots" "$n (need >= 4)" || bad "LLM KV slots" "${n:-none} -- restart llama.cpp with --jinja --parallel 4 --swa-full"
     m=$(curl -s -m4 localhost:8091/mode || true)
     case "$m" in *'"manual": false'*|*'"manual":false'*) ok "teleop" "AUTO" ;;
                  "") bad "teleop :8091" "not answering (~/langrobo_teleop/teleop_web.py)" ;;
