@@ -20,6 +20,8 @@ from langrobo_core.tools.movement import blocked_by_manual, move_robot, navigate
 import langrobo_core.tools.approach as ap
 import langrobo_core.tools.movement as mv
 
+from test_movement import fake_twist  # noqa: F401 -- fixture
+
 _bridge._instance = None
 _bridge.init(StubBridge())
 
@@ -131,7 +133,7 @@ def test_move_robot_refuses_in_manual(monkeypatch):
     assert moved == []
 
 
-def test_move_robot_stop_still_works_in_manual(monkeypatch):
+def test_move_robot_stop_still_works_in_manual(monkeypatch, fake_twist):
     """"S" is what MANUAL does anyway; refusing it would be absurd."""
     monkeypatch.setattr(mv, "teleop_is_manual", lambda: True)
     out = move_robot.invoke({"command": "S"})

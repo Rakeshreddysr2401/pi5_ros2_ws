@@ -422,3 +422,28 @@ def test_photo_without_depth_uses_the_newest_if_the_robot_has_not_moved(robot, s
                      _grounded(1.2, 0.1)]                             # the final look
     out = approach_described_object.invoke({"description": "blue and white robot", "state": state})
     assert robot.navs and "still where I saw it" in out
+
+
+def test_objects_from_one_photo_have_their_own_ids():
+    """The photo survey stores every object in a photo with that photo's time:
+    ids must still differ, or forgetting one forgets them all."""
+    a = om.remember("white chair", 1.0, 0.0, None, EPOCH, when=500.0)
+    b = om.remember("black bag", 2.0, 1.0, None, EPOCH, when=500.0)
+    assert a["id"] != b["id"]
+    assert om.forget(a["id"], EPOCH)
+    assert [e["description"] for e in om.recall("", EPOCH, now=510.0)] == ["black bag"]
+
+
+def test_a_file_with_repeated_ids_is_repaired_on_load():
+    """Memory written before ids were unique: one id per photo."""
+    import json
+    with open(om.path(), "w") as f:
+        json.dump({"epoch": EPOCH, "objects": [
+            {"id": "000000500", "description": "white chair", "x": 1.0, "y": 0.0, "seen_at": 500.0},
+            {"id": "000000500", "description": "black bag", "x": 2.0, "y": 1.0, "seen_at": 500.0}]}, f)
+    first = {e["description"]: e["id"] for e in om.recall("", EPOCH, now=510.0)}
+    assert first["white chair"] != first["black bag"]
+    again = {e["description"]: e["id"] for e in om.recall("", EPOCH, now=510.0)}
+    assert again == first, "the same file gives the same ids every time"
+    assert om.forget(first["black bag"], EPOCH)
+    assert [e["description"] for e in om.recall("", EPOCH, now=510.0)] == ["white chair"]
