@@ -61,8 +61,15 @@ def build_agent(spec: AgentSpec):
     # examples, tool argument syntax) that str.format would choke on.
     base_prompt = spec.prompt.replace("{tools}", render_tools(spec.tools))
 
+    # bind_tools converts every tool to its JSON schema: done once per client,
+    # not on every call (get_llm returns the same client until reconfigured).
+    bound: list = [None, None]          # [client, client.bind_tools(...)]
+
     def build_llm_call(messages: list):
-        llm = get_llm(spec.name).bind_tools(spec.tools)
+        base = get_llm(spec.name)
+        if bound[0] is not base:
+            bound[0], bound[1] = base, base.bind_tools(spec.tools)
+        llm = bound[1]
         prompt = base_prompt
         if spec.context is not None:
             prompt += spec.context()
