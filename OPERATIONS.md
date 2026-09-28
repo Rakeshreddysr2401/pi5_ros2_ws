@@ -81,7 +81,10 @@ curl -s -H "Authorization: Bearer $LANGROBO_API_TOKEN" localhost:8090/metrics  #
 
 `/status` reports: LLM primary health + fallback state, Telegram channel
 state, sticky agent, last-turn timestamp/duration, camera frame age, robot
-body, queued system/Telegram events. Without `LANGROBO_API_TOKEN` the API binds
+body, queued system/Telegram events, the odom origin epoch, whether a drive is
+running, the photo survey (`photos`, `objects`, `skipped`, `errors`, `queued`,
+`paused`, `worker_alive`) and `objects_remembered` (what object memory can
+serve right now; `fleet.sh check` prints both on one line). Without `LANGROBO_API_TOKEN` the API binds
 localhost-only; a LAN bind without a token is refused at startup (fail-fast).
 
 ## .env reference

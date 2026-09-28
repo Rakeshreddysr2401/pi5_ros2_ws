@@ -280,7 +280,27 @@ class AgentNode(Node):
             "queued_telegram_messages": queued_telegram,
             "user_input_pending": user_pending,
             "telegram": self._telegram.status(),
+            "odom_origin_epoch": self._bridge.get_origin_epoch(),
+            "navigating": self._bridge.navigation_active(),
+            **self._perception_status(),
         }
+
+    def _perception_status(self) -> dict:
+        """What the robot has seen: the photo survey's progress and how many
+        objects object memory can serve right now. Never fails /status."""
+        out = {}
+        try:
+            from langrobo_core.tools import survey
+            out["photo_survey"] = survey.status()
+        except Exception as e:
+            out["photo_survey"] = {"error": str(e)}
+        try:
+            from langrobo_core.services import object_memory
+            out["objects_remembered"] = len(
+                object_memory.recall("", self._bridge.get_origin_epoch()))
+        except Exception as e:
+            out["objects_remembered"] = f"error: {e}"
+        return out
 
     # ── Startup readiness check ───────────────────────────────────────────
 

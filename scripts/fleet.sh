@@ -225,19 +225,32 @@ check)
     done
     [ "$(systemctl --user is-active langrobo-voice)" = active ] && ok "langrobo-voice" "" \
         || bad "langrobo-voice" "systemctl --user restart langrobo-voice"
-    audio=$(journalctl --user -u langrobo-voice -b -o cat 2>/dev/null | grep -E "audio ready:|no audio device" | tail -1 | sed 's/.*pi5_audio_device\]: //')
+    audio=$(journalctl --user -u langrobo-voice -b -o cat 2>/dev/null | grep -E "audio ready:|no audio device" | tail -1 | sed 's/.*pi5_audio_device\]: //' || true)
     case "$audio" in *"audio ready"*) ok "speaker + mic" "${audio#audio ready: }" ;;
                      *) bad "speaker + mic" "${audio:-none yet} -- switch the earbuds/speaker on (/bt-audio)" ;; esac
-    st=$(curl -s -m4 localhost:8090/status)
+    # `|| true` on every probe: under set -e a probe of something that is DOWN
+    # (curl's 7, grep finding nothing) ended check before it printed the FAIL
+    # it exists to print -- the Jetson's OPEN_ISSUES #9 trap.
+    # /status needs the bearer token when one is set; without it the reply is
+    # a 401 body, which read as "LLM down".
+    tok=$(sed -n 's/^LANGROBO_API_TOKEN=//p' "$(dirname "$0")/../.env" 2>/dev/null | head -1 | tr -d "\"'" || true)
+    auth=(); [ -n "$tok" ] && auth=(-H "Authorization: Bearer $tok")
+    st=$(curl -s -m4 "${auth[@]}" localhost:8090/status || true)
     if [ -z "$st" ]; then
         bad "brain health API :8090" "brain not answering -- journalctl -u langrobo-brain -n 50"
+    elif echo "$st" | grep -q 'invalid or missing bearer token'; then
+        bad "brain health API :8090" "401 -- LANGROBO_API_TOKEN in .env does not match the brain's"
     else
         echo "$st" | grep -q '"primary_available": *true' && ok "LLM (Mac Mini) via brain" "" \
             || bad "LLM (Mac Mini) via brain" "check llama.cpp on singireddys-mac-mini.local:8080"
+        seen=$(echo "$st" | python3 -c 'import sys,json
+r=json.load(sys.stdin).get("runtime",{}); s=r.get("photo_survey") or {}
+print("%s object(s) remembered; survey: %s photo(s), %s queued, %s error(s)" % (r.get("objects_remembered", "?"), s.get("photos", 0), s.get("queued", 0), s.get("errors", 0)))' 2>/dev/null || true)
+        [ -n "$seen" ] && printf "  %-34s --    %s\n" "object memory / photo survey" "$seen"
     fi
-    n=$(curl -s -m4 http://singireddys-mac-mini.local:8080/slots | python3 -c "import sys,json;print(len(json.load(sys.stdin)))" 2>/dev/null)
+    n=$(curl -s -m4 http://singireddys-mac-mini.local:8080/slots | python3 -c "import sys,json;print(len(json.load(sys.stdin)))" 2>/dev/null || true)
     at_least "$n" 3 && ok "LLM KV slots" "$n (need >= 3)" || bad "LLM KV slots" "${n:-none} -- restart llama.cpp with --jinja --parallel 3"
-    m=$(curl -s -m4 localhost:8091/mode)
+    m=$(curl -s -m4 localhost:8091/mode || true)
     case "$m" in *'"manual": false'*|*'"manual":false'*) ok "teleop" "AUTO" ;;
                  "") bad "teleop :8091" "not answering (~/langrobo_teleop/teleop_web.py)" ;;
                  *) bad "teleop" "MANUAL -- it streams zeros and cancels nav2; flip to AUTO" ;; esac

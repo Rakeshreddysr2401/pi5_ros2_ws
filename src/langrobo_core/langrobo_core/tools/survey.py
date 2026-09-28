@@ -79,6 +79,14 @@ _busy_probe = lambda: False       # noqa: E731 -- set by agent_node
 stats = {"photos": 0, "objects": 0, "skipped": 0, "errors": 0}
 
 
+def status() -> dict:
+    """For the health API: counters so far, and what is waiting."""
+    with _cv:
+        queued, paused_now = len(_queue), bool(_paused)
+    return {**stats, "queued": queued, "paused": paused_now,
+            "worker_alive": bool(_thread and _thread.is_alive())}
+
+
 def set_busy_probe(probe) -> None:
     """probe() -> True while a turn is running (agent_node)."""
     global _busy_probe

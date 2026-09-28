@@ -117,3 +117,11 @@ def test_nothing_is_surveyed_while_paused_or_busy(monkeypatch):
         assert done.wait(3.0), "never surveyed once idle"
     finally:
         sv.set_busy_probe(lambda: False)
+
+
+def test_status_reports_counters_and_queue():
+    s = sv.status()
+    assert {"photos", "objects", "skipped", "errors", "queued", "paused", "worker_alive"} <= set(s)
+    with sv.paused():
+        assert sv.status()["paused"] is True
+    assert sv.status()["paused"] is False
