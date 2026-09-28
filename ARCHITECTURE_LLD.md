@@ -345,7 +345,15 @@ spoken: a markdown list is read aloud bullet characters and all. That is why
 | `graph/state.py` | `AgentState` — messages, active agent, per-turn counters, sender identity. |
 | `tools/` | `@tool` functions. Per-agent sets in `__init__.py`. Robot I/O via `_bridge.get()`. |
 | `tools/_bridge.py` | the seam itself — a module-level singleton, set once at startup. Twenty lines, and the reason the whole brain runs off-robot. |
-| `services/` | state that outlives a turn: `config`, `llm`, `telegram`, `permissions`, `health`, `logging`, `metrics`. |
+| `tools/look.py` | `look()`: the current colour frame into the conversation (local_agent). Every photo is also recorded (`photos.py`) and surveyed (`survey.py`). |
+| `tools/locate.py` | `locate_object()`: VLM box → Jetson `pixel_to_goal` → distance and bearing. Read-only; never turns the robot. |
+| `tools/approach.py` | `approach_described_object()`: the photo we talked about → object memory → 45° search → drive. FIND_AND_GO.md is its walkthrough. |
+| `tools/memory.py` | `recall_object()`: where something was seen this session, from where the robot is now. Read-only. |
+| `tools/photos.py` | the photo register: for each JPEG the robot took, its camera stamp, pose, time and odom epoch (hash-keyed, 24 kept — the Jetson's snapshot count). |
+| `tools/survey.py` | the background photo survey: while the brain is idle, the VLM lists every object in each photo and the Jetson places it with THAT photo's depth and pose. Own thread, llama.cpp slot 3. |
+| `tools/movement.py` | `move_robot` (exact goal_exec moves, timed fallback), `navigate_to_pose`, `save_location`, the MANUAL guard. |
+| `services/` | state that outlives a turn: `config`, `llm`, `telegram`, `permissions`, `health`, `logging`, `metrics`, `object_memory`. |
+| `services/object_memory.py` | where things were seen, in odom, one file (`~/.langrobo/object_memory.json`) shared by agent_node and Studio. Emptied when the odom origin (`/fusion/status` origin_epoch) changes. A hint, never a fact: callers look again before driving. |
 | `utils/` | pure helpers: history trimming, message projection, sentence streaming, timing. |
 | `bridges/stub.py` | the no-ROS bridge. Must mirror `ROS2Bridge`'s public surface. |
 
@@ -382,7 +390,8 @@ thread you are on:
 |---|---|---|
 | ROS spin | every subscription callback, the image cache | block. Ever. |
 | worker | the whole graph, every tool, every LLM call | — |
-| nav worker | one Nav2 action, per goal | touch graph state |
+| nav worker | one drive per goal: `/reach/goal` (default) or the Nav2 action | touch graph state |
+| photo survey | `tools/survey.py`: VLM object lists + grounding, only while no turn or search runs | run during a turn (it waits on `set_busy_probe` / `paused()`) |
 | telegram poller | long-poll `getUpdates` → worker queue | reply directly |
 | cache warmer | one prefill request | run when input is pending |
 

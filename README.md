@@ -44,7 +44,12 @@ src/
 │       └── bridges/   StubBridge (run everything without ROS2)
 ├── langrobo_ros/      ROS2 shim: agent_node + ROS2Bridge + launch + systemd
 └── pi5_voice_pkg/     CPU-only STT + TTS on the Pi 5 itself
-scripts/               fleet.sh (whole robot) · run_*.sh (systemd entry points) · start_studio.sh · dev.sh · latency_replay.py · wake_*.py
+scripts/               fleet.sh (whole robot) · run_*.sh (systemd entry points) · start_studio.sh · dev.sh
+                       latency_replay.py · llm_cache_check.py (KV-slot PASS/FAIL) · topic_rates.py
+                       wake_*.py · train_mitra_local.py / train_rakhi_local.py (wake-word trainers, laptop)
+                       mic_check.sh (is the mic hearing you?) · bt_*.{sh,py} · tts_say.py
+notebooks/             train_mitra_wakeword.ipynb (the supported wake-word trainer — WAKE_WORD_INTEGRATION.md)
+data/test_pos|test_neg wake-word spot-check clips
 graph_studio.py        LangGraph Studio entry point (langgraph dev)
 ```
 

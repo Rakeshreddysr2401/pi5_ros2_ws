@@ -92,6 +92,15 @@ The notebook: pre-configured for "Mitra" right in this repo at
 community trainer at https://colab.research.google.com/drive/1zzKpSnqVkUDD3FyZ-Yxw3grF7L0R1rlk).
 Open with `jupyter notebook`, or upload to Google Colab and click "Run all".
 
+**Mac-only shortcut:** `python3 scripts/train_mitra_local.py` (and
+`train_rakhi_local.py` for the Telugu "Rakhi" model) skip the notebook: they
+synthesise positives and adversarial negatives with the macOS `say` voices,
+train a small head on openWakeWord features, write
+`src/langrobo_ros/models/wake/<name>.onnx`, and self-check it on one
+positive and one negative clip of their own. Quicker, fewer voices — the
+notebook stays the supported path. Either way, spot-check with the clips in `data/`:
+`python3 scripts/wake_score.py src/langrobo_ros/models/wake/mitra.onnx data/test_pos data/test_neg`.
+
 **Check:** `python3 -c "import openwakeword, torch; print('ok')"` prints ok.
 
 ---

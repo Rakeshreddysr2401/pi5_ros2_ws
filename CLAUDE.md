@@ -65,7 +65,7 @@ passwordless ssh; DDS is plain multicast on domain 0 everywhere (NETWORKING.md).
 ./scripts/fleet.sh down       # full shutdown incl. Pi5 services (sudo)
 ./scripts/fleet.sh status
 
-# Test (pure core — no robot, no LLM server, no keys; ~300 tests, ~10s)
+# Test (pure core — no robot, no LLM server, no keys; ~350 tests, ~5s; never traces)
 cd src/langrobo_core && python3 -m pytest tests/ -q
 
 # Build + deploy after code changes
@@ -200,7 +200,7 @@ that moves wheels).
 ## Working on the Jetson from here
 
 Passwordless SSH: `ssh rakhi24@rakhi-jetson.local`. The live repo is **`~/rover`**
-(branch `rover-v1.1.2-refactor`, container `rover`, image `orin-nav:1.1`); read its
+(branch `rover-v1.1.4-fleet-integration`, container `rover`, image `orin-nav:1.1`); read its
 README.md, STARTUP.md (power-on → working), OPERATIONS.md and OPEN_ISSUES.md before
 editing. Its rules: the image has no Dockerfile and must never be modified; nodes are
 host files bind-mounted read-only, so edit on the host and restart the layer
