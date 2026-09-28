@@ -248,10 +248,24 @@ empty: the first version's "any tool call is fine" exemption is what let the
 ## 4. Latency: where the seconds go, and what buys them back
 
 On the 12B model over the Mac Mini's llama.cpp, prompt *prefill* dominates.
-There are two ways to win: don't make the call at all (§3.1 and §3.2 — a
-movement command costs zero LLM calls, a vision question costs one instead of
-three), or make sure the call you do make starts from a warm cache. This
-section is the second half.
+There are two ways to win: make fewer calls, or make sure each call starts
+from a warm cache. The fast path that used to skip calls is gone (§3.1), so
+today it is mostly the second.
+
+LLM calls per request (measured on the graph, 2026-09-28):
+
+| request | calls | path |
+|---|---|---|
+| chat ("what time is it") | 1 | chat (+ a tool round if it calls one) |
+| sticky follow-up ("now turn left" after a move) | 2 | navigate → move_robot → navigate confirms |
+| first move / vision question from chat | 3 | chat → handover → navigate/local_agent → tool → that agent answers |
+
+Every call re-sends its agent's whole prefix — system prompt + tool schemas:
+~1.7k tokens (chat, 5 tools), ~2.4k (local_agent, 6), ~2.9k (navigate, 10;
+cl100k estimate). Warm, only the new tokens are read (~1-2 s a call). Cold,
+the whole prefix is: 15-27 s on the Mac while its slots wipe each other
+(TODO item 1: `--swa-full`, checked by `scripts/llm_cache_check.py`). That
+one server flag is worth more than everything else in this section.
 
 ### 4.1 One KV slot per agent — the parallel cache
 
@@ -315,6 +329,23 @@ the next turn will send, with `max_tokens=1`, on a background thread. It shares
 `build_llm_call` with the real path — that is what makes "identical"
 guaranteed rather than aspirational. It skips itself if input is already
 pending.
+
+It warms the agent the next turn will ENTER. A handover lands on another
+agent, whose prompt has not been read since the history changed — the first
+move or vision question after boot pays a full prefix read there.
+`LANGROBO_WARM_ALL=1` warms every agent, entry last (`registry.warm_order`),
+stopping as soon as input arrives. Off by default: on a server whose slots
+wipe each other it is ~3 full reads per idle spell for nothing. Turn it on
+once `llm_cache_check.py` passes.
+
+### 4.3b One client per config (2026-09-28)
+
+`services.llm.get_llm` returns the same `ChatOpenAI` for the same config, and
+each agent binds its tools once. It used to build a new client — a new HTTP
+pool, a new TCP connection and an mDNS lookup of the Mac — on every call:
+8-34 ms of construction measured on a Mac (more on the Pi 5), now 0.01 ms,
+and calls within a turn can reuse a keep-alive connection.
+`configure()` clears the cache.
 
 ### 4.4 Sentence streaming to TTS
 

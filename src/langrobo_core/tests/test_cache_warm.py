@@ -70,3 +70,11 @@ def test_the_dynamic_tail_is_the_only_thing_that_moves():
     assert "== TODAY ==" in prompt_a
     # The date block is last: everything before it is the cacheable prefix.
     assert prompt_a.index("== TODAY ==") > len(prompt_a) * 0.5
+
+
+def test_warm_order_is_every_agent_with_the_entry_last():
+    from langrobo_core.registry import SPECS, warm_order
+    order = warm_order("navigate")
+    assert order[-1] == "navigate" and sorted(order) == sorted(SPECS)
+    assert warm_order("navigate", all_agents=False) == ["navigate"]
+    assert warm_order("nobody")[-1] == "chat"

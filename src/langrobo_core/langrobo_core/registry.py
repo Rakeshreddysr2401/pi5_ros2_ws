@@ -177,3 +177,20 @@ def build_agent_list(exclude: str = "") -> str:
         f'- "{name}" : {meta["description"]}'
         for name, meta in AGENTS.items() if name != exclude
     )
+
+
+def warm_order(entry: str, all_agents: bool = True) -> list[str]:
+    """The agents the idle cache warmer prefills, in order: the others first,
+    `entry` (where the next turn will land) LAST.
+
+    All of them, because a handover lands on the target agent with a prompt
+    that has not been read since the history last changed: the first "go to
+    the kitchen" or "what do you see" after boot paid a full ~2.5k-token
+    read. Entry last, because a server whose slots evict each other (the
+    Mac's, until --swa-full; scripts/llm_cache_check.py) then still keeps the
+    one the next turn needs."""
+    if entry not in SPECS:
+        entry = "chat"
+    others = [name for name in SPECS if name != entry] if all_agents else []
+    return others + [entry]
+

@@ -987,9 +987,22 @@ class AgentNode(Node):
         # warming the right one is what keeps that prefix resident.
         agent = (self._sticky_agent
                  if self._sticky_agent in registry.STICKY_ELIGIBLE else "chat")
+        # LANGROBO_WARM_ALL=1: every agent, entry last (registry.warm_order),
+        # so a handover target is warm too. OFF by default: on a server whose
+        # slots wipe each other (the Mac's until --swa-full) it costs ~3 full
+        # prompt reads per idle spell for nothing. Turn it on once
+        # scripts/llm_cache_check.py PASSES.
+        order = registry.warm_order(
+            agent, os.environ.get("LANGROBO_WARM_ALL", "0").strip().lower() in ("1", "true", "yes", "on"))
         self._warm_thread = threading.Thread(
-            target=self._warm_cache, args=(agent,), daemon=True)
+            target=self._warm_all, args=(order,), daemon=True)
         self._warm_thread.start()
+
+    def _warm_all(self, order: list) -> None:
+        for agent in order:
+            if self._input_event.is_set():
+                return          # a turn is pending: it goes first
+            self._warm_cache(agent)
 
     def _warm_cache(self, agent: str) -> None:
         """Prefill `agent`'s llama.cpp slot with its current projected prompt.

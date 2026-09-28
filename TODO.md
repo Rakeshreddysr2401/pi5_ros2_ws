@@ -13,7 +13,9 @@ the things only you can do, most useful first:
    after a vision question, every handover) re-reads the whole ~3k-token
    prompt: 15-27 s instead of ~1 s. This is the single biggest thing between
    the robot and fast conversation. Then run
-   `python3 scripts/llm_cache_check.py` — PASS means fixed. (I have no ssh
+   `python3 scripts/llm_cache_check.py` — PASS means fixed. After a PASS, add
+   `LANGROBO_WARM_ALL=1` to `.env` and restart the brain: every agent is then
+   pre-read while idle, so the first move / vision question is fast too. (I have no ssh
    key for the Mac, so I could not do it.)
 2. **Floor-test the driving with you watching** — I did not drive the robot
    on purpose, with one exception I owe you: during a MANUAL-mode refusal
