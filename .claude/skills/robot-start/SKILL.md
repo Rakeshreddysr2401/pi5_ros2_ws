@@ -47,7 +47,9 @@ Common first-boot failures:
 
 | layer | means | fix |
 |---|---|---|
-| camera | D555 not streaming (it answers ping while dead) | power-cycle the D555's PoE |
+| camera | D555 not streaming (it answers ping while dead) | power-cycle the D555's PoE, **wait ~60 s** (it boots slower than `up` waits), then `./rover camera` alone and the remaining layers by hand (Jetson STARTUP.md "Continue by hand" — pose with `SLAM=false`). Don't re-run `up`: it restarts the camera |
+| slam | `cuVSLAM is already publishing map -> odom` | pose ran without `SLAM=false`: `SLAM=false ./rover pose; ./rover fused; ./rover slam` |
+| nav | costmaps 0.0 Hz after `./rover nav` | lost lifecycle reply under load — run `./rover nav` again; then `./rover logs reach` must say `pose OK` |
 | lidar | `/dev/ttyUSB0` missing | reseat the RPLidar USB |
 | wheels | no `/wheel_state` | ESP32 off or not on WiFi — power-cycle it; `systemctl status langrobo-microros` |
 | view | laptop not found / nobody logged in | log in on the laptop desktop, then `ssh rakhi24@rakhi-jetson.local 'cd ~/rover && ./rover view'` |
@@ -78,6 +80,14 @@ journalctl -u langrobo-brain -f -o cat | grep -E "Step message \[AI|→ TTS"
   Studio runs the same graph and can drive — stop the brain first if driving from it.
 - **Traces:** https://smith.langchain.com → project `pi5` (runs `turn:voice`, `turn:telegram`).
 - **RViz:** on the laptop; `./rover view --restart` (on the Jetson) after a config change.
+
+## If `fleet.sh status` says `jetson: unreachable`
+
+First check it is not just the NAME: after a power cycle the Jetson's avahi can
+rename it `rakhi-jetson-3.local` (name clash). `ssh rakhi24@192.168.1.15`
+answers → `ssh rakhi24@192.168.1.15 'sudo systemctl restart avahi-daemon'`, and
+`getent hosts rakhi-jetson.local` resolves again. Note `fleet.sh rover` still
+prints "ROVER mode up" when the Jetson's `up` FAILED — read the line above it.
 
 ## If ssh to the Jetson or laptop hangs
 
