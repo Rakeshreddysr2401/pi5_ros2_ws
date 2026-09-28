@@ -466,9 +466,13 @@ class ROS2Bridge:
         if not req_id:
             return
         with self._pixel_lock:
-            # Keep the map tiny — replies are consumed within seconds.
-            if len(self._pixel_results) > 32:
-                self._pixel_results.clear()
+            # Keep the map tiny — replies are consumed within seconds; what
+            # piles up is late replies to queries that already timed out.
+            # Drop the OLDEST, never all: clear() here could wipe the reply a
+            # ground_pixel call (the photo survey grounds up to 8 per photo)
+            # is polling for right now, and it would report no_reply_from_jetson.
+            while len(self._pixel_results) >= 32:
+                self._pixel_results.pop(next(iter(self._pixel_results)))
             self._pixel_results[req_id] = data
 
     def ground_pixel(self, u: float, v: float, timeout: float = 4.0,
@@ -1015,9 +1019,13 @@ class ROS2Bridge:
         if self._reach_goal_pub.get_subscription_count() == 0:
             return {"ok": False, "result": "unavailable",
                     "why": "reach is not running on the Jetson (./rover nav)"}
-        self.cancel_navigation()
+        # Key first, then cancel -- as start_nav_to_pose does. The other order
+        # let a background _reach_worker wake from the cancel, still see its
+        # own key as current, and send /reach/cancel, which could land after
+        # this goal and kill it.
         stamp, key = self._stamp_now()
         self._reach_current_key = key
+        self.cancel_navigation()
         self._reach_goal_pub.publish(self._pose_msg(x, y, math.radians(yaw_deg), stamp))
         t0 = time.monotonic()
         try:
