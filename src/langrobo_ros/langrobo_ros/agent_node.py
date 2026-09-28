@@ -113,6 +113,7 @@ class AgentNode(Node):
         # just means some agents share again — it never breaks, it only costs.
         # A failed probe leaves the map alone (the server may still be booting).
         slots = dict(registry.SLOTS)
+        total = None
         if provider == "llamacpp":
             total = self._probe_total_slots(base_url)
             if total and total < len(slots):
@@ -124,6 +125,16 @@ class AgentNode(Node):
                     f"--parallel {len(registry.SLOTS)}. Slot map: {slots}")
             else:
                 self.get_logger().info(f"KV slot map (one per agent): {slots}")
+
+        # The photo survey needs one more slot than the agents (--parallel 4).
+        from langrobo_core.tools import survey as _survey
+        want = _survey.SURVEY_SLOT
+        got = _survey.fit_slot(total, slots.get("local_agent"))
+        if got != want:
+            self.get_logger().warning(
+                f"llama.cpp has {total} slots: the photo survey has no slot of "
+                f"its own ({want}) and shares local_agent's ({got}), evicting its "
+                f"cached prompt. Start the server with --parallel {want + 1}.")
 
         agent_overrides = {name: {"slot": slot} for name, slot in slots.items()}
         # local_agent may run a different GGUF than the text agents.
@@ -175,6 +186,9 @@ class AgentNode(Node):
         # a turn is running: the Mac runs one model and the turn comes first.
         from langrobo_core.tools import survey
         survey.set_busy_probe(lambda: self._turn_active or self._user_pending is not None)
+        # Teleop flipped to MANUAL mid-move = a person taking control: stop
+        # whatever the brain is driving, as a new utterance does.
+        threading.Thread(target=self._watch_manual, daemon=True, name="manual_watch").start()
 
         # ── Build graph ───────────────────────────────────────────────────
         self._graph   = build_graph()
@@ -263,6 +277,22 @@ class AgentNode(Node):
             f"Agent starting — provider: {provider}, base_url: {base_url}, "
             f"vision: {self._use_vision}"
         )
+
+    MANUAL_POLL_S = 0.5
+
+    def _watch_manual(self) -> None:
+        """Poll the teleop switch; on the edge into MANUAL, stop the motion
+        (movement.ManualWatch). Localhost HTTP, 0.7 s timeout: cheap."""
+        from langrobo_core.tools.movement import ManualWatch
+        watch = ManualWatch(self._bridge)
+        while True:
+            try:
+                if watch.poll():
+                    self.get_logger().warning(
+                        "teleop switched to MANUAL -- stopped the brain's drive/move")
+            except Exception as e:                # the watcher must never die
+                self.get_logger().debug(f"manual watch: {e}")
+            time.sleep(self.MANUAL_POLL_S)
 
     # ── Health API status hook (any thread) ───────────────────────────────
 
