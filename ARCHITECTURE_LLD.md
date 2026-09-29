@@ -347,6 +347,23 @@ pool, a new TCP connection and an mDNS lookup of the Mac — on every call:
 and calls within a turn can reuse a keep-alive connection.
 `configure()` clears the cache.
 
+### 4.3c Jev: routing without an LLM call (2026-09-29, `LANGROBO_JEV`)
+
+`services/jev.py` asks TypeSafe AI's Jev -- a cloud "decision model" that
+returns a pick with a confidence, not text -- two questions per turn in ONE
+request: which agent (the choice criteria are `registry.AGENTS`, the same copy
+chat routes on) and "is this about what the camera sees?". In `on` mode a
+pick at >= `LANGROBO_JEV_MIN_CONF` becomes the entry agent (all three are
+sticky, so the graph needs no change): the first move or vision question costs
+2 calls instead of 3 (`tests/test_jev.py` proves it on the real graph). The
+vision read backs up §3.6's regex at p >= 0.9, and a near-sure "finished"
+skips the merge window when `looks_incomplete` would wait. `shadow` asks in
+the background and changes nothing; every turn logs a `jev {...}` line
+(pick, confidence, the agent that really answered, latency) and `/status` ->
+`jev` keeps the agreement. No key, no internet, a timeout (1.5 s): today's
+path. Never used for stopping, numbers or images. Privacy: the utterance and
+the robot's last reply go to api.typesafe.ai.
+
 ### 4.4 Sentence streaming to TTS
 
 `utils/speech_stream.py` hangs a callback off the LLM run. Complete sentences
@@ -384,6 +401,7 @@ spoken: a markdown list is read aloud bullet characters and all. That is why
 | `tools/survey.py` | the background photo survey: while the brain is idle, the VLM lists every object in each photo and the Jetson places it with THAT photo's depth and pose. Own thread, llama.cpp slot 3. |
 | `tools/movement.py` | `move_robot` (exact goal_exec moves, timed fallback), `navigate_to_pose`, `save_location`, the MANUAL guard. |
 | `services/` | state that outlives a turn: `config`, `llm`, `telegram`, `permissions`, `health`, `logging`, `metrics`, `object_memory`. |
+| `services/jev.py` | TypeSafe's Jev decision model: route + vision read per turn, "finished?" for endpointing. `LANGROBO_JEV` off/shadow/on; off without `TYPESAFE_API_KEY`. §4.3c. |
 | `services/object_memory.py` | where things were seen, in odom, one file (`~/.langrobo/object_memory.json`) shared by agent_node and Studio. Emptied when the odom origin (`/fusion/status` origin_epoch) changes. A hint, never a fact: callers look again before driving. |
 | `utils/` | pure helpers: history trimming, message projection, sentence streaming, timing. |
 | `bridges/stub.py` | the no-ROS bridge. Must mirror `ROS2Bridge`'s public surface. |

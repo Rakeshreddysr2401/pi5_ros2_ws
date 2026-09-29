@@ -32,6 +32,7 @@ from langrobo_core.services import telegram as telegram_service
 from langrobo_core.services.logging import new_trace, setup_logging
 from langrobo_core.tools import _bridge as bridge_module
 from langrobo_core import registry
+from langrobo_core.services import jev
 from langrobo_core.graph import build_graph
 from langrobo_core.utils import timing
 from langrobo_core.utils import pose_stamp
@@ -316,6 +317,7 @@ class AgentNode(Node):
             "odom_origin_epoch": self._bridge.get_origin_epoch(),
             "navigating": self._bridge.navigation_active(),
             **self._perception_status(),
+            "jev": jev.status(),
         }
 
     def _perception_status(self) -> dict:
@@ -569,6 +571,13 @@ class AgentNode(Node):
         """
         if self._merge_window <= 0:
             return text
+        # The word list says "wait for more"; a near-sure "finished" from Jev
+        # (on mode) saves the merge window. Asked only in that case.
+        if jev.mode() == "on" and looks_incomplete(text):
+            p = jev.is_finished(text)
+            if p is not None and p >= jev.min_conf():
+                self.get_logger().info(f"jev: '{text[-40:]}' is finished (p={p:.2f}) -- not waiting")
+                return text
         deadline = time.monotonic() + self._merge_window
         while looks_incomplete(text):
             remaining = deadline - time.monotonic()
@@ -687,6 +696,23 @@ class AgentNode(Node):
 
     # ── Graph invocation (worker thread) ──────────────────────────────────
 
+    @staticmethod
+    def _last_reply(history: list) -> str | None:
+        """The robot's last spoken text: context for Jev on follow-ups."""
+        from langchain_core.messages import AIMessage
+        for m in reversed(history):
+            if isinstance(m, AIMessage) and isinstance(m.content, str) and m.content.strip():
+                return m.content
+        return None
+
+    def _jev_outcome(self, read, actual: str | None, shadow: bool) -> None:
+        """Log Jev's pick beside the agent that actually answered. A shadow
+        read that has not come back by the end of the turn counts as nothing:
+        in `on` mode it would have been a timeout."""
+        fields = jev.record_outcome(read, actual, shadow)
+        if fields:
+            self.get_logger().info(jev.log_line({"mode": "shadow" if shadow else "on", **fields}))
+
     def _process(self, text: str, is_system: bool = False, telegram=None,
                  quiet: bool = False) -> None:
         """One turn. `telegram` (a TelegramInbound) switches the reply sink:
@@ -774,6 +800,28 @@ class AgentNode(Node):
             # the only sensible destination.
             incoming_agent = "chat" if is_system else (self._sticky_agent or "chat")
 
+            # Jev (langrobo_core.services.jev): a fast cloud decision model.
+            # on: a confident pick of agent enters it directly (saves chat's
+            # handover call) and its vision read backs up the vision-question
+            # check. shadow: asked in the background, changes nothing, logged
+            # against what actually happened. [SYSTEM] turns are never asked.
+            jev_read, jev_shadow, jev_mode = None, None, jev.mode()
+            if not is_system and jev_mode != "off":
+                args = (text, registry.AGENTS, self._sticky_agent,
+                        self._last_reply(history))
+                if jev_mode == "on":
+                    jev_read = jev.read_turn(*args)
+                    incoming_agent, acted = jev.entry_for(jev_read, incoming_agent)
+                    if acted:
+                        self.get_logger().info(
+                            f"jev: entering {incoming_agent} directly "
+                            f"(conf {jev_read.route_conf:.2f}, {jev_read.latency_ms} ms)")
+                else:
+                    jev_shadow = {}
+                    threading.Thread(
+                        target=lambda: jev_shadow.setdefault("read", jev.read_turn(*args)),
+                        daemon=True, name="jev_shadow").start()
+
             self.get_logger().info(
                 f"Invoking graph with input: {text} (entry={incoming_agent}, "
                 f"channel={self._turn_channel}, trace={trace})")
@@ -829,7 +877,8 @@ class AgentNode(Node):
                  # speaks aloud like any voice turn.
                  "channel": "system" if is_system else self._turn_channel,
                  "sender_name": telegram.name if telegram else None,
-                 "sender_role": telegram.role if telegram else None},
+                 "sender_role": telegram.role if telegram else None,
+                 "jev_vision": jev_read.vision if jev_read is not None else None},
                 config=run_config,
                 stream_mode="values"):
                 if self._turn_interrupt.is_set():
@@ -885,6 +934,9 @@ class AgentNode(Node):
             # themselves. navigate is not, so the turn after a drive starts at
             # chat.
             self._sticky_agent = result.get("active_agent") if result else None
+            self._jev_outcome(jev_read if jev_mode == "on" else
+                              (jev_shadow or {}).get("read"), self._sticky_agent,
+                              shadow=jev_mode == "shadow")
 
             # Persist the FULL message list from the graph (including any frames
             # captured via look()), so follow-up turns reason over the same image.

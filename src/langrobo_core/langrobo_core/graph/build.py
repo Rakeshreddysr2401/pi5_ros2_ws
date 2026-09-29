@@ -83,6 +83,17 @@ _VISION_QUESTION = re.compile(
 )
 
 
+# Jev (services/jev.py) as a second opinion on "is this a vision question?":
+# the regex above only knows phrasings someone wrote down. Only when Jev is
+# near-sure, and only in LANGROBO_JEV=on (agent_node sets jev_vision then).
+JEV_VISION_P = 0.9
+
+
+def _jev_says_vision(state: AgentState) -> bool:
+    p = state.get("jev_vision")
+    return p is not None and p >= JEV_VISION_P
+
+
 def _vision_backstop(agent_name: str, state: AgentState, out: dict) -> Command | None:
     """None if nothing is wrong; a Command chaining to local_agent if this
     agent just tried to handle a vision question itself instead of handing it
@@ -119,7 +130,7 @@ def _vision_backstop(agent_name: str, state: AgentState, out: dict) -> Command |
     if (state.get("agent_run_counts") or {}).get("local_agent", 0) > 0:
         return None
     query = last_user_query(state)
-    if not _VISION_QUESTION.search(query):
+    if not (_VISION_QUESTION.search(query) or _jev_says_vision(state)):
         return None
 
     attempted = ", ".join(tc.get("name", "?") for tc in tool_calls) or "answered directly"

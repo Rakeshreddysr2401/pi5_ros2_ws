@@ -148,8 +148,10 @@ that moves wheels).
   table that had already drifted (it gated objects on a COCO class list while
   dispatching to a VLM tool). Every turn now goes through the graph, so
   movement costs 2 LLM calls and a vision question 3. **Do not reintroduce
-  regex intent matching** — the replacement is a MiniLM entry classifier,
-  designed in INTENT_ROUTING_PLAN.md and not yet built.
+  regex intent matching** — the replacement is an entry classifier:
+  `services/jev.py` (TypeSafe's Jev, cloud, `LANGROBO_JEV=shadow|on`, off by
+  default; ARCHITECTURE_LLD.md §4.3c) is built; the on-device MiniLM of
+  INTENT_ROUTING_PLAN.md is the private alternative, not yet built.
   Stopping never depended on it: `agent_node._on_user_input` halts the wheels
   on every utterance before the graph runs.
 - `langrobo_core/graph/` — topology (build.py, derived entirely from
