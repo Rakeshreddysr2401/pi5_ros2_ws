@@ -127,9 +127,25 @@ def test_status_reports_counters_and_queue():
     assert sv.status()["paused"] is False
 
 
-def test_survey_slot_fits_a_smaller_server(monkeypatch):
-    """--parallel 3 has slots 0-2: slot 3 does not exist, so share local_agent's."""
-    monkeypatch.setattr(sv, "SURVEY_SLOT", 3)
-    assert sv.fit_slot(4, 1) == 3          # --parallel 4: its own slot
-    assert sv.fit_slot(None, 1) == 3       # probe failed: leave it
-    assert sv.fit_slot(3, 1) == 1          # --parallel 3: share local_agent's
+def test_vision_tool_slot_fits_the_server(monkeypatch):
+    """--parallel 4: its own slot. Smaller: the survey is off (never an agent's
+    slot), and locate/search fall back to local_agent's so they still work."""
+    monkeypatch.setattr(sv, "VISION_TOOL_SLOT", 3)
+    assert sv.fit_slot(4, 1) == 3
+    assert sv.fit_slot(None, 1) == 3                  # probe failed: as configured
+    assert sv.fit_slot(3, 1) is None                  # --parallel 3: no slot 3
+    assert sv.submit(b"jpeg", (1, 2), (0, 0, 0), "look") is False
+    assert sv.status()["enabled"] is False
+
+
+def test_one_shot_vision_calls_never_use_the_agents_slot(monkeypatch):
+    """The vision conversation's cache (its photos) lives in local_agent's
+    slot; a search view or survey there would overwrite it."""
+    from langrobo_core.services import llm
+    from langrobo_core.registry import SLOTS
+    llm.configure("llamacpp", "m", "http://127.0.0.1:1", "none", 100,
+                  {n: {"slot": s} for n, s in SLOTS.items()})
+    monkeypatch.setattr(sv, "VISION_TOOL_SLOT", 3)
+    assert sv.vision_tool_llm().extra_body["id_slot"] == 3
+    assert llm.get_llm("local_agent").extra_body["id_slot"] == SLOTS["local_agent"]
+    assert 3 not in SLOTS.values()

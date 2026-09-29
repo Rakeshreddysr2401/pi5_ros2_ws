@@ -18,8 +18,9 @@ Deploy, run, observe, and troubleshoot the Pi5 brain.
 **Never run two brains at once** — both drive `/cmd_vel` and micro-ROS UDP 8888.
 
 The llama.cpp server on the Mac Mini must be started with **`--jinja --parallel 4`**:
-one KV-cache slot per agent (chat, local_agent, navigate) plus one for the
-background photo survey. With fewer slots the
+one KV-cache slot per agent (chat, local_agent, navigate) plus slot 3 for
+one-shot vision calls (search views, locate, the photo survey), so they never
+overwrite local_agent's cached conversation and photos. With fewer slots the
 agents share and evict each other's cached prompt prefix, which
 costs ~18-50s of re-prefill per turn. agent_node probes the server at boot and
 logs `KV slot map (one per agent): {...}` — or a warning naming the shortfall.
@@ -206,8 +207,8 @@ debugging.
 ```
 
 - `--parallel 4` — one KV slot per agent, pinned by the brain: 0 chat,
-  1 local_agent, 2 navigate, and 3 for the photo survey (with fewer, the survey
-  shares local_agent's and the boot log says so). The map is `registry.SLOTS`, declared
+  1 local_agent, 2 navigate, and 3 = the vision-tool slot: search views, locate, the photo survey (with fewer, the survey is off,
+  locate uses slot 1, and the boot log says so). The map is `registry.SLOTS`, declared
   beside the agents; agent_node probes this server's real slot count at boot
   and warns if it is smaller. See ARCHITECTURE_LLD.md §4.1.
 - `--jinja` — required for grammar-forced handover + streamed tool calls.

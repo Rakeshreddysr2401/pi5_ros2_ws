@@ -126,15 +126,18 @@ class AgentNode(Node):
             else:
                 self.get_logger().info(f"KV slot map (one per agent): {slots}")
 
-        # The photo survey needs one more slot than the agents (--parallel 4).
+        # One-shot vision calls (search views, locate, the photo survey) have
+        # their own slot, so local_agent's keeps its conversation and photos.
         from langrobo_core.tools import survey as _survey
-        want = _survey.SURVEY_SLOT
+        want = _survey.VISION_TOOL_SLOT
         got = _survey.fit_slot(total, slots.get("local_agent"))
-        if got != want:
+        if got is None:
             self.get_logger().warning(
-                f"llama.cpp has {total} slots: the photo survey has no slot of "
-                f"its own ({want}) and shares local_agent's ({got}), evicting its "
-                f"cached prompt. Start the server with --parallel {want + 1}.")
+                f"llama.cpp has {total} slots, no vision-tool slot ({want}): the "
+                f"photo survey is OFF, and locate/search run on local_agent's slot, "
+                f"evicting its cached photos. Start the server with --parallel {want + 1}.")
+        else:
+            self.get_logger().info(f"vision-tool slot {got} (search, locate, photo survey)")
 
         agent_overrides = {name: {"slot": slot} for name, slot in slots.items()}
         # local_agent may run a different GGUF than the text agents.

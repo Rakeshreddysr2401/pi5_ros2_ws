@@ -245,7 +245,7 @@ check)
             || bad "LLM (Mac Mini) via brain" "check llama.cpp on singireddys-mac-mini.local:8080"
         seen=$(echo "$st" | python3 -c 'import sys,json
 r=json.load(sys.stdin).get("runtime",{}); s=r.get("photo_survey") or {}
-print("%s object(s) remembered; survey: %s photo(s), %s queued, %s error(s)" % (r.get("objects_remembered", "?"), s.get("photos", 0), s.get("queued", 0), s.get("errors", 0)))' 2>/dev/null || true)
+print("%s object(s) remembered; survey: %s" % (r.get("objects_remembered", "?"), ("%s photo(s), %s queued, %s error(s)" % (s.get("photos", 0), s.get("queued", 0), s.get("errors", 0))) if s.get("enabled", True) else "OFF -- no vision-tool slot 3, restart llama.cpp with --parallel 4"))' 2>/dev/null || true)
         [ -n "$seen" ] && printf "  %-34s --    %s\n" "object memory / photo survey" "$seen"
     fi
     n=$(curl -s -m4 http://singireddys-mac-mini.local:8080/slots | python3 -c "import sys,json;print(len(json.load(sys.stdin)))" 2>/dev/null || true)

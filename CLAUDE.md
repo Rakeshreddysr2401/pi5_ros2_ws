@@ -92,8 +92,11 @@ pip3 install --break-system-packages -r requirements.txt
    that need ROS message types import them lazily *inside* the function body.
 2. **One llama.cpp KV slot per agent.** Slots are declared in `registry.py`
    (`AgentSpec.slot`), NOT as ROS params. Start the server with
-   `--parallel 4` (slot 3 is the photo survey's; `survey.fit_slot` shares
-   local_agent's on a smaller server): each agent's ~900-token prompt prefix then stays resident
+   `--parallel 4`: slots 0-2 are the agents, slot 3 the **vision-tool slot**
+   (search views, locate, the photo survey -- one-shot photo prompts, kept OFF
+   local_agent's slot 1, which holds the vision conversation and its earlier
+   photos; `tools/survey.py` VISION_TOOL_SLOT, asserted in registry.py). On a
+   smaller server the survey is off and locate falls back to slot 1. Each agent's ~900-token prompt prefix then stays resident
    in its own cache. Two agents on one slot evict each other every turn
    (~18-50s of re-prefill). agent_node probes the server's real slot count at
    boot, wraps with modulo, and warns loudly if it had to.
@@ -156,7 +159,7 @@ that moves wheels).
 - **Every photo becomes object memory** (`tools/survey.py`, 2026-09-27): look(),
   each search view and locate_object hold the photo's depth + camera pose at the
   Jetson (`hold_frame`, 24 kept) and queue it; in the background — only while no
-  turn or search is running, on llama.cpp slot 3, unstreamed — the VLM lists the
+  turn or search is running, on the vision-tool slot 3, unstreamed — the VLM lists the
   objects and the Jetson places each one using THAT photo's pose. So "go to the
   chair" later is worked out from where the robot is now (approach.py step 1).
   The search itself is 8 views, 45° apart (90° steps missed objects at the seams).
@@ -240,7 +243,7 @@ no longer exist.
   none are servos), `/audio/music_*`. Check for a publisher before building on
   a topic here.
 - Streaming tool calls need the llama.cpp server started with
-  `--jinja --parallel 4` (one slot per agent: chat/local_agent/navigate, + the survey).
+  `--jinja --parallel 4` (one slot per agent: chat/local_agent/navigate, + the vision-tool slot 3).
 - Pi5↔Jetson clocks drift ~1.5s (chrony peering pending) — latency_replay
   flags negative deltas.
 - **A prompt rule the model has to follow is not a fix — it is a thing to

@@ -107,7 +107,6 @@ def _vlm_locate(frame: bytes, description: str) -> tuple | None:
     from langchain_core.messages import HumanMessage
     from PIL import Image
 
-    from ..services.llm import get_llm
     from ..utils.speech_stream import strip_thought_residue
 
     width, height = Image.open(io.BytesIO(frame)).size
@@ -115,7 +114,9 @@ def _vlm_locate(frame: bytes, description: str) -> tuple | None:
     # Unstreamed: streamed, this llama.cpp files an answer wrapped in Gemma's
     # channel markers as hidden reasoning, the text arrives empty, and an
     # empty reply here reads as "not found" -- a silent miss (2026-09-27).
-    reply = get_llm("local_agent", streaming=False).invoke([HumanMessage(content=[
+    # The vision-TOOL slot, not local_agent's: a one-shot photo prompt there
+    # would overwrite the vision conversation's cache (survey.VISION_TOOL_SLOT).
+    reply = _survey.vision_tool_llm().invoke([HumanMessage(content=[
         {"type": "text", "text": _VLM_LOCATE_PROMPT.format(description=description)},
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
     ])], config={"run_name": "vlm_locate", "tags": ["vlm_locate"]})

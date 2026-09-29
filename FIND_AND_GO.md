@@ -50,7 +50,7 @@ look again to confirm, and go.
 | photo stamp + pose register | `tools/photos.py` | — |
 | hold a photo's depth + pose | `bridge.hold_frame` | `phase4/nodes/pixel_to_goal.py` snapshots (24; depth-gap fallback) |
 | pixel/box -> room x, y | `bridge.ground_pixel` | `pixel_to_goal.py` `_on_query` (nearest solid slab in the box) |
-| background survey | `tools/survey.py` (idle only, slot 3) | same queries |
+| background survey | `tools/survey.py` (idle only, vision-tool slot 3 — so is every `_vlm_locate`) | same queries |
 | object memory | `services/object_memory.py` (`~/.langrobo/object_memory.json`) | — |
 | the steps above | `tools/approach.py` | — |
 | drive, waited on | `bridge.reach_and_wait` | `phase3/nodes/reach_node.py` |

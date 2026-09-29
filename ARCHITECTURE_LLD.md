@@ -295,7 +295,7 @@ services/llm.configure(agent_overrides={name: {"slot": n}})
 ChatOpenAI(extra_body={"id_slot": n})     ← forwarded verbatim to llama.cpp
 ```
 
-**Start the server with `--parallel 4`** (slot 3 is the photo survey's, `tools/survey.py`). Fewer slots is not an error; it just
+**Start the server with `--parallel 4`** (slot 3 is the vision-tool slot: search views, locate, the photo survey -- `survey.VISION_TOOL_SLOT`: a one-shot photo prompt on local_agent's slot 1 would overwrite the vision conversation's cached photos). Fewer slots is not an error; it just
 costs, and agent_node says so at boot.
 
 This replaced five hand-maintained ROS parameters plus a fold-when-out-of-range
