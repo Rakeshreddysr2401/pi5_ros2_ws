@@ -18,4 +18,7 @@ class AgentState(MessagesState):
     channel: Optional[str]
     sender_name: Optional[str]
     sender_role: Optional[str]
+    # services/jev.py (LANGROBO_JEV=on only): P(the user's words ask about
+    # what the camera sees), read once at turn start. None = not asked.
+    jev_vision: Optional[float]
 

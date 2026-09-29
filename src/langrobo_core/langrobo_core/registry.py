@@ -29,10 +29,9 @@ model. With three agents and three slots, nothing ever evicts anything.
     slot 1  local_agent   image prefix — kept away from the text agents
     slot 2  navigate      latency-sensitive: a movement command is waiting
 
-Start the server with `--parallel 4`: slot 3 is the background photo survey's
-(tools/survey.py, LANGROBO_SURVEY_SLOT). Fewer slots still works — agent_node
-assigns slots modulo the server's real count at startup and folds the survey
-onto local_agent's, so a smaller server just means sharing, at the old cost.
+Start the server with `--parallel 4` (slot 3 is the vision-tool slot: tools/survey.py). Fewer slots still works — slots are
+assigned modulo the server's real count at startup (services/llm.py), so a
+2-slot server just means two agents share, at the old cost.
 """
 
 from __future__ import annotations
@@ -166,6 +165,12 @@ assert set(SPECS) == set(ROUTABLE), (
 # is a real, measurable latency bug and it is invisible at runtime, so it is
 # an import-time error instead.
 assert len(set(SLOTS.values())) == len(SLOTS), f"duplicate KV slots: {SLOTS}"
+# ...and none may take the vision-TOOL slot, where one-shot photo prompts
+# (search views, locate, the photo survey) run so they never overwrite an
+# agent's cache -- local_agent's above all, which holds its photos.
+from .tools.survey import VISION_TOOL_SLOT  # noqa: E402
+assert VISION_TOOL_SLOT not in SLOTS.values(), (
+    f"an agent claims the vision-tool slot {VISION_TOOL_SLOT}: {SLOTS}")
 
 
 def build_agent_list(exclude: str = "") -> str:
@@ -178,3 +183,20 @@ def build_agent_list(exclude: str = "") -> str:
         f'- "{name}" : {meta["description"]}'
         for name, meta in AGENTS.items() if name != exclude
     )
+
+
+def warm_order(entry: str, all_agents: bool = True) -> list[str]:
+    """The agents the idle cache warmer prefills, in order: the others first,
+    `entry` (where the next turn will land) LAST.
+
+    All of them, because a handover lands on the target agent with a prompt
+    that has not been read since the history last changed: the first "go to
+    the kitchen" or "what do you see" after boot paid a full ~2.5k-token
+    read. Entry last, because a server whose slots evict each other (the
+    Mac's, until --swa-full; scripts/llm_cache_check.py) then still keeps the
+    one the next turn needs."""
+    if entry not in SPECS:
+        entry = "chat"
+    others = [name for name in SPECS if name != entry] if all_agents else []
+    return others + [entry]
+

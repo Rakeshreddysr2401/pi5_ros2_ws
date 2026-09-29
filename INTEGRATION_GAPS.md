@@ -321,7 +321,16 @@ and navigation all use them (rover repo INTELLIGENCE_PLAN.md §5). Floor test pe
 **"Movement done" can be reported with nothing moving.** After a power cycle on
 2026-09-23 the ESP32 linked at 20 Hz and echoed every command, with the motor
 supply off. `/wheel_state.x`/`.y` (left/right m/s) at ~0 while commanding is the
-tell. `move_robot` does not look. ⬜
+tell. ✅ **2026-09-28 (by the goal_exec move):** every `move_robot` step now
+closes on the fused pose, and goal_exec ends a move that makes no progress for
+6 s as `stalled` ("turn stuck … from target"), which `move_robot` reports with
+what the pose says it did. Only the timed fallback (goal_exec not running) is
+still blind, and its reply says it is approximate.
+
+**MANUAL flipped mid-move now stops the brain** (2026-09-28, `movement.ManualWatch`,
+polled by agent_node at 2 Hz): before, only a tool's START checked the switch,
+so a scan or search kept turning against teleop's zeros and a reach drive
+retried against them for minutes.
 
 **Smaller:**
 - `/scan` now exists (10 Hz, BEST_EFFORT, 360° at 21 cm). Nothing here

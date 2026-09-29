@@ -107,7 +107,6 @@ def _vlm_locate(frame: bytes, description: str) -> tuple | None:
     from langchain_core.messages import HumanMessage
     from PIL import Image
 
-    from ..services.llm import get_llm
     from ..utils.speech_stream import strip_thought_residue
 
     width, height = Image.open(io.BytesIO(frame)).size
@@ -115,7 +114,9 @@ def _vlm_locate(frame: bytes, description: str) -> tuple | None:
     # Unstreamed: streamed, this llama.cpp files an answer wrapped in Gemma's
     # channel markers as hidden reasoning, the text arrives empty, and an
     # empty reply here reads as "not found" -- a silent miss (2026-09-27).
-    reply = get_llm("local_agent", streaming=False).invoke([HumanMessage(content=[
+    # The vision-TOOL slot, not local_agent's: a one-shot photo prompt there
+    # would overwrite the vision conversation's cache (survey.VISION_TOOL_SLOT).
+    reply = _survey.vision_tool_llm().invoke([HumanMessage(content=[
         {"type": "text", "text": _VLM_LOCATE_PROMPT.format(description=description)},
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
     ])], config={"run_name": "vlm_locate", "tags": ["vlm_locate"]})
@@ -371,7 +372,7 @@ def _approach(description: str, state: dict) -> str:
     # Checked before the search, not after: locating the object costs a VLM
     # round trip per step (10-40 s each) and the search ROTATES the base. Both
     # are wasted if the wheels are being zeroed by teleop anyway.
-    refusal = _mv.blocked_by_manual()
+    refusal = _mv.blocked_by_role(state) or _mv.blocked_by_manual()
     if refusal:
         return refusal
 
@@ -580,14 +581,14 @@ def _approach(description: str, state: dict) -> str:
 
 
 @tool
-def scan_surroundings() -> str:
+def scan_surroundings(state: Annotated[dict | None, InjectedState] = None) -> str:
     """Turn a full slow circle in place so the depth camera can map everything
     around the robot (fills the 3D map behind/left/right). Use for "look
     around", "scan the room", "map this area", or before navigating in a spot
     the robot hasn't seen from all sides.
 
     Takes about 15 seconds."""
-    refusal = _mv.blocked_by_manual()     # a full turn against MANUAL's zeros goes nowhere
+    refusal = _mv.blocked_by_role(state) or _mv.blocked_by_manual()   # MANUAL: a turn against its zeros goes nowhere
     if refusal:
         return refusal
     bridge = _bridge.get()

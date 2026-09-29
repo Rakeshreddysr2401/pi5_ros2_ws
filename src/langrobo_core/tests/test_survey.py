@@ -181,6 +181,33 @@ def test_a_turn_cancels_the_vlm_call_in_flight(monkeypatch):
     assert cancelled.is_set() and time.time() - t0 < 2.0
 
 
-def test_status_reports_counts_and_queue():
+def test_status_reports_counters_and_queue():
     s = sv.status()
-    assert {"photos", "objects", "errors", "yielded", "queued", "slot"} <= set(s)
+    assert {"photos", "objects", "skipped", "errors", "queued", "paused", "worker_alive"} <= set(s)
+    with sv.paused():
+        assert sv.status()["paused"] is True
+    assert sv.status()["paused"] is False
+
+
+def test_vision_tool_slot_fits_the_server(monkeypatch):
+    """--parallel 4: its own slot. Smaller: the survey is off (never an agent's
+    slot), and locate/search fall back to local_agent's so they still work."""
+    monkeypatch.setattr(sv, "VISION_TOOL_SLOT", 3)
+    assert sv.fit_slot(4, 1) == 3
+    assert sv.fit_slot(None, 1) == 3                  # probe failed: as configured
+    assert sv.fit_slot(3, 1) is None                  # --parallel 3: no slot 3
+    assert sv.submit(b"jpeg", (1, 2), (0, 0, 0), "look") is False
+    assert sv.status()["enabled"] is False
+
+
+def test_one_shot_vision_calls_never_use_the_agents_slot(monkeypatch):
+    """The vision conversation's cache (its photos) lives in local_agent's
+    slot; a search view or survey there would overwrite it."""
+    from langrobo_core.services import llm
+    from langrobo_core.registry import SLOTS
+    llm.configure("llamacpp", "m", "http://127.0.0.1:1", "none", 100,
+                  {n: {"slot": s} for n, s in SLOTS.items()})
+    monkeypatch.setattr(sv, "VISION_TOOL_SLOT", 3)
+    assert sv.vision_tool_llm().extra_body["id_slot"] == 3
+    assert llm.get_llm("local_agent").extra_body["id_slot"] == SLOTS["local_agent"]
+    assert 3 not in SLOTS.values()

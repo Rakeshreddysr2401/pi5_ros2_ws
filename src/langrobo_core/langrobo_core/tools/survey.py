@@ -37,7 +37,9 @@ Rules that keep it from getting in the way:
   * Each object remembers WHICH photo placed it (`photo`: the camera stamp),
     so "go near it" about a photo the survey has done needs no VLM call at
     all (approach._in_conversation_photos).
-  * On its own llama.cpp slot (LANGROBO_SURVEY_SLOT, default 3 -- the free one),
+  * On the vision-TOOL slot (VISION_TOOL_SLOT, default 3; needs --parallel 4),
+    never local_agent's: that slot holds the vision conversation and its
+    photos. No such slot on the server -> the survey is off (fit_slot),
     unstreamed (streamed, this server files marked-up answers as hidden text).
   * Only photo-time grounding is kept (at_capture): an object placed with
     depth taken after the robot moved would be in the wrong place.
@@ -60,7 +62,19 @@ from . import _bridge
 
 logger = logging.getLogger(__name__)
 
-SURVEY_SLOT = int(os.environ.get("LANGROBO_SURVEY_SLOT", "3"))
+# ── The vision-TOOL slot ────────────────────────────────────────────────────
+# One-shot vision calls -- the survey's object list and approach/locate's
+# "where is X in this photo" -- each send ONE photo with a short prompt that
+# has nothing to do with the conversation. They run local_agent's model, but
+# NEVER on local_agent's slot (1): that slot holds the vision conversation --
+# its prompt, its tools and the earlier photos it reasons over ("is it still
+# there?", "what colour was it?"). A one-shot call there overwrote all of it,
+# up to 8 times in one search, and the next vision turn re-read every kept
+# photo through the vision encoder. So they share slot 3 (--parallel 4),
+# one at a time (approach pauses the survey while it searches).
+VISION_TOOL_SLOT = int(os.environ.get("LANGROBO_VISION_TOOL_SLOT",
+                                      os.environ.get("LANGROBO_SURVEY_SLOT", "3")))
+_agent_vision_slot = None     # local_agent's slot, set by fit_slot: locate's fallback
 MAX_QUEUE = 12               # < the Jetson's SNAPSHOTS (24): depth still held
 MAX_OBJECTS = 8
 _MAX_PHOTO_AGE_S = 900.0     # an older photo's snapshot is long gone anyway
@@ -99,12 +113,37 @@ def _should_yield() -> bool:
 
 
 def status() -> dict:
-    """For /status and `fleet.sh check`: is the survey keeping up, and is
-    it failing?"""
+    """For the health API: counters so far, and what is waiting."""
     with _cv:
-        queued = len(_queue)
-    return {**stats, "queued": queued, "slot": SURVEY_SLOT,
-            "running": bool(_thread and _thread.is_alive())}
+        queued, paused_now = len(_queue), bool(_paused)
+    return {**stats, "queued": queued, "paused": paused_now,
+            "slot": VISION_TOOL_SLOT, "enabled": VISION_TOOL_SLOT is not None,
+            "worker_alive": bool(_thread and _thread.is_alive())}
+
+
+def fit_slot(total_slots: int | None, agent_vision_slot: int | None) -> int | None:
+    """Fit VISION_TOOL_SLOT to the server agent_node found (called once, after
+    its slot probe). Returns the slot one-shot vision calls will use, or None:
+    the server has no slot VISION_TOOL_SLOT (fewer than --parallel 4). Then
+      * the photo survey is OFF -- it is a background extra, and running it
+        on an agent's slot would evict that agent's cache every photo;
+      * locate/approach, which the user is waiting on, use local_agent's slot
+        (the pre-2026-09-29 behaviour: it works, at the cost of that cache).
+    A failed probe (None) leaves everything as configured."""
+    global VISION_TOOL_SLOT, _agent_vision_slot
+    _agent_vision_slot = agent_vision_slot
+    if total_slots and VISION_TOOL_SLOT is not None and VISION_TOOL_SLOT >= total_slots:
+        VISION_TOOL_SLOT = None
+    return VISION_TOOL_SLOT
+
+
+def vision_tool_llm(**overrides):
+    """local_agent's model for a one-shot, unstreamed vision call, on the
+    vision-tool slot (see VISION_TOOL_SLOT). Imported at call time so tests
+    can swap services.llm.get_llm."""
+    from ..services.llm import get_llm
+    slot = VISION_TOOL_SLOT if VISION_TOOL_SLOT is not None else _agent_vision_slot
+    return get_llm("local_agent", slot=slot, streaming=False, **overrides)
 
 
 def set_busy_probe(probe) -> None:
@@ -132,8 +171,8 @@ def submit(frame: bytes, stamp, pose, source: str, when: float | None = None,
            epoch=None) -> bool:
     """Queue a photo for surveying. The caller has already asked the Jetson to
     hold its depth (hold_frame). False when it cannot be used (no stamp)."""
-    if not frame or not stamp:
-        return False
+    if not frame or not stamp or VISION_TOOL_SLOT is None:
+        return False                   # no stamp to ground on / no slot of its own
     rec = {"frame": frame, "stamp": tuple(stamp), "pose": pose, "source": source,
            "when": time.time() if when is None else when, "epoch": epoch}
     with _cv:
@@ -207,12 +246,11 @@ def list_objects(frame: bytes) -> list:
     from langchain_core.messages import HumanMessage
     from PIL import Image
 
-    from ..services.llm import get_llm
     from ..utils.speech_stream import strip_thought_residue
 
     width, height = Image.open(io.BytesIO(frame)).size
     b64 = base64.b64encode(frame).decode()
-    llm = get_llm("local_agent", slot=SURVEY_SLOT, streaming=False, max_tokens=600)
+    llm = vision_tool_llm(max_tokens=600)
     msgs = [HumanMessage(content=[
         {"type": "text", "text": _PROMPT.format(n=MAX_OBJECTS)},
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},

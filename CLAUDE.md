@@ -12,7 +12,7 @@ Home robot "Mitra" (renamed from "Rakhi" 2026-09-20; the `rakhi24` username and 
   Repo: **`~/rover`** on the Jetson (container `rover`), brought up with
   `./rover up`. (`~/langrobo_perception` and `~/robot` are the old stacks.)
 - **Mac Mini** — the LLM and VLM (llama.cpp, `singireddys-mac-mini.local:8080`).
-  **Must run with `--jinja --parallel 4`** — one KV slot per agent, plus slot 3 for the photo survey.
+  **Must run with `--jinja --parallel 4`** — one KV slot per agent + one for the photo survey.
 - **ESP32** — 50 Hz closed-loop PID on four wheels, micro-ROS over WiFi.
 
 **FIND_AND_GO.md is the priority flow** ("what do you see?" … "go near it":
@@ -65,7 +65,7 @@ passwordless ssh; DDS is plain multicast on domain 0 everywhere (NETWORKING.md).
 ./scripts/fleet.sh down       # full shutdown incl. Pi5 services (sudo)
 ./scripts/fleet.sh status
 
-# Test (pure core — no robot, no LLM server, no keys; ~300 tests, ~10s)
+# Test (pure core — no robot, no LLM server, no keys; ~350 tests, ~5s; never traces)
 cd src/langrobo_core && python3 -m pytest tests/ -q
 
 # Build + deploy after code changes
@@ -92,8 +92,12 @@ pip3 install --break-system-packages -r requirements.txt
    that need ROS message types import them lazily *inside* the function body.
 2. **One llama.cpp KV slot per agent.** Slots are declared in `registry.py`
    (`AgentSpec.slot`), NOT as ROS params. Start the server with
-   `--parallel 4` (slot 3 is the background photo survey's): each agent's
-   ~900-token prompt prefix then stays resident in its own cache. Two agents on one slot evict each other every turn
+   `--parallel 4`: slots 0-2 are the agents, slot 3 the **vision-tool slot**
+   (search views, locate, the photo survey -- one-shot photo prompts, kept OFF
+   local_agent's slot 1, which holds the vision conversation and its earlier
+   photos; `tools/survey.py` VISION_TOOL_SLOT, asserted in registry.py). On a
+   smaller server the survey is off and locate falls back to slot 1. Each agent's ~900-token prompt prefix then stays resident
+   in its own cache. Two agents on one slot evict each other every turn
    (~18-50s of re-prefill). agent_node probes the server's real slot count at
    boot, wraps with modulo, and warns loudly if it had to.
    **Separate slots are not enough on their own:** as of 2026-09-27 the Mac's
@@ -144,8 +148,10 @@ that moves wheels).
   table that had already drifted (it gated objects on a COCO class list while
   dispatching to a VLM tool). Every turn now goes through the graph, so
   movement costs 2 LLM calls and a vision question 3. **Do not reintroduce
-  regex intent matching** — the replacement is a MiniLM entry classifier,
-  designed in INTENT_ROUTING_PLAN.md and not yet built.
+  regex intent matching** — the replacement is an entry classifier:
+  `services/jev.py` (TypeSafe's Jev, cloud, `LANGROBO_JEV=shadow|on`, off by
+  default; ARCHITECTURE_LLD.md §4.3c) is built; the on-device MiniLM of
+  INTENT_ROUTING_PLAN.md is the private alternative, not yet built.
   Stopping never depended on it: `agent_node._on_user_input` halts the wheels
   on every utterance before the graph runs.
 - `langrobo_core/graph/` — topology (build.py, derived entirely from
@@ -155,7 +161,7 @@ that moves wheels).
 - **Every photo becomes object memory** (`tools/survey.py`, 2026-09-27): look(),
   each search view and locate_object hold the photo's depth + camera pose at the
   Jetson (`hold_frame`, 24 kept) and queue it; in the background — only while no
-  turn or search is running, on llama.cpp slot 3, unstreamed — the VLM lists the
+  turn or search is running, on the vision-tool slot 3, unstreamed — the VLM lists the
   objects and the Jetson places each one using THAT photo's pose. So "go to the
   chair" later is worked out from where the robot is now (approach.py step 1).
   The search itself is 8 views, 45° apart (90° steps missed objects at the seams).
@@ -201,7 +207,7 @@ that moves wheels).
 ## Working on the Jetson from here
 
 Passwordless SSH: `ssh rakhi24@rakhi-jetson.local`. The live repo is **`~/rover`**
-(branch `rover-v1.1.2-refactor`, container `rover`, image `orin-nav:1.1`); read its
+(branch `rover-v1.1.4-fleet-integration`, container `rover`, image `orin-nav:1.1`); read its
 README.md, STARTUP.md (power-on → working), OPERATIONS.md and OPEN_ISSUES.md before
 editing. Its rules: the image has no Dockerfile and must never be modified; nodes are
 host files bind-mounted read-only, so edit on the host and restart the layer
@@ -240,7 +246,7 @@ no longer exist.
   none are servos), `/audio/music_*`. Check for a publisher before building on
   a topic here.
 - Streaming tool calls need the llama.cpp server started with
-  `--jinja --parallel 4` (one slot per agent: chat/local_agent/navigate, + 3 for the photo survey).
+  `--jinja --parallel 4` (one slot per agent: chat/local_agent/navigate, + the vision-tool slot 3).
 - Pi5↔Jetson clocks drift ~1.5s (chrony peering pending) — latency_replay
   flags negative deltas.
 - **A prompt rule the model has to follow is not a fix — it is a thing to

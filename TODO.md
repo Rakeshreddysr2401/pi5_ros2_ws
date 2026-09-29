@@ -13,7 +13,9 @@ the things only you can do, most useful first:
    after a vision question, every handover) re-reads the whole ~3k-token
    prompt: 15-27 s instead of ~1 s. This is the single biggest thing between
    the robot and fast conversation. Then run
-   `python3 scripts/llm_cache_check.py` — PASS means fixed. (I have no ssh
+   `python3 scripts/llm_cache_check.py` — PASS means fixed. After a PASS, add
+   `LANGROBO_WARM_ALL=1` to `.env` and restart the brain: every agent is then
+   pre-read while idle, so the first move / vision question is fast too. (I have no ssh
    key for the Mac, so I could not do it.)
 2. **Floor-test the driving with you watching** — I did not drive the robot
    on purpose, with one exception I owe you: during a MANUAL-mode refusal
@@ -241,7 +243,7 @@ production ingredient the sim lacks — or was fixed by a commit since 07-06.
 and reminders (which produced the [SYSTEM] turns above) are both gone. The
 [SYSTEM] turn producer in this build is **navigation arrival**, so:
 
-1. Start llama.cpp with `--parallel 3` and confirm the brain logs
+1. Start llama.cpp with `--parallel 4` and confirm the brain logs
    `KV slot map (one per agent): {'chat': 0, 'local_agent': 1, 'navigate': 2}`.
 2. Drive two goals in a row (`"go to the kitchen"`, wait for arrival, repeat).
    Each arrival is a [SYSTEM] turn, which now enters at **chat**.

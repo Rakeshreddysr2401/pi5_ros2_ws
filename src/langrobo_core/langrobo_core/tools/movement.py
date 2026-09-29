@@ -1,3 +1,4 @@
+import logging
 import math
 import os
 import time
@@ -8,6 +9,8 @@ from langgraph.prebuilt import InjectedState
 
 from ..utils import pose_stamp
 from . import _bridge
+
+logger = logging.getLogger(__name__)
 
 # ── Fine-movement Twist parameters (direct /cmd_vel, bypasses Nav2) ──────────
 #
@@ -344,7 +347,8 @@ def _report_partial(labels: list, at: int, why: str, moved: bool = True) -> str:
 
 
 @tool
-def move_robot(command: str) -> str:
+def move_robot(command: str,
+               state: Annotated[dict | None, InjectedState] = None) -> str:
     """Send short, precise movement commands directly to the wheels via /cmd_vel.
 
     Use for fine adjustments - aligning, nudging, short scans.
@@ -383,7 +387,7 @@ def move_robot(command: str) -> str:
     # and a timed one reports "done" having gone nowhere. A pure stop ("S")
     # is what MANUAL does anyway, so only a step that moves is refused.
     if any(c != "S" for c, _ in steps):
-        refusal = blocked_by_manual()
+        refusal = blocked_by_role(state) or blocked_by_manual()
         if refusal:
             return refusal
 
@@ -503,6 +507,59 @@ _MANUAL_REFUSAL = (
 )
 
 
+class ManualWatch:
+    """Stops the brain's motion the moment the teleop switch goes to MANUAL.
+
+    blocked_by_manual() is checked once, when a tool starts. Flipping MANUAL
+    MID-move is how a person grabs control, and nothing told the brain: a
+    6-step scan or an 8-view search kept issuing turns against teleop's
+    zeros, and a reach drive retried against them for up to 5 minutes, then
+    reported a failure instead of "stopped" (2026-09-27: a "look around"
+    turn went ~120 deg before MANUAL stopped it, and the brain never knew).
+    On the edge INTO manual this does what a new utterance does: cancel the
+    drive and interrupt the blocking tool. agent_node polls it on a thread.
+    """
+
+    def __init__(self, bridge, probe=None):
+        self._bridge = bridge
+        self._probe = probe or teleop_is_manual
+        self._last = None
+
+    def poll(self) -> bool:
+        """One look at the switch. True when it has just gone to MANUAL (and
+        the motion was stopped). Unreadable teleop is not a change."""
+        now = self._probe()
+        if now is None:
+            return False
+        edge = now is True and self._last is False
+        self._last = now
+        if edge:
+            self._bridge.cancel_navigation()
+            self._bridge.request_motion_stop()
+        return edge
+
+
+def blocked_by_role(state: dict | None) -> str | None:
+    """The refusal if this turn's sender may not drive, else None.
+
+    permissions.CAP_MOVE existed and nothing checked it: any allowlisted
+    Telegram member -- family, guest -- could send the robot around the house.
+    Enforced here, in the tools, like every capability (a prompt can be
+    talked round). Voice and Studio turns carry no role and act as the owner
+    (permissions.VOICE_ROLE). Stopping is never refused -- callers skip this
+    for a pure stop."""
+    from ..services import permissions
+    state = state or {}
+    role = state.get("sender_role") or permissions.VOICE_ROLE
+    if permissions.has_capability(role, permissions.CAP_MOVE):
+        return None
+    who = state.get("sender_name") or "this sender"
+    logger.info("AUDIT capability=move sender=%s role=%s outcome=denied", who, role)
+    return (f"Permission denied: {who} ({role}) is not allowed to move the robot. "
+            f"Politely refuse; stopping it is always allowed, and the owner can "
+            f"ask for the move.")
+
+
 def blocked_by_manual() -> str | None:
     """The refusal message if teleop is in MANUAL, else None.
 
@@ -525,7 +582,7 @@ def navigate_to_pose(location: str,
 
     Returns immediately — the robot drives in the background. A system message
     arrives when it gets there, or fails."""
-    refusal = blocked_by_manual()
+    refusal = blocked_by_role(state) or blocked_by_manual()
     if refusal:
         return refusal
 
@@ -554,7 +611,8 @@ def navigate_to_pose(location: str,
 
 
 @tool
-def save_location(name: str) -> str:
+def save_location(name: str,
+                  state: Annotated[dict | None, InjectedState] = None) -> str:
     """Save the robot's CURRENT position under a name, so the user can send the
     robot back later with navigate_to_pose(name). Use when the user says
     "remember this spot as X", "save this location as the charging dock", etc.
@@ -567,6 +625,9 @@ def save_location(name: str) -> str:
     will just stop naming it). Re-save it once that happens.
 
     name: short lowercase identifier, e.g. 'table_5' or 'charging_dock'."""
+    refusal = blocked_by_role(state)      # it changes where the robot can be sent
+    if refusal:
+        return refusal
     bridge = _bridge.get()
     ensure_head_centred(bridge)   # a panned head would save a rotated pose
     pose = bridge.get_current_pose()
@@ -593,7 +654,8 @@ _TILT_MIN_DEG, _TILT_MAX_DEG = -30.0, 30.0
 
 
 @tool
-def point_camera(pan_deg: float = 0.0, tilt_deg: float = 0.0) -> str:
+def point_camera(pan_deg: float = 0.0, tilt_deg: float = 0.0,
+                 state: Annotated[dict | None, InjectedState] = None) -> str:
     """Point the robot's camera using its pan-tilt mount (2 servos).
 
     pan_deg: horizontal angle, -90 (full left) .. 90 (full right), 0 = forward.
@@ -603,6 +665,9 @@ def point_camera(pan_deg: float = 0.0, tilt_deg: float = 0.0) -> str:
     camera without moving the wheels. Drives the ESP32 pan/tilt servos
     (/servo_pan, /servo_tilt); if the mount isn't installed yet nothing moves —
     say so rather than claiming it worked."""
+    refusal = blocked_by_role(state)
+    if refusal:
+        return refusal
     if not PAN_TILT_ENABLED:
         # Say so instead of reporting a move that physically cannot happen —
         # the docstring already promises this, but the code used to claim

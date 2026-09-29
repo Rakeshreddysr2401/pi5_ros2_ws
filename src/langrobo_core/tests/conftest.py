@@ -7,7 +7,15 @@ memory -- and read whatever the robot really saw into the test. Every test
 gets its own empty file instead.
 """
 
+import os
+
 import pytest
+
+# Tests never trace. A LangSmith key exported in the developer's shell would
+# otherwise send every test's fake LLM run to the robot's real project.
+for _k in ("LANGSMITH_TRACING", "LANGCHAIN_TRACING_V2", "LANGSMITH_TRACING_V2"):
+    os.environ.pop(_k, None)
+os.environ.pop("LANGROBO_TRACING", None)
 
 
 @pytest.fixture(autouse=True)

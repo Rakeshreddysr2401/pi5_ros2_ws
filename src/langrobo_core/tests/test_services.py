@@ -201,3 +201,17 @@ def test_llamacpp_bans_the_thinking_token(monkeypatch):
 def test_ban_is_llamacpp_only_and_can_be_switched_off(monkeypatch):
     assert "logit_bias" not in _extra_body("openai", monkeypatch)
     assert "logit_bias" not in _extra_body("llamacpp", monkeypatch, env="")
+
+
+def test_llm_clients_are_reused_until_reconfigured():
+    """A new client per call meant a new connection (and mDNS lookup of the
+    Mac) on every LLM call; the same config must give the same client."""
+    from langrobo_core.services import llm
+    llm.configure("llamacpp", "m", "http://127.0.0.1:1", "none", 100,
+                  {"chat": {"slot": 0}, "navigate": {"slot": 2}})
+    a = llm.get_llm("chat")
+    assert llm.get_llm("chat") is a
+    assert llm.get_llm("navigate") is not a
+    assert llm.get_llm("chat", max_tokens=5) is not a        # a different config
+    llm.configure("llamacpp", "m", "http://127.0.0.1:2", "none", 100, {"chat": {"slot": 0}})
+    assert llm.get_llm("chat") is not a

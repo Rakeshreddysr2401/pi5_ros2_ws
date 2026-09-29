@@ -437,8 +437,14 @@ class ROS2Bridge:
         self._known_locations[name] = (x, y, yaw_deg)
         self._saved_locations[name] = (x, y, yaw_deg, self._origin_epoch)
         os.makedirs(os.path.dirname(self._locations_file), exist_ok=True)
-        with open(self._locations_file, "w") as f:
+        # Atomic, like object memory: a power cut mid-write left a truncated
+        # file, which the next boot could not read -- every saved place gone.
+        tmp = f"{self._locations_file}.tmp"
+        with open(tmp, "w") as f:
             json.dump({k: list(v) for k, v in self._saved_locations.items()}, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, self._locations_file)
 
     # ── Camera pan/tilt (ESP32 dual servo + Jetson TF mirror) ─────────────
 
@@ -466,9 +472,13 @@ class ROS2Bridge:
         if not req_id:
             return
         with self._pixel_lock:
-            # Keep the map tiny — replies are consumed within seconds.
-            if len(self._pixel_results) > 32:
-                self._pixel_results.clear()
+            # Keep the map tiny — replies are consumed within seconds; what
+            # piles up is late replies to queries that already timed out.
+            # Drop the OLDEST, never all: clear() here could wipe the reply a
+            # ground_pixel call (the photo survey grounds up to 8 per photo)
+            # is polling for right now, and it would report no_reply_from_jetson.
+            while len(self._pixel_results) >= 32:
+                self._pixel_results.pop(next(iter(self._pixel_results)))
             self._pixel_results[req_id] = data
 
     def ground_pixel(self, u: float, v: float, timeout: float = 4.0,
@@ -1015,9 +1025,10 @@ class ROS2Bridge:
         if self._reach_goal_pub.get_subscription_count() == 0:
             return {"ok": False, "result": "unavailable",
                     "why": "reach is not running on the Jetson (./rover nav)"}
-        # Key first, THEN cancel -- same order as start_nav_to_pose: a
-        # background drive woken by the cancel must already see it has been
-        # superseded, or its /reach/cancel can land after this goal and kill it.
+        # Key first, then cancel -- as start_nav_to_pose does. The other order
+        # let a background _reach_worker wake from the cancel, still see its
+        # own key as current, and send /reach/cancel, which could land after
+        # this goal and kill it.
         stamp, key = self._stamp_now()
         self._reach_current_key = key
         self.cancel_navigation()

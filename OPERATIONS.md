@@ -18,7 +18,9 @@ Deploy, run, observe, and troubleshoot the Pi5 brain.
 **Never run two brains at once** — both drive `/cmd_vel` and micro-ROS UDP 8888.
 
 The llama.cpp server on the Mac Mini must be started with **`--jinja --parallel 4`**:
-one KV-cache slot per agent (chat, local_agent, navigate). With fewer slots the
+one KV-cache slot per agent (chat, local_agent, navigate) plus slot 3 for
+one-shot vision calls (search views, locate, the photo survey), so they never
+overwrite local_agent's cached conversation and photos. With fewer slots the
 agents share and evict each other's cached prompt prefix, which
 costs ~18-50s of re-prefill per turn. agent_node probes the server at boot and
 logs `KV slot map (one per agent): {...}` — or a warning naming the shortfall.
@@ -81,7 +83,10 @@ curl -s -H "Authorization: Bearer $LANGROBO_API_TOKEN" localhost:8090/metrics  #
 
 `/status` reports: LLM primary health + fallback state, Telegram channel
 state, sticky agent, last-turn timestamp/duration, camera frame age, robot
-body, queued system/Telegram events. Without `LANGROBO_API_TOKEN` the API binds
+body, queued system/Telegram events, the odom origin epoch, whether a drive is
+running, the photo survey (`photos`, `objects`, `skipped`, `errors`, `queued`,
+`paused`, `worker_alive`) and `objects_remembered` (what object memory can
+serve right now; `fleet.sh check` prints both on one line). Without `LANGROBO_API_TOKEN` the API binds
 localhost-only; a LAN bind without a token is refused at startup (fail-fast).
 
 ## .env reference
@@ -181,7 +186,7 @@ debugging.
 ## Deploy checklist (Pi5 + Jetson protocol change)
 
 1. Pi5: `colcon build --symlink-install` + `pip3 install --break-system-packages -r requirements.txt`
-2. Mac Mini llama.cpp up, **started with `--jinja --parallel 4`**:
+2. Mac Mini llama.cpp up, **started with `--jinja --parallel 4 --swa-full`**:
    `curl http://singireddys-mac-mini.local:8080/v1/models` must report
    `"multimodal"` in capabilities (mmproj loaded) for look().
 3. `sudo systemctl restart langrobo-brain` → `curl localhost:8090/health`
@@ -198,12 +203,12 @@ debugging.
 
 ```bash
 ./llama-server -m <model>.gguf --mmproj <mmproj>.gguf --port 8080 -ngl 99 \
-               --parallel 4 --jinja
+               --parallel 4 --jinja --swa-full
 ```
 
 - `--parallel 4` — one KV slot per agent, pinned by the brain: 0 chat,
-  1 local_agent, 2 navigate; 3 is the background photo survey
-  (`LANGROBO_SURVEY_SLOT`, tools/survey.py). The map is `registry.SLOTS`, declared
+  1 local_agent, 2 navigate, and 3 = the vision-tool slot: search views, locate, the photo survey (with fewer, the survey is off,
+  locate uses slot 1, and the boot log says so). The map is `registry.SLOTS`, declared
   beside the agents; agent_node probes this server's real slot count at boot
   and warns if it is smaller. See ARCHITECTURE_LLD.md §4.1.
 - `--jinja` — required for grammar-forced handover + streamed tool calls.
@@ -223,7 +228,7 @@ debugging.
 | Symptom | Likely cause → fix |
 |---|---|
 | Spoken "my brain server is offline" | Mac Mini down/unreachable → check server, or arm `LANGROBO_FALLBACK_*` |
-| Every turn slow (~20s before speech) | KV cache cold: the server started without `--parallel 4` (agents share slots and evict each other — the boot log says so), a clock in a prompt, or a mid-history mutation. See ARCHITECTURE_LLD.md §4 |
+| Every turn slow (~20s before speech) | KV cache cold: the server started without `--parallel 4` (or without `--swa-full`: `scripts/llm_cache_check.py`) (agents share slots and evict each other — the boot log says so), a clock in a prompt, or a mid-history mutation. See ARCHITECTURE_LLD.md §4 |
 | First reply after a change of agent slow (15-27 s; e.g. the turn after a vision question) | The server keeps only ONE slot's cache: serving one agent's slot wipes the others. `python3 scripts/llm_cache_check.py` says PASS/FAIL in ~2 min. FAILED on 2026-09-27 (b9830, Gemma 4 12B). Likely fix on the Mac: add `--swa-full` to llama-server (Gemma's sliding-window cache), re-run the check |
 | "I cannot see right now" | Frame >10s stale or absent. That topic is published by `phase4/nodes/image_bridge.py` **in the perception repo** — start it with `./rover vlm` on the Jetson. It also skips encoding entirely when nothing is subscribed, so check the brain is up before blaming the Jetson |
 | Vision turn slow (~60s end-to-end) | Measured 2026-07-19: router call ~43s + vision call ~16s on the Mac, sequential. `local_agent` is sticky, so the FOLLOW-UP question about the same scene skips the router; the first one still pays it |

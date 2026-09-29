@@ -36,6 +36,7 @@ import re
 import tempfile
 import threading
 import time
+import uuid
 
 SAME_OBJECT_M = 0.35       # a sighting this close to an entry that matches is that entry
 MAX_ENTRIES = 150          # photo surveys (tools/survey.py) add ~5 per photo
@@ -129,7 +130,19 @@ def _load(epoch) -> list:
         return []
     if epoch is not None and data.get("epoch") is not None and data["epoch"] != epoch:
         return []                          # another odom origin: these point at nothing
-    return list(data.get("objects", []))
+    entries = list(data.get("objects", []))
+    # Files written before ids were unique hold one id per PHOTO (see
+    # _remember): give each repeat its own, so forget() drops one object.
+    # Deterministic (id-2, id-3, ...), so the same file gives the same ids to
+    # a recall() and the forget() after it; the next save persists them.
+    seen = set()
+    for e in entries:
+        base, n = e.get("id"), 1
+        while e.get("id") in seen:
+            n += 1
+            e["id"] = f"{base}-{n}"
+        seen.add(e.get("id"))
+    return entries
 
 
 def _save(entries: list, epoch) -> None:
@@ -164,7 +177,11 @@ def _remember(description: str, x: float, y: float, seen_from, epoch,
             entries.append(e)               # most recent last
             _save(entries, epoch)
             return e
-    e = {"id": f"{int(when * 1000) % 10**9:09d}", "description": description,
+    # Unique, not time-derived: the photo survey stores every object in one
+    # photo with that photo's `when`, and an id built from it gave them all the
+    # same id -- forget() of one then dropped the whole photo's objects, and
+    # approach's "has it moved?" check compared an entry with itself.
+    e = {"id": uuid.uuid4().hex[:12], "description": description,
          "x": round(x, 3), "y": round(y, 3), "seen_at": when,
          "seen_from": list(seen_from) if seen_from else None, "sightings": 1, **meta}
     entries.append(e)

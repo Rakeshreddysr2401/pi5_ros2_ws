@@ -248,10 +248,24 @@ empty: the first version's "any tool call is fine" exemption is what let the
 ## 4. Latency: where the seconds go, and what buys them back
 
 On the 12B model over the Mac Mini's llama.cpp, prompt *prefill* dominates.
-There are two ways to win: don't make the call at all (§3.1 and §3.2 — a
-movement command costs zero LLM calls, a vision question costs one instead of
-three), or make sure the call you do make starts from a warm cache. This
-section is the second half.
+There are two ways to win: make fewer calls, or make sure each call starts
+from a warm cache. The fast path that used to skip calls is gone (§3.1), so
+today it is mostly the second.
+
+LLM calls per request (measured on the graph, 2026-09-28):
+
+| request | calls | path |
+|---|---|---|
+| chat ("what time is it") | 1 | chat (+ a tool round if it calls one) |
+| sticky follow-up ("now turn left" after a move) | 2 | navigate → move_robot → navigate confirms |
+| first move / vision question from chat | 3 | chat → handover → navigate/local_agent → tool → that agent answers |
+
+Every call re-sends its agent's whole prefix — system prompt + tool schemas:
+~1.7k tokens (chat, 5 tools), ~2.4k (local_agent, 6), ~2.9k (navigate, 10;
+cl100k estimate). Warm, only the new tokens are read (~1-2 s a call). Cold,
+the whole prefix is: 15-27 s on the Mac while its slots wipe each other
+(TODO item 1: `--swa-full`, checked by `scripts/llm_cache_check.py`). That
+one server flag is worth more than everything else in this section.
 
 ### 4.1 One KV slot per agent — the parallel cache
 
@@ -281,7 +295,7 @@ services/llm.configure(agent_overrides={name: {"slot": n}})
 ChatOpenAI(extra_body={"id_slot": n})     ← forwarded verbatim to llama.cpp
 ```
 
-**Start the server with `--parallel 4`** — the three agents plus slot 3 for the background photo survey (tools/survey.py). Fewer slots is not an error; it just
+**Start the server with `--parallel 4`** (slot 3 is the vision-tool slot: search views, locate, the photo survey -- `survey.VISION_TOOL_SLOT`: a one-shot photo prompt on local_agent's slot 1 would overwrite the vision conversation's cached photos). Fewer slots is not an error; it just
 costs, and agent_node says so at boot.
 
 This replaced five hand-maintained ROS parameters plus a fold-when-out-of-range
@@ -316,6 +330,40 @@ the next turn will send, with `max_tokens=1`, on a background thread. It shares
 guaranteed rather than aspirational. It skips itself if input is already
 pending.
 
+It warms the agent the next turn will ENTER. A handover lands on another
+agent, whose prompt has not been read since the history changed — the first
+move or vision question after boot pays a full prefix read there.
+`LANGROBO_WARM_ALL=1` warms every agent, entry last (`registry.warm_order`),
+stopping as soon as input arrives. Off by default: on a server whose slots
+wipe each other it is ~3 full reads per idle spell for nothing. Turn it on
+once `llm_cache_check.py` passes.
+
+### 4.3b One client per config (2026-09-28)
+
+`services.llm.get_llm` returns the same `ChatOpenAI` for the same config, and
+each agent binds its tools once. It used to build a new client — a new HTTP
+pool, a new TCP connection and an mDNS lookup of the Mac — on every call:
+8-34 ms of construction measured on a Mac (more on the Pi 5), now 0.01 ms,
+and calls within a turn can reuse a keep-alive connection.
+`configure()` clears the cache.
+
+### 4.3c Jev: routing without an LLM call (2026-09-29, `LANGROBO_JEV`)
+
+`services/jev.py` asks TypeSafe AI's Jev -- a cloud "decision model" that
+returns a pick with a confidence, not text -- two questions per turn in ONE
+request: which agent (the choice criteria are `registry.AGENTS`, the same copy
+chat routes on) and "is this about what the camera sees?". In `on` mode a
+pick at >= `LANGROBO_JEV_MIN_CONF` becomes the entry agent (all three are
+sticky, so the graph needs no change): the first move or vision question costs
+2 calls instead of 3 (`tests/test_jev.py` proves it on the real graph). The
+vision read backs up §3.6's regex at p >= 0.9, and a near-sure "finished"
+skips the merge window when `looks_incomplete` would wait. `shadow` asks in
+the background and changes nothing; every turn logs a `jev {...}` line
+(pick, confidence, the agent that really answered, latency) and `/status` ->
+`jev` keeps the agreement. No key, no internet, a timeout (1.5 s): today's
+path. Never used for stopping, numbers or images. Privacy: the utterance and
+the robot's last reply go to api.typesafe.ai.
+
 ### 4.4 Sentence streaming to TTS
 
 `utils/speech_stream.py` hangs a callback off the LLM run. Complete sentences
@@ -345,7 +393,16 @@ spoken: a markdown list is read aloud bullet characters and all. That is why
 | `graph/state.py` | `AgentState` — messages, active agent, per-turn counters, sender identity. |
 | `tools/` | `@tool` functions. Per-agent sets in `__init__.py`. Robot I/O via `_bridge.get()`. |
 | `tools/_bridge.py` | the seam itself — a module-level singleton, set once at startup. Twenty lines, and the reason the whole brain runs off-robot. |
-| `services/` | state that outlives a turn: `config`, `llm`, `telegram`, `permissions`, `health`, `logging`, `metrics`. |
+| `tools/look.py` | `look()`: the current colour frame into the conversation (local_agent). Every photo is also recorded (`photos.py`) and surveyed (`survey.py`). |
+| `tools/locate.py` | `locate_object()`: VLM box → Jetson `pixel_to_goal` → distance and bearing. Read-only; never turns the robot. |
+| `tools/approach.py` | `approach_described_object()`: the photo we talked about → object memory → 45° search → drive. FIND_AND_GO.md is its walkthrough. |
+| `tools/memory.py` | `recall_object()`: where something was seen this session, from where the robot is now. Read-only. |
+| `tools/photos.py` | the photo register: for each JPEG the robot took, its camera stamp, pose, time and odom epoch (hash-keyed, 24 kept — the Jetson's snapshot count). |
+| `tools/survey.py` | the background photo survey: while the brain is idle, the VLM lists every object in each photo and the Jetson places it with THAT photo's depth and pose. Own thread, llama.cpp slot 3. |
+| `tools/movement.py` | `move_robot` (exact goal_exec moves, timed fallback), `navigate_to_pose`, `save_location`, the MANUAL guard. |
+| `services/` | state that outlives a turn: `config`, `llm`, `telegram`, `permissions`, `health`, `logging`, `metrics`, `object_memory`. |
+| `services/jev.py` | TypeSafe's Jev decision model: route + vision read per turn, "finished?" for endpointing. `LANGROBO_JEV` off/shadow/on; off without `TYPESAFE_API_KEY`. §4.3c. |
+| `services/object_memory.py` | where things were seen, in odom, one file (`~/.langrobo/object_memory.json`) shared by agent_node and Studio. Emptied when the odom origin (`/fusion/status` origin_epoch) changes. A hint, never a fact: callers look again before driving. |
 | `utils/` | pure helpers: history trimming, message projection, sentence streaming, timing. |
 | `bridges/stub.py` | the no-ROS bridge. Must mirror `ROS2Bridge`'s public surface. |
 
@@ -382,7 +439,8 @@ thread you are on:
 |---|---|---|
 | ROS spin | every subscription callback, the image cache | block. Ever. |
 | worker | the whole graph, every tool, every LLM call | — |
-| nav worker | one Nav2 action, per goal | touch graph state |
+| nav worker | one drive per goal: `/reach/goal` (default) or the Nav2 action | touch graph state |
+| photo survey | `tools/survey.py`: VLM object lists + grounding, only while no turn or search runs | run during a turn (it waits on `set_busy_probe` / `paused()`) |
 | telegram poller | long-poll `getUpdates` → worker queue | reply directly |
 | cache warmer | one prefill request | run when input is pending |
 

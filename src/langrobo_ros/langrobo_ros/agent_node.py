@@ -32,6 +32,7 @@ from langrobo_core.services import telegram as telegram_service
 from langrobo_core.services.logging import new_trace, setup_logging
 from langrobo_core.tools import _bridge as bridge_module
 from langrobo_core import registry
+from langrobo_core.services import jev
 from langrobo_core.graph import build_graph
 from langrobo_core.utils import timing
 from langrobo_core.utils import pose_stamp
@@ -112,15 +113,9 @@ class AgentNode(Node):
         # how many slots it has and wrap with modulo. Fewer slots than agents
         # just means some agents share again — it never breaks, it only costs.
         # A failed probe leaves the map alone (the server may still be booting).
-        #
-        # The background photo survey (tools/survey.py) needs one more slot of
-        # its own (LANGROBO_SURVEY_SLOT, default 3), so the server wants
-        # --parallel 4. On a smaller server that slot does not exist and every
-        # survey request would fail: fold it onto local_agent's (the same
-        # vision model), never chat's, which the cache warmer keeps hot.
-        from langrobo_core.tools import survey
         slots = dict(registry.SLOTS)
         need = len(slots) + 1
+        total = None
         if provider == "llamacpp":
             total = self._probe_total_slots(base_url)
             if total and total < len(slots):
@@ -132,12 +127,19 @@ class AgentNode(Node):
                     f"--parallel {need}. Slot map: {slots}")
             else:
                 self.get_logger().info(f"KV slot map (one per agent): {slots}")
-            if total and survey.SURVEY_SLOT >= total:
-                survey.SURVEY_SLOT = slots["local_agent"]
-                self.get_logger().warning(
-                    f"llama.cpp has {total} slots: the photo survey shares "
-                    f"local_agent's (slot {survey.SURVEY_SLOT}) and evicts its "
-                    f"image prefix. Start the server with --parallel {need}.")
+
+        # One-shot vision calls (search views, locate, the photo survey) have
+        # their own slot, so local_agent's keeps its conversation and photos.
+        from langrobo_core.tools import survey as _survey
+        want = _survey.VISION_TOOL_SLOT
+        got = _survey.fit_slot(total, slots.get("local_agent"))
+        if got is None:
+            self.get_logger().warning(
+                f"llama.cpp has {total} slots, no vision-tool slot ({want}): the "
+                f"photo survey is OFF, and locate/search run on local_agent's slot, "
+                f"evicting its cached photos. Start the server with --parallel {want + 1}.")
+        else:
+            self.get_logger().info(f"vision-tool slot {got} (search, locate, photo survey)")
 
         agent_overrides = {name: {"slot": slot} for name, slot in slots.items()}
         # local_agent may run a different GGUF than the text agents.
@@ -182,7 +184,10 @@ class AgentNode(Node):
         self._bridge.register_system_turn_callback(self._enqueue_system)
         # Background photo survey (every photo -> object memory) waits while
         # a turn is running: the Mac runs one model and the turn comes first.
-        survey.set_busy_probe(lambda: self._turn_active or self._user_pending is not None)
+        _survey.set_busy_probe(lambda: self._turn_active or self._user_pending is not None)
+        # Teleop flipped to MANUAL mid-move = a person taking control: stop
+        # whatever the brain is driving, as a new utterance does.
+        threading.Thread(target=self._watch_manual, daemon=True, name="manual_watch").start()
 
         # ── Build graph ───────────────────────────────────────────────────
         self._graph   = build_graph()
@@ -272,6 +277,22 @@ class AgentNode(Node):
             f"vision: {self._use_vision}"
         )
 
+    MANUAL_POLL_S = 0.5
+
+    def _watch_manual(self) -> None:
+        """Poll the teleop switch; on the edge into MANUAL, stop the motion
+        (movement.ManualWatch). Localhost HTTP, 0.7 s timeout: cheap."""
+        from langrobo_core.tools.movement import ManualWatch
+        watch = ManualWatch(self._bridge)
+        while True:
+            try:
+                if watch.poll():
+                    self.get_logger().warning(
+                        "teleop switched to MANUAL -- stopped the brain's drive/move")
+            except Exception as e:                # the watcher must never die
+                self.get_logger().debug(f"manual watch: {e}")
+            time.sleep(self.MANUAL_POLL_S)
+
     # ── Health API status hook (any thread) ───────────────────────────────
 
     def _runtime_status(self) -> dict:
@@ -288,20 +309,27 @@ class AgentNode(Node):
             "queued_telegram_messages": queued_telegram,
             "user_input_pending": user_pending,
             "telegram": self._telegram.status(),
-            "photo_survey": self._survey_status(),
+            "odom_origin_epoch": self._bridge.get_origin_epoch(),
+            "navigating": self._bridge.navigation_active(),
+            **self._perception_status(),
+            "jev": jev.status(),
         }
 
-    def _survey_status(self) -> dict:
-        """Photo survey counters plus how much object memory holds now: "the
-        robot doesn't remember anything" should be one line of /status."""
-        from langrobo_core.services import object_memory
-        from langrobo_core.tools import survey
-        out = survey.status()
+    def _perception_status(self) -> dict:
+        """What the robot has seen: the photo survey's progress and how many
+        objects object memory can serve right now. Never fails /status."""
+        out = {}
         try:
-            out["remembered_objects"] = len(
+            from langrobo_core.tools import survey
+            out["photo_survey"] = survey.status()
+        except Exception as e:
+            out["photo_survey"] = {"error": str(e)}
+        try:
+            from langrobo_core.services import object_memory
+            out["objects_remembered"] = len(
                 object_memory.recall("", self._bridge.get_origin_epoch()))
-        except OSError:
-            out["remembered_objects"] = None
+        except Exception as e:
+            out["objects_remembered"] = f"error: {e}"
         return out
 
     # ── Startup readiness check ───────────────────────────────────────────
@@ -538,6 +566,13 @@ class AgentNode(Node):
         """
         if self._merge_window <= 0:
             return text
+        # The word list says "wait for more"; a near-sure "finished" from Jev
+        # (on mode) saves the merge window. Asked only in that case.
+        if jev.mode() == "on" and looks_incomplete(text):
+            p = jev.is_finished(text)
+            if p is not None and p >= jev.min_conf():
+                self.get_logger().info(f"jev: '{text[-40:]}' is finished (p={p:.2f}) -- not waiting")
+                return text
         deadline = time.monotonic() + self._merge_window
         while looks_incomplete(text):
             remaining = deadline - time.monotonic()
@@ -656,6 +691,23 @@ class AgentNode(Node):
 
     # ── Graph invocation (worker thread) ──────────────────────────────────
 
+    @staticmethod
+    def _last_reply(history: list) -> str | None:
+        """The robot's last spoken text: context for Jev on follow-ups."""
+        from langchain_core.messages import AIMessage
+        for m in reversed(history):
+            if isinstance(m, AIMessage) and isinstance(m.content, str) and m.content.strip():
+                return m.content
+        return None
+
+    def _jev_outcome(self, read, actual: str | None, shadow: bool) -> None:
+        """Log Jev's pick beside the agent that actually answered. A shadow
+        read that has not come back by the end of the turn counts as nothing:
+        in `on` mode it would have been a timeout."""
+        fields = jev.record_outcome(read, actual, shadow)
+        if fields:
+            self.get_logger().info(jev.log_line({"mode": "shadow" if shadow else "on", **fields}))
+
     def _process(self, text: str, is_system: bool = False, telegram=None,
                  quiet: bool = False) -> None:
         """One turn. `telegram` (a TelegramInbound) switches the reply sink:
@@ -743,6 +795,28 @@ class AgentNode(Node):
             # the only sensible destination.
             incoming_agent = "chat" if is_system else (self._sticky_agent or "chat")
 
+            # Jev (langrobo_core.services.jev): a fast cloud decision model.
+            # on: a confident pick of agent enters it directly (saves chat's
+            # handover call) and its vision read backs up the vision-question
+            # check. shadow: asked in the background, changes nothing, logged
+            # against what actually happened. [SYSTEM] turns are never asked.
+            jev_read, jev_shadow, jev_mode = None, None, jev.mode()
+            if not is_system and jev_mode != "off":
+                args = (text, registry.AGENTS, self._sticky_agent,
+                        self._last_reply(history))
+                if jev_mode == "on":
+                    jev_read = jev.read_turn(*args)
+                    incoming_agent, acted = jev.entry_for(jev_read, incoming_agent)
+                    if acted:
+                        self.get_logger().info(
+                            f"jev: entering {incoming_agent} directly "
+                            f"(conf {jev_read.route_conf:.2f}, {jev_read.latency_ms} ms)")
+                else:
+                    jev_shadow = {}
+                    threading.Thread(
+                        target=lambda: jev_shadow.setdefault("read", jev.read_turn(*args)),
+                        daemon=True, name="jev_shadow").start()
+
             self.get_logger().info(
                 f"Invoking graph with input: {text} (entry={incoming_agent}, "
                 f"channel={self._turn_channel}, trace={trace})")
@@ -798,7 +872,8 @@ class AgentNode(Node):
                  # speaks aloud like any voice turn.
                  "channel": "system" if is_system else self._turn_channel,
                  "sender_name": telegram.name if telegram else None,
-                 "sender_role": telegram.role if telegram else None},
+                 "sender_role": telegram.role if telegram else None,
+                 "jev_vision": jev_read.vision if jev_read is not None else None},
                 config=run_config,
                 stream_mode="values"):
                 if self._turn_interrupt.is_set():
@@ -854,6 +929,9 @@ class AgentNode(Node):
             # themselves. navigate is not, so the turn after a drive starts at
             # chat.
             self._sticky_agent = result.get("active_agent") if result else None
+            self._jev_outcome(jev_read if jev_mode == "on" else
+                              (jev_shadow or {}).get("read"), self._sticky_agent,
+                              shadow=jev_mode == "shadow")
 
             # Persist the FULL message list from the graph (including any frames
             # captured via look()), so follow-up turns reason over the same image.
@@ -959,9 +1037,22 @@ class AgentNode(Node):
         # warming the right one is what keeps that prefix resident.
         agent = (self._sticky_agent
                  if self._sticky_agent in registry.STICKY_ELIGIBLE else "chat")
+        # LANGROBO_WARM_ALL=1: every agent, entry last (registry.warm_order),
+        # so a handover target is warm too. OFF by default: on a server whose
+        # slots wipe each other (the Mac's until --swa-full) it costs ~3 full
+        # prompt reads per idle spell for nothing. Turn it on once
+        # scripts/llm_cache_check.py PASSES.
+        order = registry.warm_order(
+            agent, os.environ.get("LANGROBO_WARM_ALL", "0").strip().lower() in ("1", "true", "yes", "on"))
         self._warm_thread = threading.Thread(
-            target=self._warm_cache, args=(agent,), daemon=True)
+            target=self._warm_all, args=(order,), daemon=True)
         self._warm_thread.start()
+
+    def _warm_all(self, order: list) -> None:
+        for agent in order:
+            if self._input_event.is_set():
+                return          # a turn is pending: it goes first
+            self._warm_cache(agent)
 
     def _warm_cache(self, agent: str) -> None:
         """Prefill `agent`'s llama.cpp slot with its current projected prompt.

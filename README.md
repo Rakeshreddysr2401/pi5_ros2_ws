@@ -10,7 +10,7 @@ answers and routes, `local_agent` sees, `navigate` moves. Every agent is one
 slot map all derive from it.
 
 ```
-Mac Mini  ──────  llama.cpp — Gemma multimodal GGUF, --parallel 4 (one KV slot per agent + the photo survey)
+Mac Mini  ──────  llama.cpp — Gemma multimodal GGUF, --parallel 4 (a KV slot per agent + one for one-shot vision calls)
 Jetson    ──────  ~/rover: D555 + RPLidar · fused pose · slam · nvblox · Nav2 + exact moves · VLM pixel→goal
 Laptop    ──────  RViz (pushed and started by the Jetson's `./rover view`) · Gazebo sim body
 Pi 5      ──────  THIS REPO — LangGraph brain + STT/TTS + micro-ROS agent
@@ -44,7 +44,12 @@ src/
 │       └── bridges/   StubBridge (run everything without ROS2)
 ├── langrobo_ros/      ROS2 shim: agent_node + ROS2Bridge + launch + systemd
 └── pi5_voice_pkg/     CPU-only STT + TTS on the Pi 5 itself
-scripts/               fleet.sh (whole robot) · run_*.sh (systemd entry points) · start_studio.sh · dev.sh · latency_replay.py · wake_*.py
+scripts/               fleet.sh (whole robot) · run_*.sh (systemd entry points) · start_studio.sh · dev.sh
+                       latency_replay.py · llm_cache_check.py (KV-slot PASS/FAIL) · topic_rates.py
+                       wake_*.py · train_mitra_local.py / train_rakhi_local.py (wake-word trainers, laptop)
+                       mic_check.sh (is the mic hearing you?) · bt_*.{sh,py} · tts_say.py
+notebooks/             train_mitra_wakeword.ipynb (the supported wake-word trainer — WAKE_WORD_INTEGRATION.md)
+data/test_pos|test_neg wake-word spot-check clips
 graph_studio.py        LangGraph Studio entry point (langgraph dev)
 ```
 
@@ -112,7 +117,7 @@ ros2 launch langrobo_ros brain_launch.py
 
 ```
 
-The llama.cpp server needs **`--parallel 4`** — one KV-cache slot per agent, and slot 3 for the background photo survey.
+The llama.cpp server needs **`--parallel 4`** — one KV-cache slot per agent, plus one for the photo survey (and `--swa-full`: `scripts/llm_cache_check.py`).
 With fewer, agents share a slot and evict each other's cached prompt prefix;
 agent_node warns at boot when that happens. See ARCHITECTURE_LLD.md §4.1.
 

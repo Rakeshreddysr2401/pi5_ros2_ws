@@ -78,6 +78,8 @@ def configure(
         "slot": slot,
     }
     _agent_overrides = agent_overrides or {}
+    with _clients_lock:
+        _clients.clear()
 
 
 def configure_fallback(fallback: FallbackLLM) -> None:
@@ -193,8 +195,20 @@ def _banned_tokens() -> list[str]:
     return [t.strip() for t in raw.split(",") if t.strip()]
 
 
+# One client per distinct config, reused. get_llm() used to build a new
+# ChatOpenAI -- and with it a new OpenAI client and HTTP connection pool -- on
+# EVERY call: 2-3 per turn, plus the warmer and the survey. Each paid the
+# construction (8-34 ms measured on a Mac; the Pi 5 is slower) and a fresh
+# TCP connect with its own mDNS lookup of singireddys-mac-mini.local, and no
+# keep-alive connection could ever be reused. Instances are safe to share:
+# per-turn state (streaming/timing callbacks) travels in each call's config,
+# and .bind()/.bind_tools()/.model_copy() return new objects.
+_clients: dict = {}
+_clients_lock = threading.Lock()
+
+
 def get_llm(agent: str | None = None, **overrides):
-    """Return a fresh LLM instance for `agent` (or the global default).
+    """Return the LLM instance for `agent` (or the global default).
 
     Merges the global config with any per-agent override.  For llama.cpp /
     openai providers, a non-negative `slot` is forwarded as `id_slot` so the
@@ -206,7 +220,12 @@ def get_llm(agent: str | None = None, **overrides):
     if agent and agent in _agent_overrides:
         cfg.update({k: v for k, v in _agent_overrides[agent].items() if v is not None})
     cfg.update({k: v for k, v in overrides.items() if v is not None})
-    return _build(cfg)
+    key = (repr(sorted(cfg.items())), tuple(_banned_tokens()))
+    with _clients_lock:
+        client = _clients.get(key)
+        if client is None:
+            client = _clients[key] = _build(cfg)
+    return client
 
 
 def slot_for(agent: str | None) -> int | None:

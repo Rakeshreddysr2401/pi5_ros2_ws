@@ -20,6 +20,8 @@ from langrobo_core.tools.movement import blocked_by_manual, move_robot, navigate
 import langrobo_core.tools.approach as ap
 import langrobo_core.tools.movement as mv
 
+from test_movement import fake_twist  # noqa: F401 -- fixture
+
 _bridge._instance = None
 _bridge.init(StubBridge())
 
@@ -131,7 +133,7 @@ def test_move_robot_refuses_in_manual(monkeypatch):
     assert moved == []
 
 
-def test_move_robot_stop_still_works_in_manual(monkeypatch):
+def test_move_robot_stop_still_works_in_manual(monkeypatch, fake_twist):
     """"S" is what MANUAL does anyway; refusing it would be absurd."""
     monkeypatch.setattr(mv, "teleop_is_manual", lambda: True)
     out = move_robot.invoke({"command": "S"})
@@ -145,3 +147,33 @@ def test_scan_surroundings_refuses_in_manual(monkeypatch):
     out = scan_surroundings.invoke({})
     assert "MANUAL" in out
     assert turned == []
+
+
+# ── The watcher: MANUAL flipped mid-move stops the brain's motion ───────────
+
+class _Motion:
+    def __init__(self):
+        self.cancels = self.stops = 0
+
+    def cancel_navigation(self):
+        self.cancels += 1
+
+    def request_motion_stop(self):
+        self.stops += 1
+
+
+def test_flipping_to_manual_mid_move_stops_the_motion():
+    readings = iter([False, False, True, True, False, True])
+    b = _Motion()
+    w = mv.ManualWatch(b, probe=lambda: next(readings))
+    edges = [w.poll() for _ in range(6)]
+    assert edges == [False, False, True, False, False, True]
+    assert b.cancels == b.stops == 2
+
+
+def test_already_manual_at_start_or_unreadable_is_not_an_edge():
+    """Starting up in MANUAL moves nothing to stop; teleop down is no signal."""
+    readings = iter([True, None, True, None, False])
+    b = _Motion()
+    w = mv.ManualWatch(b, probe=lambda: next(readings))
+    assert [w.poll() for _ in range(5)] == [False] * 5 and b.stops == 0
