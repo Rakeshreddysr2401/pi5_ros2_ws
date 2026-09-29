@@ -353,7 +353,7 @@ def _approach(description: str, state: dict) -> str:
     # Checked before the search, not after: locating the object costs a VLM
     # round trip per step (10-40 s each) and the search ROTATES the base. Both
     # are wasted if the wheels are being zeroed by teleop anyway.
-    refusal = _mv.blocked_by_manual()
+    refusal = _mv.blocked_by_role(state) or _mv.blocked_by_manual()
     if refusal:
         return refusal
 
@@ -554,14 +554,14 @@ def _approach(description: str, state: dict) -> str:
 
 
 @tool
-def scan_surroundings() -> str:
+def scan_surroundings(state: Annotated[dict | None, InjectedState] = None) -> str:
     """Turn a full slow circle in place so the depth camera can map everything
     around the robot (fills the 3D map behind/left/right). Use for "look
     around", "scan the room", "map this area", or before navigating in a spot
     the robot hasn't seen from all sides.
 
     Takes about 15 seconds."""
-    refusal = _mv.blocked_by_manual()     # a full turn against MANUAL's zeros goes nowhere
+    refusal = _mv.blocked_by_role(state) or _mv.blocked_by_manual()   # MANUAL: a turn against its zeros goes nowhere
     if refusal:
         return refusal
     bridge = _bridge.get()

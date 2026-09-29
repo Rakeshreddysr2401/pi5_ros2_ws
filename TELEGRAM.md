@@ -44,6 +44,7 @@ strangers, even though its username is publicly searchable.
 | Relay messages ("tell Rakesh…") | ✅ | ✅ | ❌ |
 | Request camera photos | ✅ | ❌ | ❌ |
 | Move the robot | ✅ | ❌ | ❌ |
+| Stop the robot ("stop", `S`) | ✅ | ✅ | ✅ |
 
 The four capabilities are the whole set — `services/permissions.py` is 40
 lines and is the only place they are defined. Announce-aloud, home watch,
@@ -54,6 +55,16 @@ Checks are enforced inside the tools (`langrobo_core/services/permissions.py`),
 not just prompts — a refusal offers to ask the owner instead. Voice has no
 speaker identity yet, so spoken commands act as owner. Every privileged send
 is logged: `journalctl -u langrobo-brain -o cat | grep "AUDIT telegram"`.
+
+**Moving was not enforced until 2026-09-29.** `CAP_MOVE` was defined and no
+tool checked it, so any allowlisted member could drive the robot. Now every
+tool that moves it -- `move_robot`, `navigate_to_pose`,
+`approach_described_object`, `scan_surroundings`, `save_location`,
+`point_camera` -- refuses a sender without it (`movement.blocked_by_role`;
+refusals log `AUDIT capability=move`). A pure stop is never refused.
+
+Still open, the owner's call: asking "what do you see?" is chat, not a photo,
+so family and guests get the camera's view **described in words**.
 
 ## What you can do
 
