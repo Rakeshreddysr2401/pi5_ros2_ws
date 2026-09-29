@@ -437,8 +437,14 @@ class ROS2Bridge:
         self._known_locations[name] = (x, y, yaw_deg)
         self._saved_locations[name] = (x, y, yaw_deg, self._origin_epoch)
         os.makedirs(os.path.dirname(self._locations_file), exist_ok=True)
-        with open(self._locations_file, "w") as f:
+        # Atomic, like object memory: a power cut mid-write left a truncated
+        # file, which the next boot could not read -- every saved place gone.
+        tmp = f"{self._locations_file}.tmp"
+        with open(tmp, "w") as f:
             json.dump({k: list(v) for k, v in self._saved_locations.items()}, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, self._locations_file)
 
     # ── Camera pan/tilt (ESP32 dual servo + Jetson TF mirror) ─────────────
 
