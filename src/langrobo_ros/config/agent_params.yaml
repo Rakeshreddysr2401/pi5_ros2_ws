@@ -19,8 +19,12 @@ agent_node:
     # Mac Mini llama.cpp server endpoint (launch arg base_url overrides).
     base_url: "http://singireddys-mac-mini.local:8080/v1"
 
-    # Max tokens per LLM response.
-    max_tokens: 3000
+    # Max tokens per LLM response. Replies are spoken: 1-3 sentences, ~20-60
+    # tokens (2026-10-02 measurements); a long Telegram message ~200. The cap
+    # is what bounds a runaway Gemma "thinking" loop (services/llm.py): at
+    # ~9 tok/s, 600 tokens is ~1 min of silence before the blank-reply retry,
+    # where 3000 was ~5 min.
+    max_tokens: 600
 
     # User/assistant turn pairs kept in conversation memory (x4 for tool/image
     # messages). Each trim resets the llama.cpp prompt cache (the kept suffix
