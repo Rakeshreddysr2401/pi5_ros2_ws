@@ -19,7 +19,7 @@ from .movement import (PAN_TILT_ENABLED, move_robot, navigate_to_pose,
                        point_camera, save_location)
 from .system import get_current_time, get_robot_status
 from .handover import handover
-from .telegram import TELEGRAM_TOOLS
+from .telegram import TELEGRAM_TOOLS, send_telegram_photo
 from .web import WEB_TOOLS
 
 # Bound only when there are servos to drive. The ESP32 firmware has three
@@ -49,6 +49,10 @@ CHAT_TOOLS = [get_current_time, get_robot_status, ask_photos, handover] + WEB_TO
 LOCAL_AGENT_TOOLS = [look, locate_object, ask_photos, handover] + HEAD_TOOLS + TELEGRAM_TOOLS
 
 # navigate — everything that moves the wheels.
+# Telegram: the photo only. "Go to the bag and send me a pic" needs it here --
+# called mid-drive, it holds the photo until arrival (telegram.py). Messages
+# are chat's job: navigate never sent one in 3 weeks of logs, and the schema
+# cost ~150 tokens on every move (2026-10-02).
 NAVIGATE_TOOLS = [move_robot, navigate_to_pose, approach_described_object,
                   scan_surroundings, save_location, list_saved_locations,
-                  ask_photos, handover] + HEAD_TOOLS + TELEGRAM_TOOLS
+                  ask_photos, handover] + HEAD_TOOLS + [send_telegram_photo]

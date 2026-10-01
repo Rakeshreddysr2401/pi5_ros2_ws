@@ -24,6 +24,13 @@ from std_msgs.msg import Bool, String
 
 from dotenv import load_dotenv
 
+# Before ANY langrobo_core import: some settings are read when a module is
+# imported (tools/web.py builds tavily_search only if TAVILY_API_KEY is set
+# then). Loaded only in __init__, the key arrived after the tools were built,
+# and web search was silently off in every systemd run (found 2026-10-02).
+# __init__ loads it again (same file; already-set values are kept).
+load_dotenv(os.path.expanduser(os.getenv("LANGROBO_ENV_FILE", "~/ros2_ws/.env")))
+
 from langrobo_core.services import config as config_service
 from langrobo_core.services import health as health_service
 from langrobo_core.services import llm as llm_module

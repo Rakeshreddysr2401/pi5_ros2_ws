@@ -84,25 +84,19 @@ _DEPTH_FAIL_HELP = {
 @tool
 def locate_object(description: str,
                   state: Annotated[dict, InjectedState] = None) -> str:
-    """Measure how far away something is and which direction it is in, using
-    the depth camera. Use for "how far is the chair", "where is the bottle",
-    "how close am I to the wall", or whenever a real distance is wanted.
+    """Measure how far away something in the current camera view is, and which way, with the depth camera ("how far is the chair?").
 
-    Returns a measured distance in metres, a direction, and coordinates. Does
-    NOT move the robot and does not drive to the object — use
-    approach_described_object for that.
-
-    Only sees what is in the current camera view; it will not turn to search.
-    Never state a distance that did not come from this tool: the camera image
-    alone cannot tell you how far away anything is.
-
-    For the distance BETWEEN two objects, call this once per object and
-    subtract the coordinates: with (x1, y1) and (x2, y2), the gap between them
-    is sqrt((x1-x2)^2 + (y1-y2)^2). Both are in the same robot frame, so this
-    is valid arithmetic on measured values -- not a guess. (On 2026-09-10 the
-    robot answered "I cannot tell you the distance between them" while holding
-    both coordinate pairs; they were 1.05 m apart.)
+    Returns metres, a direction, and coordinates relative to the robot. Does
+    NOT move or turn: only what is in view now; to drive there, use
+    approach_described_object. Never state a distance that did not come from
+    this tool. For the distance BETWEEN two objects, call it once for each and
+    compute sqrt((x1-x2)^2 + (y1-y2)^2) from the two coordinate pairs.
     """
+    # The long version of the rules above, kept here and not in the schema
+    # (which is sent on every local_agent turn): the coordinates are measured
+    # values, so the gap between two objects is valid arithmetic -- on
+    # 2026-09-10 the robot answered "I cannot tell you the distance between
+    # them" while holding both pairs (they were 1.05 m apart).
     bridge = _bridge.get()
     # agent_node raises the motion-stop flag on every utterance (so a new
     # command halts a hunt in progress), and _capture bails out while it is

@@ -109,6 +109,30 @@ def render_tools(tools) -> str:
     return "== TOOLS ==\n" + "\n".join(lines) + "\n"
 
 
+# ── Web search rules: rendered from the BOUND tools, like {tools} ────────────
+# With no Tavily key the tool is not bound, and a prompt that still said "call
+# tavily_search" made the model call get_current_time 8 times in a row until
+# the loop guard stopped it (2026-10-02, "what's the weather?"). So the rules
+# follow the tool: hard rule 5, missing keys degrade, never misbehave.
+
+WEB_RULES_ON = """WEB SEARCH is yours — never hand over for it.
+- Weather, news, live prices, scores, anything current you cannot know from
+  memory: call tavily_search with a good query, then answer from the results.
+- You MAY put ONE very short acknowledgement in the same message as the call
+  ("Let me check.") — it is spoken while the search runs.
+- Never answer from imagination instead of searching.
+"""
+
+WEB_RULES_OFF = """WEB SEARCH is not available right now. For weather, news, prices or anything
+current you cannot know from memory, say plainly that you can't look that up
+right now. Do not call any other tool in its place.
+"""
+
+
+def render_web_rules(tools: list) -> str:
+    return WEB_RULES_ON if any(t.name == "tavily_search" for t in tools) else WEB_RULES_OFF
+
+
 # ── Chat (default responder) ─────────────────────────────────────────────────
 
 CHAT_PROMPT = PERSONA + """\
@@ -120,18 +144,13 @@ You are the default responder. Answer general knowledge, facts and small talk
 DIRECTLY from your own knowledge — no handover. NEVER hand over to "chat"
 (yourself); just answer.
 
-WEB SEARCH is yours — never hand over for it.
-- Weather, news, live prices, scores, anything current you cannot know from
-  memory: call tavily_search with a good query, then answer from the results.
-- You MAY put ONE very short acknowledgement in the same message as the call
-  ("Let me check.") — it is spoken while the search runs.
-- Never answer from imagination instead of searching. If tavily_search is
-  unavailable, say you can't look that up right now.
-
+{web}
 WHAT THE ROBOT SAW EARLIER is yours — never hand over for it.
-- "where did you see my bag?", "was there a cup on the table?" → ask_photos(question),
+- "where did you SEE my bag?", "WAS there a cup on the table?" → ask_photos(question),
   then relay its answer. It reads the photos already taken; it does not look now.
-- What the camera sees NOW ("what do you see?") still goes to local_agent.
+- Anything about NOW goes to local_agent: "what do you see?", and "how far is
+  the box?" / "which way is the chair?" — local_agent measures the current view
+  with the depth camera; ask_photos cannot.
 
 ROBOT STATUS is yours: battery, hardware, "how are you doing" → get_robot_status.
 The clock is get_current_time; today's date is at the END of this prompt.
@@ -144,7 +163,8 @@ TELEGRAM is yours — never hand over.
   permission refusal, say so honestly — never pretend it was sent.
 
 HAND OVER ONLY FOR THESE TWO CASES:
-- What the robot SEES → handover("local_agent", reason="visual query")
+- What the robot SEES, or how far / which way something is NOW
+  → handover("local_agent", reason="visual query")
   You cannot see, but the robot CAN. When the user refers to something physical
   without naming it ("what am I holding", "what is this"), or the turn is
   tagged [Telegram from X — photo attached], hand over. NEVER say you can't see

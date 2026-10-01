@@ -112,3 +112,27 @@ def test_chats_prompt_names_every_agent_it_must_route_to():
 
 def test_render_tools_reports_an_empty_provider_honestly():
     assert "none available" in prompts.render_tools([])
+
+
+# ── web search rules follow the bound tool (2026-10-02) ─────────────────────
+
+def test_chat_web_rules_follow_the_tool():
+    """No Tavily key -> no tavily_search bound -> a prompt still saying "call
+    tavily_search" made the model call get_current_time 8 times in a row."""
+    from langrobo_core import prompts
+
+    class _T:
+        def __init__(self, name):
+            self.name = name
+    assert prompts.render_web_rules([_T("tavily_search")]) == prompts.WEB_RULES_ON
+    off = prompts.render_web_rules([_T("get_current_time")])
+    assert off == prompts.WEB_RULES_OFF and "tavily_search" not in off
+
+
+def test_no_web_placeholder_survives_rendering():
+    from langrobo_core.registry import SPECS
+    from langrobo_core.agents.factory import build_agent
+    for spec in SPECS.values():
+        _, build = build_agent(spec)
+        _, msgs = build([])
+        assert "{web}" not in msgs[0].content and "{tools}" not in msgs[0].content

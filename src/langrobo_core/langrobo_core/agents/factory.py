@@ -16,7 +16,7 @@ import re
 
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
-from ..prompts import render_tools
+from ..prompts import render_tools, render_web_rules
 from ..registry import AgentSpec
 from ..services.llm import get_llm
 from ..utils.message_utils import prepare_messages_for_agent, safe_invoke
@@ -59,7 +59,8 @@ def build_agent(spec: AgentSpec):
     """
     # Substituted, not .format()ed: prompts contain literal braces (JSON
     # examples, tool argument syntax) that str.format would choke on.
-    base_prompt = spec.prompt.replace("{tools}", render_tools(spec.tools))
+    base_prompt = (spec.prompt.replace("{tools}", render_tools(spec.tools))
+                   .replace("{web}", render_web_rules(spec.tools)))
 
     # bind_tools converts every tool to its JSON schema: done once per client,
     # not on every call (get_llm returns the same client until reconfigured).
