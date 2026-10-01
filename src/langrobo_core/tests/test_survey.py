@@ -21,6 +21,13 @@ W, H = 896, 504
 @pytest.fixture(autouse=True)
 def memory_file(tmp_path, monkeypatch):
     monkeypatch.setattr(om, "path", lambda: str(tmp_path / "object_memory.json"))
+    monkeypatch.setattr(sv, "ENABLED", True)     # off by default since 2026-10-02
+
+
+def test_survey_is_off_by_default_and_submit_refuses(monkeypatch):
+    monkeypatch.setattr(sv, "ENABLED", False)
+    assert sv.submit(b"jpeg", (1, 2), (0, 0, 0), "look") is False
+    assert sv.status()["enabled"] is False
 
 
 class _Bridge:

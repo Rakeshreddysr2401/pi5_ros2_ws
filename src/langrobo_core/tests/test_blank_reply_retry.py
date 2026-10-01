@@ -29,12 +29,23 @@ class _FakeLLM:
         return self.replies[len(self.calls) - 1]
 
 
+asked = []      # the kwargs every get_llm call was made with
+
+
 def _run(monkeypatch, replies):
     fake = _FakeLLM(replies)
-    monkeypatch.setattr(factory, "get_llm", lambda name: fake)
+    asked.clear()
+    monkeypatch.setattr(factory, "get_llm", lambda name, **kw: asked.append(kw) or fake)
     node, _ = factory.build_agent(SPECS["navigate"])
     out = node({"messages": [HumanMessage(content="go near the white chair")]})
     return out["messages"][0], fake.calls
+
+
+def test_the_retry_bans_the_thinking_token(monkeypatch):
+    """Normal calls carry no ban (services/llm.py); the retry after a blank
+    reply does, so a thinking loop cannot happen twice."""
+    _run(monkeypatch, [AIMessage(content=""), AIMessage(content="On my way.")])
+    assert {"ban_thinking": True} in asked
 
 
 def test_blank_streamed_reply_is_retried_unstreamed(monkeypatch):
@@ -63,7 +74,7 @@ def test_still_blank_after_a_tool_answers_with_the_tools_words(monkeypatch):
     """Seen 3x on 2026-09-27: "On my way" never reached the Telegram user."""
     from langchain_core.messages import ToolMessage
     fake = _FakeLLM([AIMessage(content=""), AIMessage(content="")])
-    monkeypatch.setattr(factory, "get_llm", lambda name: fake)
+    monkeypatch.setattr(factory, "get_llm", lambda name, **kw: asked.append(kw) or fake)
     node, _ = factory.build_agent(SPECS["navigate"])
     tool = ToolMessage(content="I can see the white box — about 1.1 m away. On my way; "
                                "I'll say when I'm there. The robot has MOVED, so the "

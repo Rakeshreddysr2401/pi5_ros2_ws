@@ -176,18 +176,27 @@ def status() -> dict:
 # ── Factories ───────────────────────────────────────────────────────────────
 
 # Gemma 4 opens its hidden "thinking" channel with the special token
-# <|channel>. At temperature 0 it can fall into emitting "<|channel>thought\n"
+# <|channel>. At temperature 0 it once fell into emitting "<|channel>thought\n"
 # forever: llama.cpp routes that into reasoning_content, which langchain drops,
-# so the turn runs to max_tokens (3000 tokens, ~4 min) and answers with
-# NOTHING. Seen live 2026-09-27: a Telegram "Hey" got no reply at all.
-# Reproduced by replaying the exact request; enable_thinking=false and a
-# temperature bump did not help, repeat_penalty did but misrouted the turn.
-# Banning the one token fixes it (1.7 s, correct reply) and costs nothing --
-# no agent uses thinking. llama.cpp tokenizes a string bias, so with a
-# DIFFERENT model this string could split into ordinary tokens and ban those:
-# set LANGROBO_LLAMACPP_BANNED_TOKENS="" (or that model's marker) when
-# switching models.
-_DEFAULT_BANNED_TOKENS = "<|channel>"
+# so the turn ran to max_tokens (~4 min) and answered with NOTHING (a Telegram
+# "Hey", 2026-09-27). Banning that token everywhere fixed the loop -- and
+# caused a far more common failure, measured 2026-10-02: denied the opener,
+# Gemma starts its answer with the CLOSING marker ("<channel|>I have not seen
+# a laptop..."), and STREAMED, llama.cpp drops everything after it -- the
+# reply arrives empty. That was every "empty reply from <agent> -- retrying"
+# in the logs (13 from navigate alone in 10 days), ~2-4 s and sometimes the
+# whole answer each time.
+#
+# So: no ban on normal calls (15/15 typical and greeting turns clean,
+# including that Telegram "Hey"), and the ban ONLY on the blank-reply retry
+# (agents/factory.py), where a loop is what just happened and the retry must
+# not repeat it. Banning the closing marker too is no fix: the model then
+# writes tool-call syntax as text. LANGROBO_LLAMACPP_BANNED_TOKENS bans tokens
+# on EVERY call ("<|channel>" restores the old behaviour). llama.cpp tokenizes
+# a string bias, so with a DIFFERENT model the string could split into
+# ordinary tokens.
+_THINKING_TOKEN = "<|channel>"
+_DEFAULT_BANNED_TOKENS = ""
 
 
 def _banned_tokens() -> list[str]:
@@ -327,6 +336,8 @@ def _build(cfg: dict):
             extra["id_slot"] = slot
         if provider == "llamacpp":
             banned = _banned_tokens()
+            if cfg.get("ban_thinking") and _THINKING_TOKEN not in banned:
+                banned = banned + [_THINKING_TOKEN]
             if banned:
                 extra["logit_bias"] = [[t, False] for t in banned]
         if extra:

@@ -88,9 +88,11 @@ def build_agent(spec: AgentSpec):
             # hidden reasoning and the reply arrives empty (a Telegram user got
             # "Sorry, I couldn't come up with a reply" 2026-09-27). Unstreamed,
             # the same answer comes back in the text with its markers, which
-            # strip_thought_residue removes. Only this failure pays the retry.
+            # strip_thought_residue removes. Only this failure pays the retry,
+            # and it bans the thinking token: if what just happened was the
+            # thinking loop, the retry cannot repeat it (services/llm.py).
             logger.warning("empty reply from %s — retrying once unstreamed", spec.name)
-            retry = get_llm(spec.name)
+            retry = get_llm(spec.name, ban_thinking=True)
             if getattr(retry, "streaming", False):
                 retry = retry.model_copy(update={"streaming": False})
             response = safe_invoke(retry.bind_tools(spec.tools), msgs, logger, agent=spec.name)

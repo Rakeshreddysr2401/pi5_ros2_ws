@@ -117,7 +117,7 @@ def status() -> dict:
     with _cv:
         queued, paused_now = len(_queue), bool(_paused)
     return {**stats, "queued": queued, "paused": paused_now,
-            "slot": VISION_TOOL_SLOT, "enabled": VISION_TOOL_SLOT is not None,
+            "slot": VISION_TOOL_SLOT, "enabled": ENABLED and VISION_TOOL_SLOT is not None,
             "worker_alive": bool(_thread and _thread.is_alive())}
 
 
@@ -167,11 +167,18 @@ class paused:
             _cv.notify_all()
 
 
+# OFF by default since 2026-10-02: the robot's memory is its photos, asked
+# about directly (tools/photo_recall.py), not a list of objects at coordinates
+# (owner, 2026-10-01). LANGROBO_PHOTO_SURVEY=1 brings the list back.
+ENABLED = os.environ.get("LANGROBO_PHOTO_SURVEY", "0").strip().lower() in ("1", "true", "yes", "on")
+
+
 def submit(frame: bytes, stamp, pose, source: str, when: float | None = None,
            epoch=None) -> bool:
     """Queue a photo for surveying. The caller has already asked the Jetson to
-    hold its depth (hold_frame). False when it cannot be used (no stamp)."""
-    if not frame or not stamp or VISION_TOOL_SLOT is None:
+    hold its depth (hold_frame). False when it cannot be used (no stamp), or
+    the survey is off (ENABLED)."""
+    if not ENABLED or not frame or not stamp or VISION_TOOL_SLOT is None:
         return False                   # no stamp to ground on / no slot of its own
     rec = {"frame": frame, "stamp": tuple(stamp), "pose": pose, "source": source,
            "when": time.time() if when is None else when, "epoch": epoch}

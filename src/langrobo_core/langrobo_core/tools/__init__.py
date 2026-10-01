@@ -12,7 +12,7 @@ tool — see CLAUDE.md rule 3.
 
 from .look import look
 from .locate import locate_object
-from .memory import recall_object
+from .photo_recall import ask_photos
 from .approach import (approach_described_object, list_saved_locations,
                        scan_surroundings)
 from .movement import (PAN_TILT_ENABLED, move_robot, navigate_to_pose,
@@ -34,7 +34,9 @@ HEAD_TOOLS = [point_camera] if PAN_TILT_ENABLED else []
 
 # chat — the default responder. Answers anything that is not a camera question
 # or a movement command, and hands over when it is.
-CHAT_TOOLS = [get_current_time, get_robot_status, handover] + WEB_TOOLS + TELEGRAM_TOOLS
+# ask_photos: "where did you see my bag?" answered here, from the photo log,
+# with no handover (tools/photo_recall.py).
+CHAT_TOOLS = [get_current_time, get_robot_status, ask_photos, handover] + WEB_TOOLS + TELEGRAM_TOOLS
 
 # local_agent — the only multimodal agent. look() puts the current camera
 # frame into the conversation as an image; keep_images in its AgentSpec is
@@ -43,10 +45,10 @@ CHAT_TOOLS = [get_current_time, get_robot_status, handover] + WEB_TOOLS + TELEGR
 # pixels and nothing else, so every "how far is that?" is answered by
 # invention. It is read-only and never turns the robot -- driving to a
 # thing is navigate's job (approach_described_object).
-# recall_object: where something was seen this session, from memory, read-only.
-LOCAL_AGENT_TOOLS = [look, locate_object, recall_object, handover] + HEAD_TOOLS + TELEGRAM_TOOLS
+# ask_photos: something seen EARLIER, from every photo of the session, read-only.
+LOCAL_AGENT_TOOLS = [look, locate_object, ask_photos, handover] + HEAD_TOOLS + TELEGRAM_TOOLS
 
 # navigate — everything that moves the wheels.
 NAVIGATE_TOOLS = [move_robot, navigate_to_pose, approach_described_object,
                   scan_surroundings, save_location, list_saved_locations,
-                  recall_object, handover] + HEAD_TOOLS + TELEGRAM_TOOLS
+                  ask_photos, handover] + HEAD_TOOLS + TELEGRAM_TOOLS

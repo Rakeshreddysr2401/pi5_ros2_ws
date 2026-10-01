@@ -158,13 +158,19 @@ that moves wheels).
   registry.py), entry routing (sticky agent, else chat), handover + loop guards
 - `langrobo_core/agents/` — `factory.py` builds EVERY agent from its spec;
   there are no hand-written nodes
-- **Every photo becomes object memory** (`tools/survey.py`, 2026-09-27): look(),
-  each search view and locate_object hold the photo's depth + camera pose at the
-  Jetson (`hold_frame`, 24 kept) and queue it; in the background — only while no
-  turn or search is running, on the vision-tool slot 3, unstreamed — the VLM lists the
-  objects and the Jetson places each one using THAT photo's pose. So "go to the
-  chair" later is worked out from where the robot is now (approach.py step 1).
-  The search itself is 8 views, 45° apart (90° steps missed objects at the seams).
+- **The robot's memory is its photos** (`tools/photos.py` + `tools/photo_recall.py`,
+  2026-10-02; owner: "don't save like 'bag at x,y'"). Every photo -- look(), each
+  search/scan view, locate, the confirm look -- is logged (number, image, time,
+  pose; 24 kept, the Jetson holds each one's depth). `ask_photos(question)` (all
+  three agents) asks the VLM over ALL of them in one request on slot 3, then
+  re-asks that one photo for a tight box; the Jetson places it with THAT photo's
+  depth + pose; distance/bearing come from the pose now. "go near X" asks the
+  photos first, then faces / drives over / confirms (approach.py step 1).
+  The log is append-only and drops 8 at a time so the Mac keeps the photos
+  cached (~4-5 s a question warm); what follows the photos must stay < ~420
+  tokens -- the Mac is not `--swa-full` and loses the cache on a longer rewind.
+  The old background object list (`tools/survey.py`) is OFF
+  (`LANGROBO_PHOTO_SURVEY=1`). The search is 8 views, 45 deg apart.
 - `langrobo_core/tools/` — @tool functions; per-agent sets in `__init__.py`;
   robot I/O via `_bridge.get()`. Keep the sets SHORT: every tool is shipped as
   a schema on every turn to that agent, forever.

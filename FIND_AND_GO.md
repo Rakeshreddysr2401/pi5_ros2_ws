@@ -6,40 +6,40 @@ which step went wrong. Keep this file true when the flow changes.
 
 ## The idea in one paragraph
 
-Every photo the robot takes is stamped with **when** it was taken and **where
+Every photo the robot takes is logged with **when** it was taken and **where
 the robot was** (x, y, heading in `odom`), and the Jetson freezes **that
-photo's depth** the moment it is taken. So when the vision model points at
-something in a photo — even an old one, taken from somewhere else — the Jetson
-can turn that pixel into a real room position (x, y). From wherever the robot
-is *now*, that position gives a bearing and a distance: turn, or drive over,
-look again to confirm, and go.
+photo's depth** the moment it is taken. Those photos ARE the robot's memory
+(owner, 2026-10-01 -- no stored "bag at x,y" list): the vision model reads all
+of them at once and says which photo shows the thing and where in it, and the
+Jetson turns that box into a real room position (x, y) with that photo's depth
+and pose. From wherever the robot is *now*, that position gives a bearing and
+a distance: turn, or drive over, look again to confirm, and go.
 
 ## The flow
 
 ```
-"what do you see?"   look()  ─┬─ photo into the conversation (the model answers from it)
-                              ├─ Jetson holds its depth + camera pose (hold_frame, 24 kept)
-                              ├─ photos.record: stamp, pose, time, epoch   (tools/photos.py)
-                              └─ background survey: every object -> room x,y -> object memory
-                                                                          (tools/survey.py)
+ANY photo            look() / search view / scan view / locate / confirm look
+                       ├─ Jetson holds its depth + camera pose (hold_frame, 24 kept)
+                       └─ photo log: number, image, stamp, pose, time, epoch  (tools/photos.py)
+"where is my bag?"   ask_photos (any agent)                        (tools/photo_recall.py)
+                       VLM over ALL logged photos -> photo n + box  (slot 3, photos cached)
+                       VLM again, photo n only    -> tight box
+                       Jetson places the box with photo n's depth + pose -> distance, bearing NOW
 "go near it"         navigate -> approach_described_object(description)   (tools/approach.py)
 
- 0. THE PHOTO WE TALKED ABOUT  newest 2 photos in the conversation:
-                               the survey already placed a match FROM that
-                               photo -> use it (no VLM call); else
-                               VLM "where is <it> in THIS photo?" -> box
-                               Jetson places the box with THAT photo's depth + pose
-                               (photo depth gone and robot unmoved -> newest depth)
-      not found in a photo ->  object memory by name (things seen long ago)
- 1. GO TO WHERE IT IS          from the pose NOW:
+ 1. THE PHOTOS FIRST    ask_photos("where is <it>?"), placed from that photo:
         a) within 2.5 m        face it, look            -> there: go
         b) further / not seen  reach_and_wait to 1 m in front of it, look
                                                         -> there: go
-                               not there -> 2. around THAT spot, then forget it
-                               can't get there -> 2. from here, memory kept
+                               not there -> 2. around THAT spot
+                               can't get there -> 2. from here
+        depth gone             face the photo's direction (if the robot has not
+                               moved off), look
+      in no photo ->           2.
  2. SEARCH                     8 views, 45 deg apart, each aimed from the
-                               measured heading; a refused turn finishes the
-                               circle the other way (from wherever it stopped)
+                               measured heading; each view logged and asked
+                               "is <it> clearly visible in photo n?"; a refused
+                               turn finishes the circle the other way
  3. GO                         ground the fresh sighting -> reach (nav2 + exact
                                finish) in the background -> "[SYSTEM] arrived"
                                (Telegram requests: report to the phone, quiet;
@@ -53,8 +53,8 @@ look again to confirm, and go.
 | photo stamp + pose register | `tools/photos.py` | — |
 | hold a photo's depth + pose | `bridge.hold_frame` | `phase4/nodes/pixel_to_goal.py` snapshots (24; depth-gap fallback) |
 | pixel/box -> room x, y | `bridge.ground_pixel` | `pixel_to_goal.py` `_on_query` (nearest solid slab in the box) |
-| background survey | `tools/survey.py` (idle only, vision-tool slot 3 — so is every `_vlm_locate`; a turn cancels it mid-photo, it resumes after) | same queries |
-| object memory | `services/object_memory.py` (`~/.langrobo/object_memory.json`) | — |
+| photo log + questions | `tools/photos.py`, `tools/photo_recall.py` (`ask_photos`, `locate_in`; vision-tool slot 3, photos kept cached) | — |
+| old object list (OFF) | `tools/survey.py` + `services/object_memory.py`, only with `LANGROBO_PHOTO_SURVEY=1` | same queries |
 | the steps above | `tools/approach.py` | — |
 | drive, waited on | `bridge.reach_and_wait` | `phase3/nodes/reach_node.py` |
 | drive, in background | `bridge.start_nav_to_pose` | same |
@@ -62,12 +62,11 @@ look again to confirm, and go.
 
 ## Reading a run
 
-Brain: `journalctl -u langrobo-brain -o cat | grep -E "Invoking graph|Step message|nav done|photo survey"`
+Brain: `journalctl -u langrobo-brain -o cat | grep -E "Invoking graph|Step message|nav done|ask_photos"`
 
 | you see | it means |
 |---|---|
-| `photo survey (look): 0 object(s) placed` | the photo's depth was not held — check the Jetson line below |
-| `fleet.sh check`: `photo survey … errors`, 0 placed | every survey is failing (`last:` says why — a missing slot 3, the Mac down); `curl -s localhost:8090/status \| jq .runtime.photo_survey` for the counters |
+| tool: `I saw the X … (photo N), but it isn't there now` | the photos had it; the confirm look and the search around that spot did not |
 | `snapshot …: no_depth_near_stamp:7112ms` (Jetson `/tmp/pixel_to_goal.log`) | the depth stream stalled at the photo; followed by `(after a depth gap, camera still)` = recovered, or `moved_before_depth` = the robot moved first |
 | `query …: snapshot_expired` | more than 24 photos since, or the gap was not recovered |
 | tool: `It's still where I saw it` | step 1 confirmed it |

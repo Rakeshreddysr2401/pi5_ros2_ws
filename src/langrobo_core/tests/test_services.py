@@ -190,17 +190,28 @@ def _extra_body(provider, monkeypatch, env=None):
     return llm.get_llm("chat").extra_body or {}
 
 
-def test_llamacpp_bans_the_thinking_token(monkeypatch):
-    """A Telegram "Hey" got no reply: at temperature 0 Gemma looped on
-    <|channel>thought until max_tokens, all of it hidden (2026-09-27)."""
+def test_normal_calls_do_not_ban_the_thinking_token(monkeypatch):
+    """Denied <|channel>, Gemma opens with <channel|> and a STREAMED reply
+    arrives empty -- every "empty reply" retry in the logs (2026-10-02)."""
     body = _extra_body("llamacpp", monkeypatch)
     assert body["id_slot"] == 0
-    assert body["logit_bias"] == [["<|channel>", False]]
+    assert "logit_bias" not in body
 
 
-def test_ban_is_llamacpp_only_and_can_be_switched_off(monkeypatch):
-    assert "logit_bias" not in _extra_body("openai", monkeypatch)
-    assert "logit_bias" not in _extra_body("llamacpp", monkeypatch, env="")
+def test_the_blank_reply_retry_bans_it(monkeypatch):
+    """A Telegram "Hey" got no reply: at temperature 0 Gemma looped on
+    <|channel>thought until max_tokens, all of it hidden (2026-09-27). The
+    retry after a blank reply must not be able to loop again."""
+    from langrobo_core.services import llm
+    _extra_body("llamacpp", monkeypatch)
+    assert llm.get_llm("chat", ban_thinking=True).extra_body["logit_bias"] == [["<|channel>", False]]
+
+
+def test_ban_is_llamacpp_only_and_the_env_forces_it_everywhere(monkeypatch):
+    from langrobo_core.services import llm
+    _extra_body("openai", monkeypatch)
+    assert "logit_bias" not in (llm.get_llm("chat", ban_thinking=True).extra_body or {})
+    assert _extra_body("llamacpp", monkeypatch, env="<|channel>")["logit_bias"] == [["<|channel>", False]]
 
 
 def test_llm_clients_are_reused_until_reconfigured():

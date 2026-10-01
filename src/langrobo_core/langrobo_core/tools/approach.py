@@ -33,6 +33,7 @@ from langgraph.prebuilt import InjectedState
 from ..services import object_memory
 from . import _bridge
 from . import movement as _mv
+from . import photo_recall as _recall
 from . import photos as _photos
 from . import survey as _survey
 
@@ -98,7 +99,17 @@ def _vlm_locate(frame: bytes, description: str) -> tuple | None:
     """Ask the multimodal LLM where `description` is in the JPEG frame.
     Returns (u, v, box) in colour-image pixels -- (u, v) the box centre, box
     (x0, y0, x1, y1) or None if the model gave only a point -- or None (not
-    found / unparseable)."""
+    found / unparseable).
+
+    A LOGGED photo (every _capture and look() is) is asked about through the
+    photo log (photo_recall.locate_in): the same vision-tool slot keeps every
+    photo cached, where a one-photo prompt here would throw them all out and
+    the next ask_photos would re-read them (~20 s for 8). The one-photo prompt
+    below is only for a photo the log does not hold (no camera stamp)."""
+    try:
+        return _recall.locate_in(frame, description)
+    except LookupError:
+        pass
     import base64
     import io
     import json as _json
@@ -229,20 +240,6 @@ def _ground_retrying(bridge, description: str, uv: tuple, capture: dict | None) 
     return _ground(bridge, uv2, fresh), fresh
 
 
-def _remember(bridge, description: str, res: dict, capture: dict | None) -> dict | None:
-    """Put a grounded sighting into object memory. Memory is a bonus: a
-    failure to write it never fails the tool that found the object."""
-    obj = res.get("object") if res.get("ok") else None
-    if not obj:
-        return None
-    try:
-        return object_memory.remember(
-            description, obj["x"], obj["y"], (capture or {}).get("pose"),
-            bridge.get_origin_epoch(), depth_m=res.get("depth_m"),
-            at_capture=bool(res.get("at_capture")), region=bool(res.get("region")))
-    except (OSError, KeyError, TypeError, ValueError):
-        return None
-
 
 # A remembered object this close to straight ahead is already in the middle of
 # the colour camera's ~87 deg view: look without turning.
@@ -256,73 +253,6 @@ _VIEW_FROM_M = 1.0
 _ALREADY_THERE_M = 0.3    # within this of the viewpoint: look without driving
 
 
-def _in_conversation_photos(bridge, description: str, state: dict, epoch) -> dict | None:
-    """Find the object in the newest photos of the conversation and place it
-    in the room from THAT photo (its held depth + camera pose at the Jetson).
-    Returns the object-memory entry it was stored as, or None.
-
-    Free first: the background survey has usually already listed and placed
-    everything in these photos, each entry tagged with the photo it came
-    from. A match placed FROM ONE OF THESE PHOTOS is the thing in the photo
-    -- no VLM call (each costs 5-40 s). Only a photo the survey has not
-    done, or that has no such match, is asked about."""
-    shown = [(jpeg, rec) for jpeg, rec in
-             _photos.in_conversation((state or {}).get("messages", []), limit=2)
-             if rec.get("epoch") == epoch]     # odom restarted: that pose means nothing now
-    if not shown:
-        return None
-    try:
-        remembered = object_memory.recall(description, epoch)
-    except OSError:
-        remembered = []
-    for _, rec in shown:                       # newest photo first
-        for e in remembered:                   # best match first
-            if list(e.get("photo") or ()) == list(rec["stamp"]):
-                return e
-    for jpeg, rec in shown:
-        if bridge.motion_interrupted():
-            return None
-        try:
-            uv = _vlm_locate(jpeg, description)
-        except Exception:
-            continue
-        if uv is None:
-            continue
-        # at the photo's own depth and pose; if that depth is gone and the
-        # robot has not moved since the photo, the newest depth is the same view
-        res = _ground(bridge, uv, {"stamp": rec["stamp"], "pose": rec["pose"]})
-        if not res.get("ok"):
-            continue
-        obj = res.get("object") or {}
-        try:
-            return object_memory.remember(
-                description, obj["x"], obj["y"], rec["pose"], epoch, when=rec["when"],
-                depth_m=res.get("depth_m"), at_capture=True, region=bool(res.get("region")),
-                source=f"conversation:{rec.get('source')}", photo=list(rec["stamp"]))
-        except (OSError, KeyError, TypeError, ValueError):
-            continue
-    return None
-
-
-def _also_remembered(known: list, pose, name: str) -> str:
-    """" I also remember another ... -- say if you meant that one." when memory
-    holds a second match more than a metre from the one being used (recall's
-    order: best match, then most recent). Floor test 2026-09-27: two white
-    boxes, and "the one you saw before" went to the other one with nothing to
-    tell the user there was a choice."""
-    if len(known) < 2 or not pose:
-        return ""
-    first = known[0]
-    for e in known[1:]:
-        if math.hypot(e["x"] - first["x"], e["y"] - first["y"]) > 1.0:
-            rel = object_memory.relative(e, pose)
-            if rel is None:
-                return ""
-            from .locate import describe_bearing
-            age = object_memory.describe_age(time.time() - e.get("seen_at", 0))
-            return (f" (I also remember another {name} about {rel[0]:.1f} m away, "
-                    f"{describe_bearing(rel[1])}, seen {age} — say if you meant that one.)")
-    return ""
 
 
 def _face(bridge, bearing_deg: float) -> tuple:
@@ -377,49 +307,37 @@ def _approach(description: str, state: dict) -> str:
         return refusal
 
     uv, capture = None, None
-    note = ""            # what the memory check found, said before the rest
-    checked = None       # the memory entry a fresh look has just confirmed
+    note = ""            # what the photo check found, said before the rest
     first_view = 0       # 1 = the view ahead has been checked already
-    at_the_spot = None   # the memory entry whose spot the robot went to and searched
+    at_its_spot = False  # looking from where it was seen (so "moved?" means something)
 
-    # ── 1. Memory first: seen before -> go to where it was, THEN look ───────
-    # Object memory holds WHERE things are in the room (x, y in odom), placed
-    # from the photo they were seen in (survey.py) -- so from wherever the
-    # robot is now, the bearing and distance to them are known.
+    # ── 1. The photos first: seen before -> go to where it was, THEN look ───
+    # Every photo the robot took this session is in the photo log; one
+    # question over all of them says which photo shows it and where in it,
+    # and the Jetson places it with THAT photo's depth and pose
+    # (photo_recall.ask) -- so from wherever the robot is now, its distance
+    # and direction are known. Things move, so it is a place to check, never
+    # a place to drive at blind:
     #   a) close enough to judge from here: face it and look. There -> go.
-    #   b) not seen from here -- far away, hidden behind something, an old
-    #      sighting: DRIVE to a viewpoint in front of where it was, look
-    #      again, and if it still isn't there, search AROUND THAT SPOT
-    #      (step 2 runs there). Only then is it "not where I saw it".
-    # Before (b), a remembered object not visible from across the room was
-    # forgotten on the spot and searched for from where the robot stood
-    # (owner, 2026-09-27: "go to that area and check; if not found, search").
-    epoch = bridge.get_origin_epoch()
-    pose = bridge.get_current_pose()
-    # 0. The photo we talked about. "What do you see?" -> "a white box" ->
-    #    "go near it": the object is the one IN THAT PHOTO. Ask the vision model
-    #    where it is in that photo and let the Jetson place it with THAT
-    #    photo's depth and pose -- no name matching (owner, 2026-09-27).
-    from_photo = _in_conversation_photos(bridge, description, state, epoch)
-    if from_photo is not None:
-        known, also = [from_photo], ""
-    else:
-        # the remembered list: only for things no longer in the conversation
-        try:
-            known = object_memory.recall(description, epoch)
-        except OSError:
-            known = []
-        also = _also_remembered(known, pose, name)
-    rel = object_memory.relative(known[0], pose) if known else None
-    if rel is not None:
-        entry = known[0]
-        age = object_memory.describe_age(time.time() - entry.get("seen_at", 0))
-        dist, bearing = rel
-
+    #   b) not seen from here -- far away, hidden, an old photo: DRIVE to a
+    #      viewpoint in front of where it was and look there; still not
+    #      there -> search AROUND THAT SPOT (step 2 runs there).
+    last_seen = None     # the photo-log answer
+    try:
+        last_seen = _recall.ask(f"where is {description}?")
+    except Exception:
+        last_seen = None # the vision model failed: the search still works
+    if not (last_seen and last_seen.get("ok") and last_seen.get("photo") is not None):
+        last_seen = None
+    placed = (last_seen or {}).get("placed")
+    if last_seen is not None:
+        age = _recall.describe_age(last_seen["age_s"])
+        dist, bearing = last_seen.get("distance_m"), last_seen.get("bearing_deg")
         looked_here = False
 
-        # a) judge from here
-        if dist <= _JUDGE_FROM_HERE_M and (abs(bearing) <= _FACE_WITHIN_DEG or Twist is not None):
+        # a) judge from here (a direction-only answer is judged from here too)
+        if bearing is not None and (dist is None or dist <= _JUDGE_FROM_HERE_M) \
+                and (abs(bearing) <= _FACE_WITHIN_DEG or Twist is not None):
             ok, why = _face(bridge, bearing)
             if why == "interrupted":
                 return f"Stopped looking for the {name}."
@@ -436,15 +354,15 @@ def _approach(description: str, state: dict) -> str:
                     return (f"I couldn't analyse the camera image (vision model error: "
                             f"{type(e).__name__}). Try again in a moment.")
                 looked_here = True
-                if uv is not None:
-                    checked = entry
+                at_its_spot = uv is not None
 
         # b) not seen from here: go to where it was, and look there
-        if uv is None and Twist is not None:
+        if uv is None and placed and Twist is not None:
+            pose = bridge.get_current_pose()
             went = True
-            drove = dist > _VIEW_FROM_M + _ALREADY_THERE_M
-            if drove:
-                vx, vy, vyaw = compute_standoff_goal(pose[0], pose[1], entry["x"], entry["y"],
+            drove = dist is not None and dist > _VIEW_FROM_M + _ALREADY_THERE_M
+            if drove and pose:
+                vx, vy, vyaw = compute_standoff_goal(pose[0], pose[1], placed["x"], placed["y"],
                                                      _VIEW_FROM_M)
                 leg = bridge.reach_and_wait(round(vx, 2), round(vy, 2), round(vyaw, 1))
                 if leg.get("result") == "interrupted":
@@ -454,13 +372,13 @@ def _approach(description: str, state: dict) -> str:
                     note = (f"I saw the {name} {age} over there, but couldn't get to that "
                             f"spot ({leg.get('why') or leg.get('result')}), so I'm "
                             f"searching from here. ")
+            at_its_spot = went
             if went and not drove and looked_here:
-                # already at the viewpoint and just looked: search this spot
-                at_the_spot, first_view = entry, 1
+                first_view = 1          # at the viewpoint already, and just looked
                 note = (f"The {name} wasn't right where I saw it {age}, so I'm "
                         f"looking around that spot. ")
             elif went:
-                rel2 = object_memory.relative(entry, bridge.get_current_pose())
+                rel2 = object_memory.relative(placed, bridge.get_current_pose())
                 ok, why = _face(bridge, rel2[1] if rel2 else 0.0)
                 if why == "interrupted":
                     return f"Stopped looking for the {name}."
@@ -475,13 +393,15 @@ def _approach(description: str, state: dict) -> str:
                 except Exception as e:
                     return (f"I couldn't analyse the camera image (vision model error: "
                             f"{type(e).__name__}). Try again in a moment.")
-                if uv is not None:
-                    checked = entry
-                else:
-                    at_the_spot = entry        # search around HERE; forget only if that fails
+                if uv is None:
                     first_view = 1
                     note = (f"The {name} wasn't right where I saw it {age}, so I'm "
                             f"looking around that spot. ")
+        elif uv is None and looked_here:
+            first_view = 1
+            at_its_spot = True
+            note = (f"The {name} wasn't where I saw it {age}, so I'm looking "
+                    f"around. ")
 
     # ── 2. Search: the view ahead, then exact 45 degree turns ────────────────
     # Views are kept as headings relative to where the search started. Left
@@ -530,18 +450,13 @@ def _approach(description: str, state: dict) -> str:
         seen.add(offset)
 
     if uv is None:
-        if at_the_spot is not None:
-            try:
-                object_memory.forget(at_the_spot["id"], epoch)
-            except OSError:
-                pass
-            return (f"I went to where I saw the {name} and looked all around that spot, "
-                    f"but it isn't there any more — someone may have moved it." + also)
+        if last_seen is not None:
+            return (note + f"I saw the {name} {_recall.describe_age(last_seen['age_s'])} "
+                    f"(photo {last_seen['photo']}), but it isn't there now and I couldn't "
+                    f"find it anywhere around me — someone may have moved it.")
         return (note + f"I turned a full circle and looked carefully, but I couldn't "
                 f"spot the {name} anywhere around me.")
 
-    if checked is None and at_the_spot is not None:
-        checked = at_the_spot          # found near its old spot: same "moved?" check
     res, capture = _ground_retrying(bridge, description, uv, capture)
     if not res.get("ok"):
         reason = res.get("reason", "unknown")
@@ -553,18 +468,11 @@ def _approach(description: str, state: dict) -> str:
                 f"distance (depth reading failed: {reason}) — it may be too "
                 f"close, too far, or reflective.")
 
-    seen = _remember(bridge, description, res, capture)
-    if checked is not None and seen is not None and seen.get("id") != checked.get("id"):
-        # Found again, but further than SAME_OBJECT_M from where it was: the
-        # old spot is wrong now, whether it moved or this is another one.
-        moved = math.hypot(seen["x"] - checked["x"], seen["y"] - checked["y"])
-        note = f"It has moved about {moved:.1f} m since I last saw it. "
-        try:
-            object_memory.forget(checked["id"], epoch)
-        except OSError:
-            pass
-    elif checked is not None:
-        note = "It's still where I saw it. "
+    obj = res.get("object")
+    if placed and obj and at_its_spot:
+        moved = math.hypot(obj["x"] - placed["x"], obj["y"] - placed["y"])
+        note = ("It's still where I saw it. " if moved <= object_memory.SAME_OBJECT_M
+                else f"It has moved about {moved:.1f} m since I last saw it. ")
 
     goal = res["goal"]
     # Nav completion arrives minutes later as a [SYSTEM] turn — remember who
@@ -577,7 +485,7 @@ def _approach(description: str, state: dict) -> str:
                              round(math.degrees(goal["yaw"]), 1),
                              label=f"near the {name}")
     return (note + f"I can see the {name} — about {res['depth_m']:.1f} m away. "
-            f"On my way; I'll say when I'm there." + also + _mv.view_stale_note())
+            f"On my way; I'll say when I'm there." + _mv.view_stale_note())
 
 
 @tool
@@ -598,6 +506,7 @@ def scan_surroundings(state: Annotated[dict | None, InjectedState] = None) -> st
         from geometry_msgs.msg import Twist  # noqa: F401 -- the timed fallback needs it
     except ImportError:
         return "I can't turn right now — my wheel interface isn't available."
+    photos = 0
     for i in range(6):
         ok, why = _mv.turn_robot(bridge, 60.0)
         if not ok:
@@ -611,8 +520,13 @@ def scan_surroundings(state: Annotated[dict | None, InjectedState] = None) -> st
             if bridge.motion_interrupted():
                 return "Scan stopped."
             time.sleep(0.05)
-    return ("Scan complete — I turned a full circle, so the map now covers "
-            "all around me." + _mv.view_stale_note())
+        # And keep the view: every photo goes into the photo log, so "where
+        # is my bag?" after "look around" is answered from these six.
+        frame, _ = _capture(bridge, settle_s=1.0, source="scan")
+        photos += frame is not None
+    return (f"Scan complete — I turned a full circle, so the map now covers "
+            f"all around me, and I took {photos} photo(s) to remember what is "
+            f"where." + _mv.view_stale_note())
 
 
 @tool

@@ -33,8 +33,7 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
 from . import _bridge
-from .approach import _capture, _ground_retrying, _remember, _vlm_locate
-from .memory import describe_remembered
+from .approach import _capture, _ground_retrying, _vlm_locate
 
 # Turned into "to my left" / "ahead" for speech. The VLM's pixel is itself only
 # good to a few degrees and ground_pixel medians over a window, so finer
@@ -124,10 +123,9 @@ def locate_object(description: str,
                 f"{type(e).__name__}). Try again in a moment.")
 
     if uv is None:
-        seen = describe_remembered(bridge, description)
         return (f"I can't see {description} in my current view. I haven't "
                 f"turned to look around — ask me to look for it if you want "
-                f"me to search." + (f" {seen}" if seen else ""))
+                f"me to search, or ask where I saw it before.")
 
     res, capture = _ground_retrying(bridge, description, uv, capture)   # at the moment of the photo
     if not res.get("ok"):
@@ -136,7 +134,6 @@ def locate_object(description: str,
         return (f"I can see {description}, but I can't measure its distance — "
                 f"{help_text}.")
 
-    _remember(bridge, description, res, capture)
     rel = res.get("relative")
     if not rel:
         # Jetson still on the pre-2026-09-10 contract. depth_m is the camera's
