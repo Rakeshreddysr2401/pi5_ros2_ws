@@ -215,3 +215,20 @@ def test_depth_gone_gives_a_direction_only_if_still_near_the_photo(monkeypatch):
     far = ap.ask("where is the box?")
     assert far["bearing_deg"] is None and not far["bearing_only"]
     assert "can't tell where it is from here" in ap.describe(far)
+
+
+def test_a_one_photo_question_is_one_request(monkeypatch):
+    """Step 2 buys nothing about one photo (measured: same accuracy, +4 s)."""
+    log = _log(3)
+    n = log[1]["n"]
+    llm = _LLM(f'{{"answer": "Yes.", "object": "box", "photo": {n}, "box": [400, 400, 600, 600]}}')
+    _use(monkeypatch, _Bridge(), llm)
+    r = ap.ask("the box", only=n, place=False)
+    assert r["photo"] == n and r["box"] is not None and len(llm.requests) == 1
+
+
+def test_a_one_photo_answer_naming_another_photo_is_not_found(monkeypatch):
+    log = _log(3)
+    _use(monkeypatch, _Bridge(), _LLM(f'{{"answer": "Yes.", "object": "box", "photo": {log[0]["n"]}, '
+                                      f'"box": [400, 400, 600, 600]}}'))
+    assert ap.ask("the box", only=log[2]["n"], place=False)["photo"] is None

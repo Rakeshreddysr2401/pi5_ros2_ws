@@ -20,8 +20,10 @@ edges all come from one AgentSpec. Adding an agent needs NO edit to this file.
 
 import logging
 import re
+import time
+import uuid
 
-from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.types import Command
@@ -31,6 +33,8 @@ from ..registry import SPECS
 from .state import AgentState
 from .turn_entry import turn_entry_node
 from .handover_resolver import handle_handover, last_user_query
+from ..utils import pose_stamp
+from ..utils.history import is_camera_frame
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +153,63 @@ def _vision_backstop(agent_name: str, state: AgentState, out: dict) -> Command |
     })
 
 
+# ── Fresh view first ─────────────────────────────────────────────────────────
+#
+# The second half of "a vision question must be answered from a real image":
+# from a CURRENT one. LOCAL_AGENT_PROMPT says to look again when the last view
+# is more than a minute old, and every turn carries that view's age -- and on
+# 2026-10-02 the model still answered a second "what do you see?" from a
+# 73-second-old photo, twice; once from a photo taken before the lights came
+# on ("it is very dark"). Same shape as the backstop above: the user's own
+# words decide, not the model's judgement.
+#
+# It runs BEFORE local_agent's LLM call, not after: replies stream to the
+# speaker sentence by sentence, so a stale answer overridden afterwards would
+# already have been heard. The look() is appended as an ordinary tool call and
+# result (append-only history -- the KV cache is untouched), so the model
+# simply finds a fresh photo in front of it.
+STALE_VIEW_S = 60.0
+
+
+def _looked_this_turn(state: AgentState) -> bool:
+    for msg in reversed(state["messages"]):
+        if isinstance(msg, HumanMessage) and not is_camera_frame(msg):
+            return False                       # reached the user's message
+        if isinstance(msg, AIMessage) and any(
+                tc.get("name") == "look" for tc in (msg.tool_calls or [])):
+            return True
+    return False
+
+
+def _take_look(call_id: str) -> list:
+    """look() run as the tool call `call_id` would run it: its messages."""
+    from ..tools.look import look
+    res = look.invoke({"name": "look", "args": {}, "id": call_id, "type": "tool_call"})
+    return list(res.update["messages"]) if isinstance(res, Command) else [res]
+
+
+def _fresh_view_first(agent_name: str, state: AgentState) -> list | None:
+    """[look call, its result...] to put in front of local_agent's LLM call,
+    or None. Only for a current-view question (_VISION_QUESTION, the user's
+    words), only if this turn has not looked yet, and only when the last view
+    is older than STALE_VIEW_S (or there is none)."""
+    if agent_name != "local_agent":
+        return None
+    if not _VISION_QUESTION.search(last_user_query(state)):
+        return None
+    if _looked_this_turn(state):
+        return None
+    _, when = pose_stamp.last_view()
+    if when is not None and time.time() - when <= STALE_VIEW_S:
+        return None
+    call_id = f"fresh_view_{uuid.uuid4().hex[:12]}"
+    logger.info("Fresh view first: the last photo is %s -- looking before local_agent answers",
+                "missing" if when is None else f"{time.time() - when:.0f} s old")
+    call = AIMessage(content="", tool_calls=[
+        {"name": "look", "args": {}, "id": call_id, "type": "tool_call"}])
+    return [call] + _take_look(call_id)
+
+
 # ── Loop guard ──────────────────────────────────────────────────────────────────
 
 def _loop_guarded(agent_name: str, node_fn):
@@ -170,7 +231,12 @@ def _loop_guarded(agent_name: str, node_fn):
                     "Sorry, I got stuck trying to do that. Could you rephrase your request?"
                 ))],
             }
+        pre = _fresh_view_first(agent_name, state)
+        if pre:
+            state = {**state, "messages": list(state["messages"]) + pre}
         out = dict(node_fn(state) or {})
+        if pre:
+            out["messages"] = pre + list(out.get("messages") or [])
         out["agent_run_counts"] = counts
 
         redirect = _vision_backstop(agent_name, state, out)

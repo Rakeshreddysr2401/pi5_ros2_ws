@@ -62,6 +62,16 @@ def test_standing_still_reads_as_unmoved():
     assert "unmoved" in stamp
 
 
+def test_standing_still_says_how_old_the_view_is():
+    """2026-10-02: the lights came on, the robot had not moved, and "what do
+    you see?" was answered "very dark" from the old photo. The age is what
+    tells the model that photo is stale."""
+    import time
+    ps.record_view((1.0, 0.5, 20.0), when=time.time() - 240)
+    stamp = ps.turn_stamp((1.0, 0.5, 20.0))
+    assert "unmoved" in stamp and "taken 4 min ago" in stamp
+
+
 def test_a_drive_says_how_far_from_the_view():
     ps.record_view((1.0, 0.0, 0.0))
     stamp = ps.turn_stamp((1.9, 0.0, 180.0))

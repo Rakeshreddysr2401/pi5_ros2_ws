@@ -184,7 +184,13 @@ def ask(question: str, only: int | None = None, place: bool = True) -> dict:
     bearing_deg is from the robot NOW (0 ahead, + left).
     only: ask about that one photo (still sent with the whole log, for the
     cache); an answer naming another photo counts as not found.
-    place=False: stop at the box, do not ground (the caller grounds itself)."""
+    place=False: stop at the box, do not ground (the caller grounds itself).
+
+    Step 2 (that photo again, for a tight box) runs only for a question over
+    the WHOLE log, where the box sets the distance. About one photo it buys
+    nothing: measured 2026-10-02 on the rover's 8 photos, 6/9 with it and 6/9
+    without, 8.9 s against 5.0 s a question. (Asking for no answer sentence
+    saved 0.3 s and missed a spray can it otherwise found: the sentence stays.)"""
     from langchain_core.messages import AIMessage
     from PIL import Image
 
@@ -212,8 +218,8 @@ def ask(question: str, only: int | None = None, place: bool = True) -> dict:
         width, height = Image.open(io.BytesIO(rec["jpeg"])).size
         box = parse_box(got["box_raw"], width, height)
         # Step 2: that photo again, appended (the photo prefix stays cached).
-        if got["object"] or only is not None:
-            obj = got["object"] or question.strip()
+        if only is None and got["object"]:
+            obj = got["object"]
             try:
                 _, _, text2 = _invoke(
                     llm, [_image_part(rec["jpeg"]),

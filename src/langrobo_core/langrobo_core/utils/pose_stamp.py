@@ -137,6 +137,22 @@ def view_label(pose, when=None) -> str:
     return f"{CAMERA_VIEW_MARKER} — taken at {clock} from {where}]"
 
 
+def _view_age(now=None) -> str:
+    """", taken 4 min ago" -- how old the last camera view is. Standing
+    still does not keep a photo current: on 2026-10-02 the lights came on and
+    "what do you see?" was answered "it is very dark" from a photo taken
+    before, because the robot had not moved. The age is what lets the model
+    see that. On the user turn (the tail), never in a system prompt."""
+    if _last_view_time is None:
+        return ""
+    s = max(0, int((time.time() if now is None else now) - _last_view_time))
+    if s < 60:
+        return f", taken {s} s ago"
+    if s < 3600:
+        return f", taken {s // 60} min ago"
+    return f", taken {s // 3600} h {s % 3600 // 60} min ago"
+
+
 def turn_stamp(now_pose) -> str | None:
     """The body-state prefix on a user turn, or None if there is nothing to say.
 
@@ -156,6 +172,6 @@ def turn_stamp(now_pose) -> str | None:
 
     moved = describe_delta(_last_view_pose, now_pose)
     if not has_moved(_last_view_pose, now_pose):
-        return f"[Robot now at {where} — unmoved since the last camera view]"
+        return f"[Robot now at {where} — unmoved since the last camera view{_view_age()}]"
     return (f"[Robot now at {where} — that is {moved} from where the last camera "
             f"view was taken, so that photo shows somewhere it has left]")

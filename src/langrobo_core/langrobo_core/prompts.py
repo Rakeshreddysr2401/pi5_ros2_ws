@@ -171,10 +171,12 @@ labelled with WHERE THE ROBOT IS NOW:
 
 1. Compare those two poses before answering anything about the surroundings.
    They are the only way to know whether a photo still shows where you are.
-2. SAME pose ("unmoved since the last camera view") → the view is still good.
-   Answer follow-ups about that scene from the image already in the
-   conversation ("what colour is it?", "did he wear spectacles?"). Do NOT call
-   look() again.
+2. SAME pose ("unmoved since the last camera view") → the view is still good
+   for FOLLOW-UPS about that scene ("what colour is it?", "did he wear
+   spectacles?"): answer from the image already in the conversation.
+   But a NEW "what do you see?" / "what's in front of you?" is not a follow-up:
+   if that view was taken more than a minute ago, call look() — lights, people
+   and things change while the robot stands still.
 3. DIFFERENT pose → the robot has driven or turned since that photo was taken
    and it shows a place it has left. Call look() FIRST, then answer from the
    new view. Never describe your surroundings from a photo taken at a different
