@@ -227,7 +227,7 @@ class AgentNode(Node):
         self._queue_lock     = threading.Lock()
         self._user_pending:   str | None = None
         self._user_pending_at: float = 0.0
-        self._system_pending: list[tuple] = []   # (text, quiet, sender (name, role) | None)
+        self._system_pending: list[tuple] = []   # (text, quiet, sender (name, role) | None, check)
         self._telegram_pending: list = []
         self._input_event    = threading.Event()
         # Barge-in: set when a NEW user utterance arrives while a turn is
@@ -411,11 +411,13 @@ class AgentNode(Node):
             f"nav report queued -> channel={req.get('channel') or 'voice'} "
             f"sender={req.get('sender') or '-'} routed={bool(routing)} photo={photo_note!r} "
             f"task={req.get('then')!r}")
-        # Is the object really there? One fresh photo, checked by code before
-        # the report turn (approach.arrival_check) -- never left to the model.
-        if success and req.get("target"):
-            from langrobo_core.tools.approach import arrival_check
-            message += arrival_check(req["target"])
+        # Is the object really there? Checked by code (approach.arrival_check,
+        # one fresh photo, 5-15 s) -- but NOT here: run here it held the report
+        # back, and a message that came in meanwhile was answered first ("I am
+        # already on my way" after the robot had arrived, Telegram 2026-10-02).
+        # The report is queued now; the worker runs the check as the first part
+        # of processing it, and system turns go before any user turn.
+        check = req.get("target") if success else None
         # The errand that came with the drive ("...and tell me what is on it"):
         # do it now, or say it was not done (movement.arrival_task_note).
         from langrobo_core.tools.movement import arrival_task_note
@@ -423,7 +425,9 @@ class AgentNode(Node):
         # Routed to Telegram = QUIET: the report goes to the phone, and nothing
         # of this turn reaches the speaker. It used to say "one moment" and
         # then the model's leftover text aloud to an empty room (2026-09-27).
-        self._enqueue_system(f"[SYSTEM] {status}: {message}{task_note}{routing}",
+        head = f"[SYSTEM] {status}: {message}"
+        self._enqueue_system(f"{head}{task_note}{routing}",
+                             check=(check, len(head)) if check else None,
                              quiet=req.get("channel") == "telegram",
                              sender=((req.get("sender"), req.get("role"))
                                      if req.get("channel") == "telegram" else None))
@@ -522,11 +526,14 @@ class AgentNode(Node):
                 span.end(outputs={k: meta.get(k) for k in
                                   ("ok", "latency_ms", "audio_ms", "rtf", "fell_back")})
 
-    def _enqueue_system(self, text: str, quiet: bool = False, sender=None) -> None:
+    def _enqueue_system(self, text: str, quiet: bool = False, sender=None,
+                        check=None) -> None:
         """Enqueue a system event — never dropped, fires after current graph run.
-        quiet: the turn's reply goes out by a tool (Telegram), never the speaker."""
+        quiet: the turn's reply goes out by a tool (Telegram), never the speaker.
+        check: (object, index) -- run the arrival check for `object` when this
+        turn is taken and insert its sentence at `index` of the text."""
         with self._queue_lock:
-            self._system_pending.append((text, quiet, sender))
+            self._system_pending.append((text, quiet, sender, check))
         self._input_event.set()
 
     def _on_telegram_inbound(self, inbound) -> None:
@@ -554,9 +561,9 @@ class AgentNode(Node):
             # discarded: whatever stays pending keeps the event armed for the
             # next loop.
             with self._queue_lock:
-                telegram, quiet, sender = None, False, None
+                telegram, quiet, sender, check = None, False, None, None
                 if self._system_pending:
-                    (text, quiet, sender), is_system = self._system_pending.pop(0), True
+                    (text, quiet, sender, check), is_system = self._system_pending.pop(0), True
                 elif self._user_pending is not None:
                     text, is_system = self._user_pending, False
                     self._user_pending = None
@@ -572,6 +579,12 @@ class AgentNode(Node):
             if text:
                 if not is_system and telegram is None:
                     text = self._await_continuation(text)
+                if check:
+                    # The arrival check, here in the worker: anything that
+                    # arrives meanwhile waits behind this report.
+                    from langrobo_core.tools.approach import arrival_check
+                    target, at = check
+                    text = text[:at] + arrival_check(target) + text[at:]
                 self._process(text, is_system, telegram=telegram, quiet=quiet, sender=sender)
 
     def _await_continuation(self, text: str) -> str:

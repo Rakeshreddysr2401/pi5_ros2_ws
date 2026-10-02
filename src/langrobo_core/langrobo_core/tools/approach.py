@@ -572,8 +572,16 @@ def scan_surroundings(state: Annotated[dict | None, InjectedState] = None) -> st
         if not ok:
             if why == "interrupted":
                 return "Scan stopped."
-            return (f"Scan stopped after {i * 60} degrees: I couldn't turn further "
-                    f"({why})." + (_mv.view_stale_note() if i else ""))
+            # Said so it cannot be read as success: "Scan stopped after 0
+            # degrees" got "I have scanned the area around me" back from the
+            # model 3 times in 5 (a Telegram "Now check", 2026-10-02); this
+            # wording, 5 of 5 honest.
+            if i == 0:
+                return (f"I could NOT look around: I could not turn at all ({why}). "
+                        f"Nothing was scanned. Tell the user that, and why.")
+            return (f"I only looked around {i * 60} of 360 degrees, then could not "
+                    f"turn further ({why}). Tell the user the scan is incomplete."
+                    + _mv.view_stale_note())
         # Pause so vSLAM/nvblox integrate a still frame (motion blur hurts both).
         end = time.time() + 1.0
         while time.time() < end:

@@ -248,3 +248,24 @@ def test_a_spoken_note_is_not_repeated_in_the_answer(robot, scripted, photo_answ
     out = _go()
     assert said and "wasn't" in said[0]
     assert "wasn't" not in out
+
+
+
+def test_a_scan_that_cannot_turn_says_it_did_not_scan(robot, scripted, monkeypatch):
+    """"Scan stopped after 0 degrees" was reported as "I have scanned the area"
+    (2026-10-02). The tool's own words must leave no room for that."""
+    monkeypatch.setattr(ap._mv, "turn_robot", lambda b, deg: (False, "refused: something 0.28 m away"))
+    out = scan_surroundings.invoke({"state": dict(STATE)})
+    assert out.startswith("I could NOT look around") and "Nothing was scanned" in out
+
+
+def test_a_scan_stopped_partway_says_it_is_incomplete(robot, scripted, monkeypatch):
+    calls = []
+
+    def turn(b, deg):
+        calls.append(deg)
+        return (True, "") if len(calls) <= 2 else (False, "refused: wall")
+    monkeypatch.setattr(ap._mv, "turn_robot", turn)
+    monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5, source="search": (b"jpeg", {"stamp": (1, 2)}))
+    out = scan_surroundings.invoke({"state": dict(STATE)})
+    assert "only looked around 120 of 360 degrees" in out and "incomplete" in out
