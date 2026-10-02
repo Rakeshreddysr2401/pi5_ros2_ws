@@ -16,7 +16,6 @@ Exports directly to `src/langrobo_ros/models/wake/rakhi.onnx`.
 import concurrent.futures
 import hashlib
 import os
-import shutil
 import subprocess
 import sys
 import tempfile

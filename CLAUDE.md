@@ -227,12 +227,17 @@ that moves wheels).
 ## Working on the Jetson from here
 
 Passwordless SSH: `ssh rakhi24@rakhi-jetson.local`. The live repo is **`~/rover`**
-(branch `rover-v1.1.4-fleet-integration`, container `rover`, image `orin-nav:1.1`); read its
+(branch `rover-v1.1.7`, container `rover`, image `orin-nav:1.1`); read its
 README.md, STARTUP.md (power-on → working), OPERATIONS.md and OPEN_ISSUES.md before
 editing. Its rules: the image has no Dockerfile and must never be modified; nodes are
 host files bind-mounted read-only, so edit on the host and restart the layer
 (`./rover <layer>`); compiled packages are built INSIDE the image with `--user $(id -u)`.
 Test over ROS 2 topics from this machine, commit in `~/rover` over ssh.
+Close quarters (2026-10-03): nvblox gets depth only while the rover is not
+turning (`phase2/nodes/depth_gate.py`); goal_exec / reach / pass judge
+obstacles on nvblox's fused map, not single depth frames
+(`phase3/nodes/fused_obstacles.py`, `ROVER_OBSTACLES=depth` reverts); nav2
+routes keep 4 cm, tighter gaps go to reach's look + straight pass.
 
 The topic contract between the repos is in INTEGRATION_GAPS.md (brain side) and
 `~/rover/phase4` (Jetson side: `/vision/pixel_query` → `/vision/pixel_result`,
