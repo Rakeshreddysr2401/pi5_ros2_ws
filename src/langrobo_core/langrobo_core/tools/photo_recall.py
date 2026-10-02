@@ -170,7 +170,18 @@ def _invoke(llm, content: list, history: list | None = None, run_name: str = "as
 
     from ..utils.speech_stream import strip_thought_residue
     msgs = list(history or []) + [HumanMessage(content=content)]
-    reply = llm.invoke(msgs, config={"run_name": run_name, "tags": [run_name]})
+    try:
+        reply = llm.invoke(msgs, config={"run_name": run_name, "tags": [run_name]})
+    except Exception as e:
+        # One retry for a dropped connection, as safe_invoke gives the agents'
+        # own calls: on 2026-10-02 a single WiFi blip ("APIConnectionError")
+        # failed a whole "go near the toy car" at its first photo. Only
+        # connection errors -- a bad answer is not retried.
+        if "Connection" not in type(e).__name__ and "Timeout" not in type(e).__name__:
+            raise
+        logger.warning("%s: %s -- retrying once", run_name, type(e).__name__)
+        time.sleep(1.0)
+        reply = llm.invoke(msgs, config={"run_name": run_name, "tags": [run_name]})
     return msgs, reply, strip_thought_residue(str(reply.content))
 
 

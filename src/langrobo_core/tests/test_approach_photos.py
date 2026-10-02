@@ -194,3 +194,57 @@ def _empty_photo_log():
     ph.clear()
     yield
     ph.clear()
+
+
+# ── progress lines during long searches (2026-10-02) ────────────────────────
+
+def _spoken(robot, monkeypatch):
+    said = []
+    monkeypatch.setattr(robot, "publish_speech", lambda text: said.append(text))
+    return said
+
+
+def test_a_voice_search_says_it_is_looking(robot, scripted, photo_answer, monkeypatch):
+    said = _spoken(robot, monkeypatch)
+    turns, vlm = scripted
+    vlm.extend([None] * 5 + [(448.0, 250.0, None)])            # found on the 6th view
+    robot.replies = [_grounded(1.5, 0.0)]
+    _go("the toy car")
+    assert said == ["I don't see the toy car from here, so I'm looking around.",
+                    "Still looking for the toy car."]
+
+
+def test_telegram_gets_no_spoken_progress(robot, scripted, photo_answer, monkeypatch):
+    said = _spoken(robot, monkeypatch)
+    approach_described_object.invoke({"description": "the toy car",
+                                      "state": dict(STATE, channel="telegram")})
+    assert said == []
+
+
+def test_found_at_once_needs_no_progress(robot, scripted, photo_answer, monkeypatch):
+    said = _spoken(robot, monkeypatch)
+    turns, vlm = scripted
+    vlm.append((448.0, 250.0, None))
+    robot.replies = [_grounded(1.5, 0.0)]
+    _go("the toy car")
+    assert said == []
+
+
+def test_driving_to_where_it_was_seen_says_so(robot, scripted, photo_answer, monkeypatch):
+    said = _spoken(robot, monkeypatch)
+    turns, vlm = scripted
+    photo_answer["answer"] = _seen_at(4.0, 0.0, age=180)
+    robot.legs = [{"ok": True, "result": "reached"}]
+    vlm.append((448.0, 250.0, None))
+    robot.replies = [_grounded(4.02, 0.01)]
+    _go("white chair")
+    assert said == ["I saw the white chair over there 3 min ago. Going to check."]
+
+
+def test_a_spoken_note_is_not_repeated_in_the_answer(robot, scripted, photo_answer, monkeypatch):
+    said = _spoken(robot, monkeypatch)
+    turns, vlm = scripted
+    photo_answer["answer"] = _seen_at(-1.0, 0.0, photo=5)             # behind, gone
+    out = _go()
+    assert said and "wasn't" in said[0]
+    assert "wasn't" not in out

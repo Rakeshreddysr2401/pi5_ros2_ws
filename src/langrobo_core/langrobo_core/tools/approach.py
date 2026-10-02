@@ -255,6 +255,24 @@ _ALREADY_THERE_M = 0.3    # within this of the viewpoint: look without driving
 
 
 
+def _say(bridge, state: dict | None, text: str) -> bool:
+    """A short progress line while a long search or drive runs, so the robot
+    is not silent for a minute (owner, 2026-10-02). Voice turns only:
+    Telegram already shows "typing...", and a reply there is one message.
+
+    Not a speak() tool (CLAUDE.md rule 4): code says it, at fixed moments, in
+    a COMPLETE utterance -- tts_node mutes the mic while an utterance is open,
+    and one left open across a minute-long search would make the robot deaf
+    to new commands. Never fails the search."""
+    if (state or {}).get("channel") != "voice":
+        return False
+    try:
+        bridge.publish_speech(text)
+        return True
+    except Exception:
+        return False
+
+
 def _face(bridge, bearing_deg: float) -> tuple:
     """Turn to a bearing (0 = ahead) unless it is already in the middle of the
     view. (ok, why) as movement.turn_robot."""
@@ -370,6 +388,7 @@ def _approach(description: str, state: dict, then: str = "") -> str:
             if drove and pose:
                 vx, vy, vyaw = compute_standoff_goal(pose[0], pose[1], placed["x"], placed["y"],
                                                      _VIEW_FROM_M)
+                _say(bridge, state, f"I saw the {name} over there {age}. Going to check.")
                 leg = bridge.reach_and_wait(round(vx, 2), round(vy, 2), round(vyaw, 1))
                 if leg.get("result") == "interrupted":
                     return f"Stopped going to look for the {name}."
@@ -432,6 +451,12 @@ def _approach(description: str, state: dict, then: str = "") -> str:
             drift = 0.0
             if start and now:
                 drift = (offset - (now[2] - start[2]) + 180.0) % 360.0 - 180.0
+            if len(seen) == 1:
+                if _say(bridge, state, note.strip() or
+                        f"I don't see the {name} from here, so I'm looking around."):
+                    note = ""                  # said already: not again in the answer
+            elif len(seen) == _SEARCH_STEPS // 2:
+                _say(bridge, state, f"Still looking for the {name}.")
             ok, why = _mv.turn_robot(bridge, direction * k * _SEARCH_STEP_DEG + drift)
             if not ok:
                 if why == "interrupted":

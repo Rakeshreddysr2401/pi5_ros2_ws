@@ -232,3 +232,33 @@ def test_a_one_photo_answer_naming_another_photo_is_not_found(monkeypatch):
     _use(monkeypatch, _Bridge(), _LLM(f'{{"answer": "Yes.", "object": "box", "photo": {log[0]["n"]}, '
                                       f'"box": [400, 400, 600, 600]}}'))
     assert ap.ask("the box", only=log[2]["n"], place=False)["photo"] is None
+
+
+def test_a_dropped_connection_is_retried_once(monkeypatch):
+    class APIConnectionError(Exception):
+        pass
+
+    class _Flaky(_LLM):
+        def invoke(self, msgs, config=None):
+            if not self.requests:
+                self.requests.append("dropped")
+                raise APIConnectionError("Connection error.")
+            return super().invoke(msgs, config)
+    _log(2)
+    monkeypatch.setattr(ap.time, "sleep", lambda s: None)
+    llm = _Flaky('{"answer": "No.", "object": null, "photo": null, "box": null}')
+    _use(monkeypatch, _Bridge(), llm)
+    assert ap.ask("is there a cat?")["ok"]
+
+
+def test_other_errors_are_not_retried(monkeypatch):
+    class _Broken(_LLM):
+        def invoke(self, msgs, config=None):
+            self.requests.append(msgs)
+            raise ValueError("bad request")
+    _log(2)
+    llm = _Broken()
+    _use(monkeypatch, _Bridge(), llm)
+    with pytest.raises(ValueError):
+        ap.ask("is there a cat?")
+    assert len(llm.requests) == 1
