@@ -265,7 +265,8 @@ def _face(bridge, bearing_deg: float) -> tuple:
 
 @tool
 def approach_described_object(description: str,
-                              state: Annotated[dict, InjectedState]) -> str:
+                              state: Annotated[dict, InjectedState],
+                              then: str = "") -> str:
     """Find a described object with the camera and drive up close to it,
     avoiding obstacles (Nav2). Use for ANY object the user describes but has
     not saved as a location: "the red coffee mug", "my black backpack", "the
@@ -279,14 +280,19 @@ def approach_described_object(description: str,
     fresh photo every step). This can take a minute or two; call it once.
 
     Returns once the object is found and the drive starts — the drive
-    continues in the background and a system message reports arrival."""
+    continues in the background and a system message reports arrival.
+
+    then: what to do on ARRIVAL, if the user asked for more than the drive
+    ("go to the box and tell me what is on it" -> then="tell the user what is
+    on the box"). It is done automatically when the robot gets there; do not
+    do it now. Leave empty for a plain drive."""
     # No photo survey while searching: the Mac runs one model, and every view
     # of the search waits on it. The views are queued and surveyed after.
     with _survey.paused():
-        return _approach(description, state)
+        return _approach(description, state, then)
 
 
-def _approach(description: str, state: dict) -> str:
+def _approach(description: str, state: dict, then: str = "") -> str:
     bridge = _bridge.get()
     description = description.strip()
     # for the replies: "the orange bottle" -> "orange bottle", so the text does
@@ -477,10 +483,7 @@ def _approach(description: str, state: dict) -> str:
     goal = res["goal"]
     # Nav completion arrives minutes later as a [SYSTEM] turn — remember who
     # asked so a Telegram-initiated approach reports back to that chat.
-    _mv._last_nav_requester = {
-        "channel": state.get("channel") or "voice",
-        "sender": state.get("sender_name") or "voice",
-    }
+    _mv.remember_requester(state, then)
     bridge.start_nav_to_pose(round(goal["x"], 2), round(goal["y"], 2),
                              round(math.degrees(goal["yaw"]), 1),
                              label=f"near the {name}")

@@ -270,6 +270,10 @@ R:<deg> rotate right, S stop immediately (e.g. F:20, L:90).
 7. navigate_to_pose and approach_described_object return IMMEDIATELY while the
    robot keeps driving; a [SYSTEM] message reports arrival later. Relay the
    tool's own message — never claim you have already arrived.
+   Anything the user wants done ONCE THERE goes in `then`, in the same call:
+   "go to the box and tell me what's on it" →
+   approach_described_object("the box", then="tell the user what is on the box").
+   It is done on arrival — do not do it now.
 8. If a tool reports it can't see, find or localise something, tell the user
    exactly that. Never pretend the robot moved when it did not.
 9. ask_photos answers "where did you see X?" from the photos already taken,

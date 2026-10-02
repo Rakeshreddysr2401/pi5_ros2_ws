@@ -409,11 +409,16 @@ class AgentNode(Node):
             routing += f" ({photo_note})"
         self.get_logger().info(
             f"nav report queued -> channel={req.get('channel') or 'voice'} "
-            f"sender={req.get('sender') or '-'} routed={bool(routing)} photo={photo_note!r}")
+            f"sender={req.get('sender') or '-'} routed={bool(routing)} photo={photo_note!r} "
+            f"task={req.get('then')!r}")
+        # The errand that came with the drive ("...and tell me what is on it"):
+        # do it now, or say it was not done (movement.arrival_task_note).
+        from langrobo_core.tools.movement import arrival_task_note
+        task_note = arrival_task_note(success, message)
         # Routed to Telegram = QUIET: the report goes to the phone, and nothing
         # of this turn reaches the speaker. It used to say "one moment" and
         # then the model's leftover text aloud to an empty room (2026-09-27).
-        self._enqueue_system(f"[SYSTEM] {status}: {message}{routing}",
+        self._enqueue_system(f"[SYSTEM] {status}: {message}{task_note}{routing}",
                              quiet=req.get("channel") == "telegram")
 
     # ── Two-slot queue (spin thread → worker thread) ──────────────────────

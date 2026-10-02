@@ -468,6 +468,44 @@ def get_last_nav_requester() -> dict | None:
     return _last_nav_requester
 
 
+def remember_requester(state: dict | None, then: str = "") -> None:
+    """Who asked for the drive that is starting, and what to do when it ends
+    ("then": "tell the user what is on the box"). One drive at a time: a new
+    one replaces the old requester and its errand with it."""
+    global _last_nav_requester
+    state = state or {}
+    _last_nav_requester = {
+        "channel": state.get("channel") or "voice",
+        "sender": state.get("sender_name") or "voice",
+        "then": (then or "").strip() or None,
+    }
+
+
+def arrival_task_note(success: bool, message: str) -> str:
+    """The errand of the drive that just ended, as text for its [SYSTEM]
+    report -- "" if it had none. Used once: a second report never repeats it.
+
+    Before this, "go to the box and tell me what is on it" lost its second
+    half: the drive starts in the background, the turn ends, and the arrival
+    turn knew only "I've arrived" (2026-10-02). Now:
+      arrived    -> do it now (it is the user's request, not a new one)
+      failed     -> say it was NOT done -- never pretend
+      cancelled  -> nothing: a new command stopped the drive, the user moved on
+    """
+    req = _last_nav_requester or {}
+    then = (req.get("then") or "").strip()
+    if not then:
+        return ""
+    req["then"] = None
+    if success:
+        return (f" You were asked to do this on arrival: {then}. Do it now -- it is "
+                f"part of the user's request, not a new one.")
+    if "cancelled" in (message or "").lower():
+        return ""
+    return (f" You were also asked to do this on arrival: {then}. It was NOT done, "
+            f"because you did not get there -- say so.")
+
+
 # ── Teleop MANUAL guard ─────────────────────────────────────────────────────
 #
 # teleop_web.py holds a MANUAL/AUTO switch. In MANUAL it publishes zeros to
@@ -571,9 +609,15 @@ def blocked_by_manual() -> str | None:
 
 @tool
 def navigate_to_pose(location: str,
-                     state: Annotated[dict, InjectedState]) -> str:
+                     state: Annotated[dict, InjectedState],
+                     then: str = "") -> str:
     """Send the robot to a saved named location. Nav2 plans the route and
     avoids obstacles on the way.
+
+    then: what to do on ARRIVAL, if the user asked for more than the drive
+    ("go to the kitchen and tell me what is on the table" -> then="tell the
+    user what is on the table"). It is done automatically when the robot gets
+    there; do not do it now. Leave empty for a plain drive.
 
     Use for places saved with save_location (e.g. 'kitchen', once someone has
     saved it there). Call list_saved_locations if you are not sure a name
@@ -598,11 +642,7 @@ def navigate_to_pose(location: str,
                     f"Drive me there and say 'save this location as {loc}'.")
         return f"Unknown location '{location}'. Available: {', '.join(known.keys())}"
 
-    global _last_nav_requester
-    _last_nav_requester = {
-        "channel": state.get("channel") or "voice",
-        "sender": state.get("sender_name") or "voice",
-    }
+    remember_requester(state, then)
 
     x, y, yaw_deg = known[loc]
     bridge.start_nav_to_pose(x, y, yaw_deg, label=loc)
