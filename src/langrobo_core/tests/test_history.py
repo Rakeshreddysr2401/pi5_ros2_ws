@@ -66,7 +66,7 @@ def test_frame_eviction_keeps_newest_two():
             _frame(i),
             AIMessage(content=f"scene {i}"),
         ]
-    out, changed = trim_history(msgs, max_len=11, keep_frames=2)
+    out, changed = trim_history(msgs, max_len=11, keep_frames=2, low_water=11)
     assert changed
     frames = [m for m in out if has_image(m)]
     assert len(frames) == 2
@@ -107,3 +107,16 @@ def test_the_user_query_is_the_request_not_look_s_frame():
     assert last_user_query({"messages": msgs}) == "look and go near the white box"
     photo = _telegram_photo_turn()
     assert last_user_query({"messages": [photo]}).endswith("is this my bag?")
+
+
+
+def test_a_long_conversation_is_not_trimmed_every_turn():
+    """Trimming to exactly the cap re-trimmed (and reset every agent's cache)
+    on every turn of a long conversation. Over the cap, cut to the low-water
+    mark, so the next few turns append without a trim."""
+    msgs, trims = _turns(24), 0                    # 48 messages: at the cap
+    for i in range(12):                            # 12 more turns, 2 messages each
+        msgs, changed = trim_history(msgs + _turns(1, start=100 + i), max_len=48)
+        trims += changed
+        assert len(msgs) <= 48 and isinstance(msgs[0], HumanMessage)
+    assert trims <= 2, trims                       # was 12: one per turn

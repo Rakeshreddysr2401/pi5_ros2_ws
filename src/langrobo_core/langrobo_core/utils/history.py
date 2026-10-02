@@ -66,8 +66,19 @@ def _evict_frame(msg):
     })
 
 
-def trim_history(messages: list, max_len: int, keep_frames: int = KEEP_FRAMES_ON_TRIM):
+def trim_history(messages: list, max_len: int, keep_frames: int = KEEP_FRAMES_ON_TRIM,
+                 low_water: int | None = None):
     """Cap history length at a clean turn boundary; evict old camera frames.
+
+    Over `max_len`, cut down to `low_water` (default two thirds of max_len),
+    NOT to max_len. Cutting to exactly the cap meant that once a conversation
+    was long, EVERY turn went over by a message or two and was trimmed again --
+    and a trim changes the front of every agent's prompt, so all three
+    llama.cpp caches were lost on every single turn (2026-10-02: history
+    pinned at 46-48 messages, the warmer re-reading ~3.5k tokens per agent
+    after each turn and never finishing before the next one; "tell me a joke"
+    1.4 s fresh, 5-13 s in a long conversation). With a low-water mark the
+    reset happens once per several turns, and the turns between stay warm.
 
     Returns (messages, changed). `changed` means the cached prompt prefix was
     reset — the caller should background-warm the llama.cpp slot so the
@@ -77,7 +88,8 @@ def trim_history(messages: list, max_len: int, keep_frames: int = KEEP_FRAMES_ON
     if len(msgs) <= max_len:
         return msgs, False
 
-    cut = len(msgs) - max_len
+    target = max_len * 2 // 3 if low_water is None else min(low_water, max_len)
+    cut = len(msgs) - target
     while cut < len(msgs) and not (
         isinstance(msgs[cut], HumanMessage) and not is_camera_frame(msgs[cut])
     ):

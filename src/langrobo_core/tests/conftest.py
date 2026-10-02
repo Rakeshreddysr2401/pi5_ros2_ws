@@ -32,3 +32,17 @@ def _no_background_photo_survey(request, monkeypatch):
         return
     from langrobo_core.tools import survey
     monkeypatch.setattr(survey, "submit", lambda *a, **k: False)
+
+
+@pytest.fixture(autouse=True)
+def _teleop_reads_auto(request, monkeypatch):
+    """The MANUAL guard asks the LIVE teleop page (127.0.0.1:8091) before any
+    move. On the robot that page is up, so the whole motion suite passed or
+    failed with the real switch: 22 tests failed on 2026-10-02 only because
+    someone had left it in MANUAL. Every test sees AUTO -- except
+    test_manual_guard.py, which sets the switch itself (and reads the real
+    function on purpose)."""
+    if request.module.__name__.endswith("test_manual_guard"):
+        return
+    from langrobo_core.tools import movement
+    monkeypatch.setattr(movement, "teleop_is_manual", lambda: False)
