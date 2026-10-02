@@ -39,3 +39,4 @@ src/langrobo_ros/models/whisper/
 !src/langrobo_ros/models/wake/
 !src/langrobo_ros/models/wake/*.onnx
 !src/langrobo_ros/models/wake/*.pkl
+test_data/
