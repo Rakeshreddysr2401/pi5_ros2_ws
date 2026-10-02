@@ -468,16 +468,20 @@ def get_last_nav_requester() -> dict | None:
     return _last_nav_requester
 
 
-def remember_requester(state: dict | None, then: str = "") -> None:
+def remember_requester(state: dict | None, then: str = "", target: str = "") -> None:
     """Who asked for the drive that is starting, and what to do when it ends
-    ("then": "tell the user what is on the box"). One drive at a time: a new
-    one replaces the old requester and its errand with it."""
+    ("then": "tell the user what is on the box"), and -- for a drive to an
+    object -- what it is ("target"), so arrival can check it is really there.
+    The role travels too: the arrival turn acts as the person who asked.
+    One drive at a time: a new one replaces the old requester and its errand."""
     global _last_nav_requester
     state = state or {}
     _last_nav_requester = {
         "channel": state.get("channel") or "voice",
         "sender": state.get("sender_name") or "voice",
+        "role": state.get("sender_role"),
         "then": (then or "").strip() or None,
+        "target": (target or "").strip() or None,
     }
 
 

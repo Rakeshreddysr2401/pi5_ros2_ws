@@ -483,12 +483,44 @@ def _approach(description: str, state: dict, then: str = "") -> str:
     goal = res["goal"]
     # Nav completion arrives minutes later as a [SYSTEM] turn — remember who
     # asked so a Telegram-initiated approach reports back to that chat.
-    _mv.remember_requester(state, then)
+    _mv.remember_requester(state, then, target=description)
     bridge.start_nav_to_pose(round(goal["x"], 2), round(goal["y"], 2),
                              round(math.degrees(goal["yaw"]), 1),
                              label=f"near the {name}")
     return (note + f"I can see the {name} — about {res['depth_m']:.1f} m away. "
             f"On my way; I'll say when I'm there." + _mv.view_stale_note())
+
+
+def arrival_check(description: str) -> str:
+    """Is the object really in front of the robot now that it has arrived?
+    One fresh photo, asked the same "is it clearly visible?" question as the
+    search, measured with depth when it is there. Returns a sentence for the
+    arrival report, or "" if the check itself could not run -- a broken
+    camera or model must never hold up the report.
+
+    Why: arrival meant "reach got to the goal", not "the thing is here". A
+    goal placed from a wrong pixel, or a thing moved while driving, still
+    arrived -- and the robot said so (FIND_AND_GO.md, Known limits)."""
+    name = re.sub(r"^(the|a|an)\s+", "", (description or "").strip(), flags=re.IGNORECASE)
+    if not name:
+        return ""
+    bridge = _bridge.get()
+    try:
+        frame, capture = _capture(bridge, source="arrival")
+        if frame is None:
+            return ""
+        uv = _vlm_locate(frame, description)
+        if uv is None:
+            return (f" But I can't see the {name} in front of me now -- it may have "
+                    f"moved, or I may be facing away from it.")
+        res = _ground(bridge, uv, capture)
+        rel = res.get("relative") if res.get("ok") else None
+        if rel:
+            dist = math.hypot(rel["forward_m"], rel["left_m"])
+            return f" I can see the {name} in front of me, about {dist:.1f} m away."
+        return f" I can see the {name} in front of me."
+    except Exception:
+        return ""
 
 
 @tool

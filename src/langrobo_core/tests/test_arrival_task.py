@@ -95,3 +95,46 @@ def test_navigate_to_pose_stores_the_errand(robot, monkeypatch):
     navigate_to_pose.invoke({"location": "kitchen", "then": "send Rakesh a photo of the table",
                              "state": dict(STATE)})
     assert robot.navs and mv.get_last_nav_requester()["then"] == "send Rakesh a photo of the table"
+
+
+# ── the arrival check: is it really there? ─────────────────────────────────
+
+def test_approach_remembers_what_it_drove_to_and_who_asked(robot, scripted, monkeypatch):
+    turns, vlm = scripted
+    monkeypatch.setattr(ap._recall, "ask", lambda *a, **k: {"ok": False, "why": "no_photos"})
+    vlm.append((448.0, 250.0, None))
+    robot.replies = [_grounded(1.5, 0.0)]
+    approach_described_object.invoke({"description": "the blue box", "state": dict(
+        STATE, channel="telegram", sender_name="Rakesh", sender_role="owner")})
+    req = mv.get_last_nav_requester()
+    assert (req["target"], req["sender"], req["role"]) == ("the blue box", "Rakesh", "owner")
+
+
+def test_arrival_sees_it_and_measures_it(robot, scripted):
+    turns, vlm = scripted
+    vlm.append((448.0, 250.0, None))
+    robot.replies = [_grounded(0.5, 0.0, depth=0.5)]
+    note = ap.arrival_check("the blue box")
+    assert note == " I can see the blue box in front of me, about 0.5 m away."
+
+
+def test_arrival_does_not_see_it_and_says_so(robot, scripted):
+    note = ap.arrival_check("the blue box")            # the VLM finds nothing
+    assert "can't see the blue box in front of me" in note
+
+
+def test_arrival_check_never_holds_up_the_report(robot, scripted, monkeypatch):
+    monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5, source="search": (None, None))
+    assert ap.arrival_check("the blue box") == ""      # camera down: no claim either way
+
+    def boom(*a, **k):
+        raise RuntimeError("model down")
+    monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5, source="search": (b"jpeg", {"stamp": (1, 2)}))
+    monkeypatch.setattr(ap, "_vlm_locate", boom)
+    assert ap.arrival_check("the blue box") == ""
+
+
+def test_a_place_drive_has_no_object_to_check(robot):
+    robot.add_known_location("kitchen", 2.0, 1.0, 0.0)
+    navigate_to_pose.invoke({"location": "kitchen", "state": dict(STATE)})
+    assert mv.get_last_nav_requester()["target"] is None
