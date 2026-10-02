@@ -12,7 +12,7 @@ Home robot "Mitra" (renamed from "Rakhi" 2026-09-20; the `rakhi24` username and 
   Repo: **`~/rover`** on the Jetson (container `rover`), brought up with
   `./rover up`. (`~/langrobo_perception` and `~/robot` are the old stacks.)
 - **Mac Mini** — the LLM and VLM (llama.cpp, `singireddys-mac-mini.local:8080`).
-  **Must run with `--jinja --parallel 4`** — one KV slot per agent + one for the photo survey.
+  **Must run with `--jinja --parallel 4`** — one KV slot per agent + one for photo questions (`ask_photos`).
 - **ESP32** — 50 Hz closed-loop PID on four wheels, micro-ROS over WiFi.
 
 **FIND_AND_GO.md is the priority flow** ("what do you see?" … "go near it":
@@ -93,17 +93,22 @@ pip3 install --break-system-packages -r requirements.txt
 2. **One llama.cpp KV slot per agent.** Slots are declared in `registry.py`
    (`AgentSpec.slot`), NOT as ROS params. Start the server with
    `--parallel 4`: slots 0-2 are the agents, slot 3 the **vision-tool slot**
-   (search views, locate, the photo survey -- one-shot photo prompts, kept OFF
-   local_agent's slot 1, which holds the vision conversation and its earlier
-   photos; `tools/survey.py` VISION_TOOL_SLOT, asserted in registry.py). On a
-   smaller server the survey is off and locate falls back to slot 1. Each agent's ~900-token prompt prefix then stays resident
-   in its own cache. Two agents on one slot evict each other every turn
-   (~18-50s of re-prefill). agent_node probes the server's real slot count at
-   boot, wraps with modulo, and warns loudly if it had to.
-   **Separate slots are not enough on their own:** as of 2026-09-27 the Mac's
-   server wipes every other slot's cache when one is used (Gemma's
-   sliding-window cache; likely fix `--swa-full`). `scripts/llm_cache_check.py`
-   is the PASS/FAIL test — run it after any change to the server's flags.
+   (photo questions -- `ask_photos`, search views, locate, the arrival check --
+   kept OFF local_agent's slot 1, which holds the vision conversation and its
+   earlier photos; `tools/survey.py` VISION_TOOL_SLOT, asserted in
+   registry.py). On a smaller server locate falls back to slot 1. Each
+   agent's prompt prefix then stays resident in its own cache. Two agents on
+   one slot evict each other every turn (~18-50s of re-prefill). agent_node
+   probes the server's real slot count at boot, wraps with modulo, and warns
+   loudly if it had to. `scripts/llm_cache_check.py` is the PASS/FAIL test --
+   run it after any change to the server's flags (PASS since 2026-10-01, and
+   `LANGROBO_WARM_ALL=1` keeps every agent warm while idle).
+   **The Mac is not `--swa-full`, so its cache has a REWIND LIMIT:** a request
+   that shares only a prefix of a slot's cached prompt keeps the cache if it
+   drops <= ~450 tokens, and re-reads everything (~25 s for 3k tokens) if it
+   drops more (measured 2026-10-02; the cache check only tests extending, so
+   it still PASSES). Anything that branches off a cached prefix must stay under
+   it -- `tools/photo_recall.py` THE REWIND LIMIT is the worked example.
 3. **KV-cache discipline** (violations cost ~20s/turn on the 12B model):
    - Never put a clock/timestamp in a system prompt (date only; clock is the
      `get_current_time` tool).
@@ -117,7 +122,10 @@ pip3 install --break-system-packages -r requirements.txt
    sentence-by-sentence, utterance closed with `<|eou|>`). The two halves of
    that protocol are `langrobo_core/utils/speech_stream.py` and
    `pi5_voice_pkg/tts_node.py` — different packages, same repo. Change both or
-   neither.
+   neither. The one other spoken path is CODE, not the model: during a long
+   search `approach._say` publishes a fixed progress line ("I don't see the X
+   from here, so I'm looking around") as a COMPLETE utterance -- never an open
+   one, which would mute the mic for the whole search.
 5. **Missing keys degrade, never crash**: no Tavily key → no web search and
    chat says it can't look that up; no Telegram allowlist → the channel stays
    off; Mac Mini down → cloud fallback or a spoken offline message. Keep this
@@ -171,6 +179,12 @@ that moves wheels).
   tokens -- the Mac is not `--swa-full` and loses the cache on a longer rewind.
   The old background object list (`tools/survey.py`) is OFF
   (`LANGROBO_PHOTO_SURVEY=1`). The search is 8 views, 45 deg apart.
+  **Errands and arrival** (2026-10-02): the drive tools take `then` ("go to the
+  box and tell me what is on it"), carried to the [SYSTEM] arrival report by
+  `movement.arrival_task_note` (done on arrival / "NOT done" on failure /
+  dropped on cancel); and on arrival code checks the object is really there
+  (`approach.arrival_check`, one fresh photo). The arrival turn acts as the
+  person who asked (Telegram name + role). FIND_AND_GO.md has the flow.
 - `langrobo_core/tools/` — @tool functions; per-agent sets in `__init__.py`;
   robot I/O via `_bridge.get()`. Keep the sets SHORT: every tool is shipped as
   a schema on every turn to that agent, forever.
@@ -253,6 +267,10 @@ no longer exist.
   a topic here.
 - Streaming tool calls need the llama.cpp server started with
   `--jinja --parallel 4` (one slot per agent: chat/local_agent/navigate, + the vision-tool slot 3).
+- **`.env` is loaded before any `langrobo_core` import** (top of agent_node.py).
+  Some settings are read when a module is imported (`tools/web.py` builds
+  `tavily_search` only if `TAVILY_API_KEY` is set then): loaded later, web
+  search was silently off in every systemd run until 2026-10-02.
 - Pi5↔Jetson clocks drift ~1.5s (chrony peering pending) — latency_replay
   flags negative deltas.
 - **A prompt rule the model has to follow is not a fix — it is a thing to

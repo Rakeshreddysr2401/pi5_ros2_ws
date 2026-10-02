@@ -263,9 +263,11 @@ LLM calls per request (measured on the graph, 2026-09-28):
 Every call re-sends its agent's whole prefix — system prompt + tool schemas:
 ~1.7k tokens (chat, 5 tools), ~2.4k (local_agent, 6), ~2.9k (navigate, 10;
 cl100k estimate). Warm, only the new tokens are read (~1-2 s a call). Cold,
-the whole prefix is: 15-27 s on the Mac while its slots wipe each other
-(TODO item 1: `--swa-full`, checked by `scripts/llm_cache_check.py`). That
-one server flag is worth more than everything else in this section.
+the whole prefix is: 15-27 s on the Mac. Per-slot caching works since
+2026-10-01 (`scripts/llm_cache_check.py` PASS) and every agent is warmed while
+idle (§4.3), which took "what do you see?" from 40.6 s to 9.4 s. The server is
+still not `--swa-full`: a request that drops more than ~450 tokens of a
+slot's cached prompt re-reads all of it (CLAUDE.md rule 2).
 
 ### 4.1 One KV slot per agent — the parallel cache
 
@@ -334,9 +336,9 @@ It warms the agent the next turn will ENTER. A handover lands on another
 agent, whose prompt has not been read since the history changed — the first
 move or vision question after boot pays a full prefix read there.
 `LANGROBO_WARM_ALL=1` warms every agent, entry last (`registry.warm_order`),
-stopping as soon as input arrives. Off by default: on a server whose slots
-wipe each other it is ~3 full reads per idle spell for nothing. Turn it on
-once `llm_cache_check.py` passes.
+stopping as soon as input arrives. Off by default (on a server whose slots
+wipe each other it is ~3 full reads per idle spell for nothing); ON in this
+robot's `.env` since the check passed on 2026-10-01.
 
 ### 4.3b One client per config (2026-09-28)
 
@@ -387,19 +389,19 @@ spoken: a markdown list is read aloud bullet characters and all. That is why
 | `registry.py` | **one `AgentSpec` per agent.** Prompt, tools, KV slot, sticky, keep_images. The file to read first. |
 | `prompts.py` | every system prompt, in one file. Read top to bottom to see everything the robot is told to be. |
 | `agents/factory.py` | builds a node from a spec. **Every** agent is this function — there are no hand-written nodes. |
-| `graph/build.py` | the StateGraph. Derived entirely from `registry.SPECS`; adding an agent needs no edit here. Also the loop guard (§3.5) and the vision-question backstop (§3.6). |
+| `graph/build.py` | the StateGraph. Derived entirely from `registry.SPECS`; adding an agent needs no edit here. Also the loop guard (§3.5), the vision-question backstop (§3.6), and "fresh view first": a current-view question with a photo over 60 s old gets a new look() BEFORE local_agent's LLM call (a prompt rule alone answered from a pre-lights-on photo, 2026-10-02). |
 | `graph/turn_entry.py` | which agent a turn enters: the sticky one, or chat. |
 | `graph/handover_resolver.py` | executes a handover; guards against loops. |
 | `graph/state.py` | `AgentState` — messages, active agent, per-turn counters, sender identity. |
 | `tools/` | `@tool` functions. Per-agent sets in `__init__.py`. Robot I/O via `_bridge.get()`. |
 | `tools/_bridge.py` | the seam itself — a module-level singleton, set once at startup. Twenty lines, and the reason the whole brain runs off-robot. |
-| `tools/look.py` | `look()`: the current colour frame into the conversation (local_agent). Every photo is also recorded (`photos.py`) and surveyed (`survey.py`). |
+| `tools/look.py` | `look()`: the current colour frame into the conversation (local_agent). Every photo is also logged (`photos.py`). |
 | `tools/locate.py` | `locate_object()`: VLM box → Jetson `pixel_to_goal` → distance and bearing. Read-only; never turns the robot. |
-| `tools/approach.py` | `approach_described_object()`: the photo we talked about → object memory → 45° search → drive. FIND_AND_GO.md is its walkthrough. |
-| `tools/memory.py` | `recall_object()`: where something was seen this session, from where the robot is now. Read-only. |
-| `tools/photos.py` | the photo register: for each JPEG the robot took, its camera stamp, pose, time and odom epoch (hash-keyed, 24 kept — the Jetson's snapshot count). |
-| `tools/survey.py` | the background photo survey: while the brain is idle, the VLM lists every object in each photo and the Jetson places it with THAT photo's depth and pose. Own thread, llama.cpp slot 3. |
-| `tools/movement.py` | `move_robot` (exact goal_exec moves, timed fallback), `navigate_to_pose`, `save_location`, the MANUAL guard. |
+| `tools/approach.py` | `approach_described_object(description, then)`: the photos first (`photo_recall.ask`) → face / drive over / confirm → 45° search (spoken progress on voice) → drive; `arrival_check` on arrival; `then` = the errand done on arrival. FIND_AND_GO.md is its walkthrough. |
+| `tools/photo_recall.py` | `ask_photos(question)` (all three agents): the VLM over every logged photo in one request on slot 3, then that photo again for a tight box; the Jetson places it with THAT photo's depth and pose. `locate_in` = one photo, "is it clearly visible?". Keeps the photos cached (THE REWIND LIMIT). |
+| `tools/photos.py` | the photo log -- the robot's short-term memory: every photo with number, image, camera stamp, pose, time and odom epoch. Append-only, 24 kept (the Jetson's snapshot count), dropped 8 at a time for the cache. |
+| `tools/survey.py` | the vision-tool slot (`VISION_TOOL_SLOT`), and the old background object survey -- OFF since 2026-10-02 (`LANGROBO_PHOTO_SURVEY=1`). |
+| `tools/movement.py` | `move_robot` (exact goal_exec moves, timed fallback), `navigate_to_pose(location, then)`, `save_location`, the MANUAL guard, and the requester of the current drive (`remember_requester`, `arrival_task_note`: the errand carried to the arrival report). |
 | `services/` | state that outlives a turn: `config`, `llm`, `telegram`, `permissions`, `health`, `logging`, `metrics`, `object_memory`. |
 | `services/jev.py` | TypeSafe's Jev decision model: route + vision read per turn, "finished?" for endpointing. `LANGROBO_JEV` off/shadow/on; off without `TYPESAFE_API_KEY`. §4.3c. |
 | `services/object_memory.py` | where things were seen, in odom, one file (`~/.langrobo/object_memory.json`) shared by agent_node and Studio. Emptied when the odom origin (`/fusion/status` origin_epoch) changes. A hint, never a fact: callers look again before driving. |
@@ -440,7 +442,7 @@ thread you are on:
 | ROS spin | every subscription callback, the image cache | block. Ever. |
 | worker | the whole graph, every tool, every LLM call | — |
 | nav worker | one drive per goal: `/reach/goal` (default) or the Nav2 action | touch graph state |
-| photo survey | `tools/survey.py`: VLM object lists + grounding, only while no turn or search runs | run during a turn (it waits on `set_busy_probe` / `paused()`) |
+| photo survey (OFF by default) | `tools/survey.py`: VLM object lists + grounding, only while no turn or search runs | run during a turn (it waits on `set_busy_probe` / `paused()`) |
 | telegram poller | long-poll `getUpdates` → worker queue | reply directly |
 | cache warmer | one prefill request | run when input is pending |
 

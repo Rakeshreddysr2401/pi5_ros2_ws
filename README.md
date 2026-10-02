@@ -117,7 +117,7 @@ ros2 launch langrobo_ros brain_launch.py
 
 ```
 
-The llama.cpp server needs **`--parallel 4`** — one KV-cache slot per agent, plus one for the photo survey (and `--swa-full`: `scripts/llm_cache_check.py`).
+The llama.cpp server needs **`--parallel 4`** — one KV-cache slot per agent, plus one for photo questions (`ask_photos`, search, locate). `scripts/llm_cache_check.py` checks the per-slot cache; `--swa-full` would also lift the ~450-token rewind limit (CLAUDE.md rule 2).
 With fewer, agents share a slot and evict each other's cached prompt prefix;
 agent_node warns at boot when that happens. See ARCHITECTURE_LLD.md §4.1.
 

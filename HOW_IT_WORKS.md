@@ -63,17 +63,17 @@ cache warmer        → transient; prefills LLM slots while idle
 ## 2. A voice turn, end to end ("what time is it?")
 
 ```
-you speak → Jetson echo-cancelled mic (AEC: mic minus the robot's own audio)
-  → openWakeWord neural keyword model (every 80ms chunk; audio not addressed
-    to the robot is discarded BEFORE transcription)
-  → wake heard → capture window → Silero VAD endpoints the utterance
-  → Whisper STT → wake_gate strips the name
+you speak → Pi 5 Bluetooth mic (audio_device_node owns the speaker + mic)
+  → stt_node: webrtcvad endpoints the utterance → noise gate (vad_gate.py)
+  → transcribe (stt_provider: sarvam today, local faster-whisper as fallback)
+  → wake gate: only text containing "Mitra" / "hey Mitra" becomes a turn
+    (transcript_alias; the acoustic wake model is off until it is retrained)
   → publishes String on /voice/user_input
 ```
 
-(Wake word is "hey jarvis" until the custom hey_rakhi model is trained — see
-JETSON_VOICE_UPGRADE.md. Saying the wake word while the robot is talking is
-barge-in: the Jetson halts TTS, captures your utterance, and this brain
+(PI5_VOICE.md has the whole voice trio. The old Jetson voice stack --
+echo-cancelled mic, openWakeWord, Kokoro on the GPU -- is retired. Speaking
+while the robot talks is barge-in: the robot stops talking, and this brain
 abandons its in-flight turn for the new one.)
 
 1. **Spin thread** (`_on_user_input`): cancels any active navigation, interrupts
@@ -88,17 +88,18 @@ abandons its in-flight turn for the new one.)
    router hop.
 4. **Graph runs** (`langrobo_core/graph/build.py`):
    - `turn_entry` resets the per-turn loop counters, routes to chat.
-   - `chat` builds its prompt: static system prompt + HOUSEHOLD MEMORY block
-     + today's date (never the clock — cache rule), binds its tools, and calls
-     the LLM via `safe_invoke`.
+   - `chat` builds its prompt: static system prompt (tools and web rules
+     rendered from its bound tools) + today's date (never the clock — cache
+     rule), and calls the LLM via `safe_invoke`.
    - The Mac Mini already has chat's prompt prefix cached in **slot 0**, so it
      only prefills your new sentence, then decodes.
    - Gemma decides it needs the clock → emits a `get_current_time` tool call
      → ToolNode runs it → result appended → loops back to chat → final answer.
 5. **Streaming speech**: as answer tokens arrive, `SpeechStreamHandler` cuts
    them into sentences and publishes each on `/voice/robot_speech`
-   immediately; the Jetson's Kokoro starts synthesizing the first sentence
-   while the LLM is still writing the second. The utterance ends with the
+   immediately; the Pi 5's tts_node (tts_provider: sarvam_translate today,
+   local kokoro-onnx as fallback) starts on the first sentence while the LLM
+   is still writing the second. The utterance ends with the
    `<|eou|>` marker; tts_node holds `/voice/tts_speaking=true` (which mutes
    stt_node's capture) until it has played everything, plus a tail.
 6. **After the turn**: the full message list (tool calls included) is kept as
@@ -117,14 +118,20 @@ the latest one (age tracked).
 
 1. chat recognizes a visual query → calls `handover("local_agent")` →
    `handle_handover` writes a routing note and chains to **local_agent**.
-2. local_agent has no recent frame in its conversation → calls **`look()`**:
+2. If the last photo is over a minute old (or there is none) and the user's
+   words ask about NOW, the graph takes a fresh one BEFORE local_agent's model
+   runs (`graph/build.py` fresh view first -- a prompt rule alone answered from
+   a photo taken before the lights came on). Otherwise local_agent calls
+   **`look()`** itself:
    grabs the cached JPEG (rejected if >10s old — "I cannot see right now"
    beats describing a stale scene), base64-encodes it, and injects it as a
    HumanMessage *image block* into the conversation.
 3. The multimodal LLM call runs on **slot 1** (local_agent's dedicated
    KV slot) so the expensive image prefix stays cached and is never evicted
    by text agents. Gemma sees the pixels and answers.
-4. The frame **stays in history** — a follow-up ("did he wear spectacles?")
+4. Every photo is also logged (`tools/photos.py`): "where did you see my
+   bag?" later is answered over all of them by `ask_photos`, from any agent.
+5. The frame **stays in history** — a follow-up ("did he wear spectacles?")
    reasons over the same image with no re-capture. Other agents get an
    image-stripped projection of the same history (they see
    `[Current camera view]` as text).
@@ -151,6 +158,14 @@ the turn ends. A minute later the robot speaks without being spoken to:
    inherit stickiness: a proactive announcement must not be answered by
    whichever agent the user happened to leave active.
 4. chat's reply streams to TTS: **"I've arrived at the kitchen."**
+
+The report carries more than "arrived" since 2026-10-02 (FIND_AND_GO.md
+step 4): for a drive to an object, code checks it is really there ("I can see
+the box in front of me, 0.5 m" / "But I can't see the box…"); and if the
+request had an errand ("go to the box and tell me what is on it" → the drive
+tool's `then`), the report says to do it now -- or that it was NOT done, if
+the drive failed. The turn acts as the person who asked (a Telegram sender's
+name and role).
 
 **This is the pattern for every proactive behaviour.** A producer calls
 `bridge.enqueue_system_turn(...)`; everything downstream already works. Don't
@@ -250,7 +265,7 @@ turn only pays for the *new* tokens; a cold one re-processes ~2k+ tokens
 
 - **One slot per agent**: chat=0, local_agent=1, navigate=2. Three agents,
   three caches, nothing ever evicts anything. The map is declared beside the
-  agents in `registry.py`; start llama.cpp with `--parallel 4` (slot 3: the vision-tool slot: search views, locate, the photo survey). This matters
+  agents in `registry.py`; start llama.cpp with `--parallel 4` (slot 3: the vision-tool slot: photo questions, search views, locate, the arrival check). This matters
   because it was measured: when two agents shared a slot (2026-07-06), each
   call evicted the other's prefix and cost 18-50s of full-history re-prefill
   on the next turn.

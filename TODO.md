@@ -1,5 +1,28 @@
 # TODO — pending on-device work
 
+## NEEDS YOU — state at the end of 2026-10-02 (branch `dev-1.3.8`)
+
+Done and floor-tested 2026-10-01/02: photo memory (`ask_photos`), find-and-go
+from photos, errands on arrival (`then`, voice + Telegram), the arrival
+check, spoken search progress, fresh-view-first, no more empty replies, web
+search on, every agent kept warm, teleop page in sync (and its 09-29 MANUAL
+fix finally deployed). What only you can do, most useful first:
+
+1. **Give Claude ssh to the Mac Mini** (MAC_MINI_TASKS.md Task 1). Then:
+   `--swa-full` (lifts the ~450-token cache-rewind limit), speculative
+   decoding (~9 tok/s writing is most of every wait), `--metrics`.
+2. **Give the PoE injector its own socket.** On 2026-10-02 it lost power with
+   the ESP32's restart and took the camera -- and everything built on it --
+   down.
+3. **Reload the teleop page on your phone once** (port 8091) to get the
+   version that stays in step with the real mode.
+4. **Decide: should positions survive a power cycle?** (saved map + named
+   places: kitchen, dock, ...). Everything resets at boot today.
+5. A measurement session on the Jetson's CPU load (rover OPEN_ISSUES #1, #2).
+
+---
+
+
 ## NEEDS YOU — from the 2026-09-27 integration pass (branch `dev-1.3.6-fleet-integration`)
 
 The robot was brought up from a power cycle, every link checked, and the
@@ -7,7 +30,9 @@ fixes below committed on new branches (Pi 5 `dev-1.3.6-fleet-integration`,
 Jetson `~/rover` `rover-v1.1.4-fleet-integration`; neither pushed). These are
 the things only you can do, most useful first:
 
-1. **Mac Mini: restart llama-server with `--swa-full`** (keep `--jinja
+1. **[2026-10-01: per-slot cache now PASSES and `LANGROBO_WARM_ALL=1` is on;
+   `--swa-full` itself is still pending -- see the list above]**
+   **Mac Mini: restart llama-server with `--swa-full`** (keep `--jinja
    --parallel 4`). Today the server keeps only ONE slot's prompt cache —
    using any slot wipes the others — so every change of agent (the reply
    after a vision question, every handover) re-reads the whole ~3k-token
