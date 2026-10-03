@@ -290,6 +290,24 @@ no longer exist.
   "agent X must never do Y" rule is the same shape of untrustworthy until
   it's been driven on the robot, not just read.
 
+## The Mitra twin (mitra_sim) — test the real brain in a simulated home
+
+Since 2026-10-04 (owner: "nav2, cuVSLAM, nvblox, all planning on the Jetson
+only; the laptop is just the simulator"). Repo
+github.com/Rakeshreddysr2401/mitra_sim (private), laptop
+`/workspace/mitra_sim`. The laptop is the WORLD only: Gazebo homes, the
+rover's measured body, lidar, depth camera, gyro, and its real wheel slide,
+published on the rover's own topic contract. The Jetson is the BRAIN: the
+rover's own nvblox / nav2 / reach / goal_exec as a second instance in the
+`rover` container (`~/mitra_sim/jetson/sim_stack.sh up`). Both on **ROS
+domain 42**, so the twin can never reach the real wheels (domain 0); its
+learned state goes to `/tmp/mitra_state`, never `/logs`. Laptop: `./mitra up
+home`, `./mitra rviz`, `./mitra goal X Y`, `./mitra scenario <world>`. From
+this Pi: `tools/run_suite.sh` runs every world end to end, judged on the true
+pose. Results, fixes and open items: mitra_sim `docs/STATUS.md`. The Pi 5
+brain is not wired to the twin yet (it stays on domain 0); `fleet.sh sim`
+still means the older rover_sim below.
+
 ## Simulation laptop (rover_sim) — the second body
 
 **The real rover exists and drives** (see Gotchas). The sim is no longer a
