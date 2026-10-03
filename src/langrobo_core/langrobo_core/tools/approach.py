@@ -200,18 +200,19 @@ _REGROUND_REASONS = ("snapshot_expired", "no_depth_near_stamp")
 _STILL_M, _STILL_DEG = 0.02, 1.0
 
 
-def _ground(bridge, uv: tuple, capture: dict | None) -> dict:
+def _ground(bridge, uv: tuple, capture: dict | None, what: str | None = None) -> dict:
     """ground_pixel at the moment of the photo, when the photo has a stamp,
-    on the VLM's box when it gave one. uv = (u, v) or (u, v, box)."""
+    on the VLM's box when it gave one. uv = (u, v) or (u, v, box). what: the
+    description, so the Jetson can measure doors/walls with the LiDAR."""
     u, v, *rest = uv
     box = rest[0] if rest else None
     stamp = (capture or {}).get("stamp")
-    res = bridge.ground_pixel(u, v, stamp=stamp, box=box)
+    res = bridge.ground_pixel(u, v, stamp=stamp, box=box, what=what)
     if stamp and not res.get("ok") and res.get("reason") in _REGROUND_REASONS:
         then, now = capture.get("pose"), bridge.get_current_pose()
         if then and now and math.hypot(now[0] - then[0], now[1] - then[1]) <= _STILL_M \
                 and abs((now[2] - then[2] + 180.0) % 360.0 - 180.0) <= _STILL_DEG:
-            res = bridge.ground_pixel(u, v, box=box)
+            res = bridge.ground_pixel(u, v, box=box, what=what)
     return res
 
 
@@ -226,7 +227,7 @@ _STALL_RETRY_S = 1.5
 def _ground_retrying(bridge, description: str, uv: tuple, capture: dict | None) -> tuple:
     """_ground, and once more on a fresh photo if the depth stream had
     stalled. Returns (result, capture of the photo the result came from)."""
-    res = _ground(bridge, uv, capture)
+    res = _ground(bridge, uv, capture, description)
     if res.get("ok") or res.get("reason") not in _DEPTH_STALL:
         return res, capture
     time.sleep(_STALL_RETRY_S)
@@ -239,7 +240,7 @@ def _ground_retrying(bridge, description: str, uv: tuple, capture: dict | None) 
         return res, capture
     if uv2 is None:
         return res, capture
-    return _ground(bridge, uv2, fresh), fresh
+    return _ground(bridge, uv2, fresh, description), fresh
 
 
 
@@ -540,7 +541,7 @@ def arrival_check(description: str) -> str:
         if uv is None:
             return (f" But I can't see the {name} in front of me now -- it may have "
                     f"moved, or I may be facing away from it.")
-        res = _ground(bridge, uv, capture)
+        res = _ground(bridge, uv, capture, description)
         rel = res.get("relative") if res.get("ok") else None
         if rel:
             dist = math.hypot(rel["forward_m"], rel["left_m"])

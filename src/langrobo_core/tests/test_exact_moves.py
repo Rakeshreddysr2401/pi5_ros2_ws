@@ -136,7 +136,7 @@ class GroundBridge(StubBridge):
         self.pose = pose_then
         self.pose_now = pose_now
 
-    def ground_pixel(self, u, v, timeout=4.0, stamp=None, box=None):
+    def ground_pixel(self, u, v, timeout=4.0, stamp=None, box=None, what=None):
         self.queries.append(stamp)
         self.boxes = getattr(self, "boxes", []) + [box]
         return self.replies.pop(0)

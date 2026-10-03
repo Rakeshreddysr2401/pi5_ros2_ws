@@ -46,7 +46,7 @@ class _Bridge:
     def get_current_pose(self):
         return self.pose
 
-    def ground_pixel(self, u, v, timeout=4.0, stamp=None, box=None):
+    def ground_pixel(self, u, v, timeout=4.0, stamp=None, box=None, what=None):
         self.queries.append((round(u), round(v), stamp, box))
         return self.ground or {"ok": False, "reason": "snapshot_expired"}
 

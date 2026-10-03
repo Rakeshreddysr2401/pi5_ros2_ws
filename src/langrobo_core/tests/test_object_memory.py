@@ -100,7 +100,7 @@ class Robot(StubBridge):
         self.navs, self.queries = [], []
         self.replies = []
 
-    def ground_pixel(self, u, v, timeout=4.0, stamp=None, box=None):
+    def ground_pixel(self, u, v, timeout=4.0, stamp=None, box=None, what=None):
         self.queries.append((u, v))
         return self.replies.pop(0)
 

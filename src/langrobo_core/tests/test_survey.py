@@ -37,7 +37,7 @@ class _Bridge:
     def get_origin_epoch(self):
         return self.epoch
 
-    def ground_pixel(self, u, v, timeout=4.0, stamp=None, box=None):
+    def ground_pixel(self, u, v, timeout=4.0, stamp=None, box=None, what=None):
         self.queries.append((round(u), round(v), stamp, box))
         return self.replies.pop(0) if self.replies else {"ok": False, "reason": "snapshot_expired"}
 

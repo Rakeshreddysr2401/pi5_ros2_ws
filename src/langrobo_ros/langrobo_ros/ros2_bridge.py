@@ -9,6 +9,7 @@ LangGraph tools never import from this file directly — they call
 langrobo_core.tools._bridge.get() which returns this object.
 """
 
+import re
 import json
 import os
 import threading
@@ -483,7 +484,8 @@ class ROS2Bridge:
             self._pixel_results[req_id] = data
 
     def ground_pixel(self, u: float, v: float, timeout: float = 4.0,
-                     stamp: tuple | None = None, box: tuple | None = None) -> dict:
+                     stamp: tuple | None = None, box: tuple | None = None,
+                     what: str | None = None) -> dict:
         """Ask the Jetson to turn a COLOR-image pixel into a NAV_FRAME Nav2
         goal (deproject depth → NAV_FRAME → pull back by the approach standoff).
         The Jetson's pixel_to_goal node publishes odom, matching NAV_FRAME.
@@ -498,13 +500,19 @@ class ROS2Bridge:
 
         box: the VLM's (x0, y0, x1, y1) around the object. The Jetson then
         takes the nearest solid slab above the floor inside it instead of the
-        depth at one pixel (which, on a thin object, is often the background)."""
+        depth at one pixel (which, on a thin object, is often the background).
+
+        what: the description the box was found for ("the door"). For big flat
+        things (door, wall, cupboard ...) the Jetson then measures with the
+        LiDAR instead of the camera (pixel_to_goal LIDAR_TARGETS): a dark plain
+        door gives stereo almost nothing (2026-10-03)."""
         import uuid
         req_id = uuid.uuid4().hex[:8]
         msg = self._PointStamped()
         # The box rides in the id string ("<id>;box=..."): the reply's id is <id>.
         msg.header.frame_id = req_id + (
-            ";box=" + ",".join(f"{a:.0f}" for a in box) if box else "")
+            ";box=" + ",".join(f"{a:.0f}" for a in box) if box else "") + (
+            ";what=" + re.sub(r"[;=]", " ", what)[:80] if what else "")
         if stamp:
             msg.header.stamp.sec, msg.header.stamp.nanosec = int(stamp[0]), int(stamp[1])
         msg.point.x = float(u)
