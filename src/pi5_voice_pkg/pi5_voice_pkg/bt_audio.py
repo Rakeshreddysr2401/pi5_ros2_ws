@@ -273,6 +273,18 @@ def set_volume(node_id: int, gain: float) -> tuple[bool, str]:
     return (rc == 0), out.strip()
 
 
+def get_volume(node: int | str) -> tuple[int | None, bool]:
+    """(percent, muted) of a node id or @DEFAULT_AUDIO_SINK@; (None, False) if unreadable."""
+    from .audio_control import parse_volume
+    rc, out = _run(["wpctl", "get-volume", str(node)])
+    return parse_volume(out) if rc == 0 else (None, False)
+
+
+def set_mute(node: int | str, on: bool) -> tuple[bool, str]:
+    rc, out = _run(["wpctl", "set-mute", str(node), "1" if on else "0"])
+    return (rc == 0), out.strip()
+
+
 def set_default_source_volume(gain: float) -> tuple[bool, str]:
     """Set the gain on whichever source is default right now.
 

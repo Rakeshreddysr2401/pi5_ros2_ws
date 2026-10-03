@@ -18,7 +18,16 @@ Now nothing but this process touches bluetoothctl / pactl / wpctl. It:
 * falls back to a wired device (`wired_fallback`) when no Bluetooth audio
   device is reachable, so voice still works with a USB headset plugged in;
 * tells the voice nodes when the audio path is usable on /voice/audio_ready
-  (latched Bool) and what it is on /voice/audio_device (latched JSON).
+  (latched Bool) and what it is on /voice/audio_device (latched JSON);
+* takes the owner's requests on /audio/cmd (JSON, from the brain's tools) and
+  answers on /audio/state (latched JSON, the reply carries the request id):
+      {"id", "op": "volume", "set": 0-100 | "change": +-N}   louder / quieter / "volume 40"
+      {"id", "op": "mute", "on": true|false}
+      {"id", "op": "bt", "action": "list"}                     which speakers do you know?
+      {"id", "op": "bt", "action": "connect", "name": "buds"}  switch to a known device
+      {"id", "op": "bt", "action": "pair", "name": ""}         pair a new one (pairing mode)
+  The volume is remembered per device and put back when it reconnects.
+  docs/voice/ASSISTANT_SCENARIOS.md S5-S7 (owner, 2026-10-04).
 
 stt_node and tts_node open the `pipewire` device and follow /voice/audio_ready;
 they never look at Bluetooth state. Everything here degrades: no bluetoothctl,
@@ -26,6 +35,8 @@ no device in range, pairing refused — it logs and keeps trying (CLAUDE.md #5).
 """
 
 import json
+import pathlib
+import queue
 import threading
 import time
 import traceback
@@ -35,6 +46,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, String
 
+from . import audio_control as ac
 from . import bt_audio
 
 # Late subscribers (a voice node restarted on its own) must see the current
@@ -45,6 +57,11 @@ LATCHED = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
 LOST_AFTER_MISSES = 2
 # Let bluez tear the old SCO link down before asking for a fresh one.
 BOUNCE_SETTLE_S = 1.5
+# Per-device volume, kept across restarts (PipeWire forgets it on a profile
+# switch, and the owner should not have to say "louder" after every reconnect).
+VOLUME_FILE = pathlib.Path.home() / ".local/state/langrobo/audio_volume.json"
+# A device in pairing mode is usually found within this.
+PAIR_SCAN_S = 15.0
 
 
 class AudioDeviceNode(Node):
@@ -80,6 +97,14 @@ class AudioDeviceNode(Node):
 
         self._ready_pub = self.create_publisher(Bool, '/voice/audio_ready', LATCHED)
         self._device_pub = self.create_publisher(String, '/voice/audio_device', LATCHED)
+        self._state_pub = self.create_publisher(String, '/audio/state', LATCHED)
+        # Commands and the health loop both shell out to bluetoothctl/wpctl:
+        # one lock, so a "connect my buds" never races a reconnect.
+        self._lock = threading.RLock()
+        self._cmd_q: queue.Queue = queue.Queue(maxsize=8)
+        self._last_reply: dict = {}
+        self._volumes = self._load_volumes()
+        self.create_subscription(String, '/audio/cmd', self._on_cmd, 10)
 
         self._active: dict | None = None      # the device currently routed
         self._ready = False
@@ -96,13 +121,15 @@ class AudioDeviceNode(Node):
             f'(per device: {self._mic_gains or "none"}), '
             f'wired fallback={self._wired or "none"}')
         threading.Thread(target=self._loop, daemon=True).start()
+        threading.Thread(target=self._cmd_loop, daemon=True).start()
 
     # ── Main loop (own thread: every step here shells out and may block) ──
 
     def _loop(self):
         while rclpy.ok():
             try:
-                self._tick()
+                with self._lock:
+                    self._tick()
             except Exception:
                 self.get_logger().error(f'audio device loop failed\n{traceback.format_exc()}')
             time.sleep(self._poll_s)
@@ -268,6 +295,9 @@ class AudioDeviceNode(Node):
     def _activate(self, routed: dict) -> None:
         self._active = routed
         self._ready = True
+        key = (routed.get('mac') or routed.get('name') or '').upper()
+        if key in self._volumes and routed.get('sink_id') is not None:
+            bt_audio.set_volume(routed['sink_id'], self._volumes[key] / 100)
         self.get_logger().info(
             f"audio ready: {routed['name']} [{routed['kind']}"
             f"{'/' + routed['profile'] if routed['profile'] else ''}] "
@@ -285,6 +315,160 @@ class AudioDeviceNode(Node):
         self._ready_pub.publish(Bool(data=self._ready))
         payload = {'ready': self._ready, **(self._active or {})}
         self._device_pub.publish(String(data=json.dumps(payload)))
+        self._publish_audio_state()
+
+    # ── Owner requests (/audio/cmd -> /audio/state) ───────────────────────
+
+    def _on_cmd(self, msg: String) -> None:
+        try:
+            cmd = json.loads(msg.data)
+            if not isinstance(cmd, dict):
+                raise ValueError('not an object')
+        except ValueError as e:
+            self.get_logger().warning(f'/audio/cmd: not JSON ({e}): {msg.data[:80]!r}')
+            return
+        try:
+            self._cmd_q.put_nowait(cmd)
+        except queue.Full:
+            self._reply(cmd, False, 'busy -- try again in a moment')
+
+    def _cmd_loop(self):
+        while rclpy.ok():
+            cmd = self._cmd_q.get()
+            try:
+                with self._lock:
+                    ok, text = self._handle(cmd)
+            except Exception:
+                self.get_logger().error(f'/audio/cmd failed\n{traceback.format_exc()}')
+                ok, text = False, 'something went wrong changing the audio'
+            self._reply(cmd, ok, text)
+
+    def _handle(self, cmd: dict) -> tuple[bool, str]:
+        op = cmd.get('op')
+        if op in ('volume', 'mute'):
+            return self._volume_cmd(cmd)
+        if op == 'bt':
+            action = cmd.get('action', 'list')
+            if action == 'list':
+                return True, self._bt_list_text()
+            if action == 'connect':
+                return self._bt_connect_cmd(cmd.get('name', ''))
+            if action == 'pair':
+                return self._bt_pair_cmd(cmd.get('name', ''))
+            return False, f'unknown bluetooth action {action!r}'
+        return False, f'unknown op {op!r}'
+
+    def _sink(self):
+        return (self._active or {}).get('sink_id') or '@DEFAULT_AUDIO_SINK@'
+
+    def _volume_cmd(self, cmd: dict) -> tuple[bool, str]:
+        if not self._ready:
+            return False, 'no speaker is connected right now'
+        sink = self._sink()
+        current, muted = bt_audio.get_volume(sink)
+        if cmd.get('op') == 'mute':
+            on = bool(cmd.get('on', True))
+            ok, msg = bt_audio.set_mute(sink, on)
+            return (ok, 'muted' if on else f'unmuted, volume {current}%') if ok else (False, msg)
+        if cmd.get('set') is None and not cmd.get('change'):
+            return True, f"volume is {current}%" + (' (muted)' if muted else '')
+        target = ac.volume_target(current, cmd.get('set'), cmd.get('change'))
+        ok, msg = bt_audio.set_volume(sink, target / 100)
+        if not ok:
+            return False, msg or 'the speaker did not accept the volume'
+        if muted:
+            bt_audio.set_mute(sink, False)            # "louder" on a muted speaker means unmute
+        key = ((self._active or {}).get('mac') or (self._active or {}).get('name') or '').upper()
+        if key:
+            self._volumes[key] = target
+            self._save_volumes()
+        edge = ' -- that is the maximum' if target == ac.MAX_PERCENT and (cmd.get('change') or 0) > 0 \
+            else ' -- that is the minimum' if target == 0 and (cmd.get('change') or 0) < 0 else ''
+        return True, f'volume {target}%{edge}'
+
+    def _audio_devices(self) -> list[dict]:
+        devs = [bt_audio.device_info(d['mac']) | {'name': d['name']}
+                for d in bt_audio.known_devices()]
+        return [d for d in devs if d.get('audio')]
+
+    def _bt_list_text(self) -> str:
+        active = (self._active or {}).get('mac')
+        devs = ac.describe_devices(self._audio_devices(), active)
+        if not devs:
+            return 'no Bluetooth audio devices are paired'
+        parts = [d['name'] + (' (in use)' if d['in_use'] else ' (on)' if d['connected'] else '')
+                 for d in devs]
+        using = (self._active or {}).get('name')
+        return (f'using {using}. ' if using else 'no speaker in use. ') + 'Known: ' + ', '.join(parts)
+
+    def _bt_connect_cmd(self, name: str) -> tuple[bool, str]:
+        devices = self._audio_devices()
+        dev, tied = ac.match_device(name, devices)
+        if dev is None:
+            if tied:
+                return False, 'which one: ' + ' or '.join(d['name'] for d in tied) + '?'
+            known = ', '.join(d['name'] for d in devices) or 'none'
+            return False, f'I do not know a device called {name!r}. Paired: {known}'
+        if self._active and (self._active.get('mac') or '').upper() == dev['mac'].upper():
+            return True, f"already using {dev['name']}"
+        # Prefer it from now on, or the next health tick would switch back.
+        self._preferred = [dev['mac'].upper()] + [m for m in self._preferred if m != dev['mac'].upper()]
+        if not dev.get('connected') and not self._connect(dev):
+            return False, f"could not connect {dev['name']} -- is it switched on and nearby?"
+        routed = self._route_bt(bt_audio.device_info(dev['mac']) | {'name': dev['name']})
+        if not routed:
+            return False, f"{dev['name']} connected but no audio came up yet -- try again"
+        self._activate(routed)
+        mic = 'with its mic' if routed.get('source') else 'speaker only'
+        return True, f"now using {dev['name']} ({mic})"
+
+    def _bt_pair_cmd(self, name: str) -> tuple[bool, str]:
+        before = {d['mac'] for d in bt_audio.known_devices()}
+        found = [d for d in bt_audio.scan(PAIR_SCAN_S) if d['mac'] not in before]
+        found = [d | bt_audio.device_info(d['mac']) for d in found]
+        found = [d for d in found if d.get('audio')]
+        if name:
+            dev, tied = ac.match_device(name, found)
+            found = [dev] if dev else tied
+        if not found:
+            return False, ('no new speaker or headphones found -- put it in pairing mode '
+                           '(usually hold the Bluetooth button until it flashes) and ask again')
+        if len(found) > 1:
+            return False, 'found several: ' + ', '.join(d['name'] for d in found) + ' -- which one?'
+        dev = found[0]
+        ok, msg = bt_audio.bt_pair(dev['mac'])
+        if not ok:
+            return False, f"{dev['name']} refused pairing ({msg})"
+        bt_audio.bt_trust(dev['mac'])
+        ok, text = self._bt_connect_cmd(dev['mac'])
+        return ok, (f"paired {dev['name']}; " + text) if ok else text
+
+    def _reply(self, cmd: dict, ok: bool, text: str) -> None:
+        self._last_reply = {'id': cmd.get('id'), 'op': cmd.get('op'), 'ok': ok, 'msg': text}
+        self.get_logger().info(f"/audio/cmd {cmd.get('op')}: {'ok' if ok else 'refused'} -- {text}")
+        self._publish_audio_state()
+
+    def _publish_audio_state(self) -> None:
+        a = self._active or {}
+        volume, muted = (bt_audio.get_volume(a['sink_id']) if a.get('sink_id') is not None
+                         else (None, False))
+        self._state_pub.publish(String(data=json.dumps({
+            'ready': self._ready, 'device': a.get('name'), 'mac': a.get('mac'),
+            'profile': a.get('profile'), 'volume': volume, 'muted': muted,
+            'last': self._last_reply})))
+
+    def _load_volumes(self) -> dict:
+        try:
+            return {k.upper(): int(v) for k, v in json.loads(VOLUME_FILE.read_text()).items()}
+        except (OSError, ValueError, AttributeError):
+            return {}
+
+    def _save_volumes(self) -> None:
+        try:
+            VOLUME_FILE.parent.mkdir(parents=True, exist_ok=True)
+            VOLUME_FILE.write_text(json.dumps(self._volumes))
+        except OSError as e:
+            self.get_logger().warning(f'could not remember the volume: {e}')
 
 
 def main():
