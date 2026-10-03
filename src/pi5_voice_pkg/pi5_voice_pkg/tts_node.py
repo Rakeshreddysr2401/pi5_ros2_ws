@@ -42,6 +42,16 @@ CHUNK_FRAMES_S = 0.1    # playback granularity for fast stop, in seconds of audi
 AUDIO_READY_TIMEOUT_S = 15.0
 
 
+def heard_chime(sr: int = 24000) -> np.ndarray:
+    """Two soft rising notes (E6 -> A6), ~0.2 s, gentle fades, -12 dBFS."""
+    out = []
+    for f, dur in ((1318.5, 0.08), (1760.0, 0.11)):
+        t = np.arange(int(sr * dur)) / sr
+        env = np.minimum(1.0, np.minimum(t / 0.008, (dur - t) / 0.03))
+        out.append(0.25 * np.sin(2 * np.pi * f * t) * env)
+    return np.concatenate(out).astype(np.float32)
+
+
 class TTSNode(Node):
     def __init__(self):
         super().__init__('pi5_tts_node')
@@ -185,6 +195,10 @@ class TTSNode(Node):
         # Pre-rendered acknowledgement. Built off the spin thread: a cloud
         # provider takes seconds, and the node must come up regardless.
         self._cues: dict = {}
+        # "heard you": a short two-note chime the moment a sentence is accepted,
+        # so the owner knows it is being worked on (owner, 2026-10-04: "I can't
+        # tell whether it processed or not"). Made here, no provider needed.
+        self._cues['heard'] = (heard_chime(24000), 24000)
         self._cue_lock = threading.Lock()
         if bool(self.get_parameter('cue_enabled').value):
             threading.Thread(target=self._render_cues, daemon=True).start()
@@ -345,6 +359,14 @@ class TTSNode(Node):
             # A sentence arriving now belongs to a NEW utterance.
             self._interrupt.clear()
             gen = self._generation
+            if hasattr(self._provider, 'stream') and not self._forced_fallback:
+                try:
+                    if self._stream_sentence(text, gen):
+                        continue          # played chunk by chunk
+                except Exception:
+                    self.get_logger().error(
+                        f'unhandled error streaming {text!r}\n{traceback.format_exc()}')
+                    continue
             try:
                 audio = self._synthesize(text)
             except Exception:
@@ -356,6 +378,45 @@ class TTSNode(Node):
             if audio is None or gen != self._generation:
                 continue                      # failed, or abandoned mid-synthesis
             self._audio_q.put((gen, audio[0], audio[1]))
+
+    def _stream_sentence(self, text: str, gen: int) -> bool:
+        """Stream one sentence into the player, chunk by chunk (sarvam_stream:
+        first sound ~0.8 s after the sentence instead of ~1.8 s). False when
+        the provider failed before any audio -- the caller then speaks it
+        through the fallback, as it does for every other provider."""
+        t0 = time.monotonic()
+        first_ms, frames, sr = None, 0, 24000
+        try:
+            for samples, sr in self._provider.stream(text):
+                if gen != self._generation:
+                    # stopped mid-sentence: drop the socket so the rest of this
+                    # sentence's audio cannot leak into the next one
+                    if hasattr(self._provider, 'reset'):
+                        self._provider.reset()
+                    return True
+                if first_ms is None:
+                    first_ms = int((time.monotonic() - t0) * 1000)
+                frames += len(samples)
+                self._audio_q.put((gen, samples, sr))
+        except ProviderUnavailable as e:
+            if first_ms is not None:
+                self.get_logger().warning(f'{self._provider.name} stopped mid-sentence ({e})')
+                return True
+            self.get_logger().warning(f'{self._provider.name} failed ({e}); falling back to local')
+            self._fallback_reason = str(e)[:200]
+            self._forced_fallback = True
+            return False
+        total_ms = int((time.monotonic() - t0) * 1000)
+        audio_ms = int(frames / sr * 1000) if sr else 0
+        try:
+            self._tts_meta_pub.publish(String(data=json.dumps({
+                'provider': self._provider.name, 'configured_provider': self._provider.name,
+                'fell_back': False, 'ok': frames > 0, 'latency_ms': first_ms, 'total_ms': total_ms,
+                'audio_ms': audio_ms, 'rtf': round(total_ms / audio_ms, 2) if audio_ms else None,
+                'chars': len(text), 'streamed': True, 'fallback_reason': ''})))
+        except Exception:
+            pass
+        return True
 
     # ── Playback thread ───────────────────────────────────────────────────
 

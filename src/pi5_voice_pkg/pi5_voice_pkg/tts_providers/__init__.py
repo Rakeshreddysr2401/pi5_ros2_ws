@@ -5,6 +5,7 @@ from .local_kokoro import LocalKokoroProvider
 from .local_piper import LocalPiperProvider
 from .sarvam import SarvamTTSProvider
 from .sarvam_translate import SarvamTranslateTTSProvider
+from .sarvam_stream import SarvamStreamProvider
 from .soniox import SonioxTTSProvider
 
 REGISTRY = {
@@ -12,6 +13,7 @@ REGISTRY = {
     'piper': LocalPiperProvider,      # fast local (RTF ~0.25 vs Kokoro ~2)
     'sarvam': SarvamTTSProvider,
     'sarvam_translate': SarvamTranslateTTSProvider,  # English text -> Telugu speech
+    'sarvam_stream': SarvamStreamProvider,           # the same, streamed (first sound ~0.8 s)
     'soniox': SonioxTTSProvider,
 }
 

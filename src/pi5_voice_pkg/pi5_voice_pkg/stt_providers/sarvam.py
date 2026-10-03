@@ -19,6 +19,33 @@ ENDPOINT = 'https://api.sarvam.ai/speech-to-text'
 TIMEOUT_S = 8.0
 
 
+
+# One kept-alive HTTPS connection per provider, kept warm: a fresh TLS
+# handshake to api.sarvam.ai cost ~0.11 s per call on the Pi 5 (translate:
+# 0.72 s -> 0.61 s, 2026-10-04), and the server drops idle connections, so the
+# first sentence after a quiet minute paid it again. A HEAD every 45 s is free
+# (no model runs) and keeps the socket open.
+KEEP_WARM_S = 45.0
+
+
+def warm_session(api_key: str):
+    """A requests.Session with the key set and a daemon thread keeping it warm."""
+    import threading
+    import time
+    s = requests.Session()
+    s.headers['api-subscription-key'] = api_key
+
+    def keep():
+        while True:
+            time.sleep(KEEP_WARM_S)
+            try:
+                s.head('https://api.sarvam.ai/', timeout=5)
+            except requests.RequestException:
+                pass
+
+    threading.Thread(target=keep, daemon=True, name='sarvam_keepwarm').start()
+    return s
+
 class SarvamProvider(STTProvider):
     name = "sarvam"
 
@@ -34,13 +61,13 @@ class SarvamProvider(STTProvider):
         self._api_key = api_key
         self._language = source_language
         self._model = model
+        self._http = warm_session(api_key)
 
     def transcribe(self, pcm: np.ndarray, sample_rate: int) -> str:
         wav = pcm_to_wav_bytes(pcm, sample_rate)
         try:
-            resp = requests.post(
+            resp = self._http.post(
                 ENDPOINT,
-                headers={'api-subscription-key': self._api_key},
                 files={'file': ('utterance.wav', wav, 'audio/wav')},
                 data={'model': self._model, 'mode': 'translate', 'language_code': self._language},
                 timeout=TIMEOUT_S,

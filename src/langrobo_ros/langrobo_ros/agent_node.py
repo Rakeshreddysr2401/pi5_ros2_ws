@@ -859,6 +859,10 @@ class AgentNode(Node):
             stamp = pose_stamp.turn_stamp(self._bridge.get_current_pose())
             if stamp:
                 turn_text = f"{stamp} {turn_text}"
+            # ...and the clock (utils/clock_stamp.py): no tool round trip for
+            # "what time is it", and no stale time repeated from history.
+            from langrobo_core.utils.clock_stamp import turn_clock
+            turn_text = f"{turn_clock()} {turn_text}"
 
             turn_msg = None
             if telegram:

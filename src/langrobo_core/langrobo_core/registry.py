@@ -55,7 +55,8 @@ from .tools import CHAT_TOOLS, LOCAL_AGENT_TOOLS, NAVIGATE_TOOLS
 def _today_line() -> str:
     today = datetime.now().strftime("%A %B %d, %Y").replace(" 0", " ")
     return (f"\n== TODAY ==\nToday's date: {today}."
-            " For the clock time, call get_current_time.\n")
+            " The time now is stamped on the user's message as [Time now: ...] -- use it;"
+            " call get_current_time only when a message has no stamp.\n")
 
 
 # ── The spec ─────────────────────────────────────────────────────────────────

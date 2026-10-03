@@ -57,6 +57,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, String
 
 from .addressing import strip_alias, strip_leading_alias
+from . import relevance
 from .vad_gate import GateConfig, evaluate as gate_utterance
 from .wake_cue import DEFAULT_DELAY_S, CueGate
 from .stt_providers import REGISTRY, ProviderUnavailable
@@ -155,6 +156,15 @@ class STTNode(Node):
         # re-opens the window, so without a cap background talk chained into an
         # endless conversation (2026-10-04). 0 = no follow-ups at all.
         self.declare_parameter('max_follow_ups', 2)
+        # How a sentence counts as addressed: 'name' (the name in the text,
+        # follow-up window) or 'llm' (no wake word: the name still counts at
+        # once; anything else is put to the brain's LLM as a yes/no --
+        # relevance.py, 17/18 right on real room audio, ~0.7 s).
+        self.declare_parameter('addressing_mode', 'name')
+        self.declare_parameter('relevance_url', 'http://singireddys-mac-mini.local:8080/v1/chat/completions')
+        self.declare_parameter('relevance_timeout_s', 3.0)
+        # Play the 'heard' chime the moment a sentence is accepted.
+        self.declare_parameter('heard_cue', True)
         # transcript_alias mode only: if False, forward EVERY transcript to the brain
         # (no name required in the text — the agent prompt knows its own name and judges
         # relevance). Ignored in acoustic mode, where the wake word already gates.
@@ -224,6 +234,14 @@ class STTNode(Node):
         self.get_logger().info(f'stt_provider = {self._provider.name}')
 
         self._input_pub = self.create_publisher(String, '/voice/user_input', 10)
+        self._addressing = str(self.get_parameter('addressing_mode').value or 'name')
+        self._relevance_url = str(self.get_parameter('relevance_url').value)
+        self._relevance_timeout = float(self.get_parameter('relevance_timeout_s').value)
+        self._heard_cue = bool(self.get_parameter('heard_cue').value)
+        # The robot's last words, for the relevance check ("Five minutes." after
+        # "For how long?"). Assembled from /voice/robot_speech chunks.
+        self._robot_words, self._robot_last, self._robot_last_at = '', '', 0.0
+        self.create_subscription(String, '/voice/robot_speech', self._on_robot_speech, 20)
         # Additive topic: tts_node plays a clip it rendered once at startup.
         # The Jetson's voice stack ignores it, like /voice/*_meta.
         self._cue_pub = self.create_publisher(String, '/voice/cue', 10)
@@ -656,6 +674,21 @@ class STTNode(Node):
         stripped = strip_alias(text, self._aliases)
         if stripped is None and self._leading_aliases:
             stripped = strip_leading_alias(text, self._leading_aliases)
+
+        if self._addressing == 'llm':
+            if stripped is not None:
+                self._accept(stripped or text, 'name')
+                return
+            t0 = time.monotonic()
+            last = self._robot_last if time.monotonic() - self._robot_last_at < 30.0 else ''
+            verdict = relevance.is_for_robot(text, last, self._relevance_url, self._relevance_timeout)
+            ms = int((time.monotonic() - t0) * 1000)
+            if verdict:
+                self._accept(text, f'llm {ms} ms')
+            else:
+                self.get_logger().info(
+                    f"not for me ({'llm' if verdict is False else 'llm unreachable'} {ms} ms): {text!r}")
+            return
         if stripped is not None:
             self._follow_ups = 0
             # Bare "Mitra?" is a real thing people say to get attention; forward
@@ -674,6 +707,21 @@ class STTNode(Node):
             return
 
         self.get_logger().info(f'not addressed to me — ignored: {text!r}')
+
+    def _accept(self, text: str, why: str) -> None:
+        """Addressed: chime at once (the owner hears it was heard), then send it on."""
+        if self._heard_cue:
+            self._cue_pub.publish(String(data='heard'))
+        self.get_logger().info(f'for me ({why})')
+        self._forward(text)
+
+    def _on_robot_speech(self, msg: String) -> None:
+        if msg.data == '<|eou|>':                  # SPEECH_EOU, end of one reply
+            if self._robot_words.strip():
+                self._robot_last, self._robot_last_at = self._robot_words.strip()[-300:], time.monotonic()
+            self._robot_words = ''
+        else:
+            self._robot_words += ' ' + msg.data
 
     def _forward(self, text: str) -> None:
         """Send a turn to the brain and hold the follow-up window open."""

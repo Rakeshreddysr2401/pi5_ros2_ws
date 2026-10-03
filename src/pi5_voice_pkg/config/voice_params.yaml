@@ -46,7 +46,9 @@ pi5_tts_node:
     # RTF ~2 on this Pi (5.9 s for 2.9 s); it stays loaded as the fallback. Was sarvam_translate.
     # DEFAULT (owner, 2026-10-04): English replies spoken in Telugu through Sarvam.
     # Sarvam down -> tts_fallback speaks them in English. Fully local: tts_provider piper.
-    tts_provider: sarvam_translate
+    # sarvam_stream: the same Telugu, streamed -- first sound ~0.8 s after a sentence
+    # instead of ~1.8 s (translate on a kept-warm session + bulbul over one WebSocket).
+    tts_provider: sarvam_stream
     tts_fallback: piper
     tts_piper_model: /home/rakhi24/ros2_ws/src/langrobo_ros/models/piper/en_US-lessac-medium.onnx
     tts_language: en
@@ -107,7 +109,11 @@ pi5_stt_node:
     # Sarvam TRANSLATES the name: "మిత్ర, ..." comes back as "Friend, ..." (mitra = friend).
     # These count only at the start of a sentence ("Friend, play a song" / "Hey friend, ...").
     wake_leading_aliases: ["friend", "friends"]
-    require_wake: true       # answer only when named (open mode answered the TV)
+    require_wake: true       # (addressing_mode name only)
+    # NO WAKE WORD (owner, 2026-10-04): the name still works instantly; any other
+    # sentence is judged by the brain's LLM -- for me, or TV / people talking?
+    addressing_mode: llm
+    heard_cue: true          # a short chime the moment a sentence is accepted
     # Speak the acknowledgement only if you PAUSE after the name. Saying
     # "Mitra, go to the kitchen" in one breath skips it rather than talking
     # over the command (see wake_cue.py).
