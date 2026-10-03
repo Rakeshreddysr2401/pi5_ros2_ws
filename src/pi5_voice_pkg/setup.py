@@ -35,6 +35,7 @@ setup(
             'tts_node = pi5_voice_pkg.tts_node:main',
             'stt_node = pi5_voice_pkg.stt_node:main',
             'audio_device_node = pi5_voice_pkg.audio_device_node:main',
+            'media_node = pi5_voice_pkg.media_node:main',
         ],
     },
 )

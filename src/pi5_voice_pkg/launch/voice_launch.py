@@ -19,4 +19,8 @@ def generate_launch_description():
              parameters=[params], output='screen'),
         Node(package='pi5_voice_pkg', executable='stt_node', name='pi5_stt_node',
              parameters=[params], output='screen'),
+        # Music (docs/voice/ASSISTANT_SCENARIOS.md S9-S13): plays to the default sink the
+        # audio owner picked, ducks under the robot's voice, stops on the stop word.
+        Node(package='pi5_voice_pkg', executable='media_node', name='pi5_media',
+             output='screen'),
     ])
