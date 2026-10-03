@@ -401,6 +401,7 @@ class TTSNode(Node):
             samples, sr = self._provider.synthesize(text)
         except ProviderUnavailable as e:
             self.get_logger().warning(f'{self._provider.name} failed ({e}); falling back to local')
+            self._fallback_reason = str(e)[:200]     # on tts_meta: agent_node says why, once
             fell_back = True
             self._forced_fallback = True
             provider = self._fallback.name
@@ -438,6 +439,7 @@ class TTSNode(Node):
             # >1 means synthesis is slower than real time — the speaker waits.
             'rtf': round(latency_ms / audio_ms, 2) if audio_ms else None,
             'chars': len(text),
+            'fallback_reason': (getattr(self, '_fallback_reason', '') if fell_back else ''),
         }
         try:
             self._tts_meta_pub.publish(String(data=json.dumps(meta)))

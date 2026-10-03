@@ -148,6 +148,10 @@ class STTNode(Node):
         self.declare_parameter('wake_verifier_path', '')
         self.declare_parameter('wake_verifier_threshold', 0.3)
         self.declare_parameter('follow_up_window_s', 9.0)  # stay awake this long after each command
+        # ...for at most this many turns in a row without the name. Each reply
+        # re-opens the window, so without a cap background talk chained into an
+        # endless conversation (2026-10-04). 0 = no follow-ups at all.
+        self.declare_parameter('max_follow_ups', 2)
         # transcript_alias mode only: if False, forward EVERY transcript to the brain
         # (no name required in the text — the agent prompt knows its own name and judges
         # relevance). Ignored in acoustic mode, where the wake word already gates.
@@ -263,6 +267,8 @@ class STTNode(Node):
         self._cue = CueGate(float(self.get_parameter('wake_cue_delay_s').value),
                             bool(self.get_parameter('wake_cue').value))
         self._follow_up_s = float(self.get_parameter('follow_up_window_s').value)
+        self._max_follow_ups = int(self.get_parameter('max_follow_ups').value)
+        self._follow_ups = 0           # unnamed turns since the last named one
         if self._acoustic:
             self.get_logger().info(
                 f'wake_detector = {self._wake.name} ({self._wake_label!r}); '
@@ -584,6 +590,7 @@ class STTNode(Node):
             'rtf': round(latency_ms / audio_ms, 2) if audio_ms else None,
             'chars': len(text),
             'empty': not text,
+            'fallback_reason': (getattr(self, '_fallback_reason', '') if fell_back else ''),
         }
         try:
             self._stt_meta_pub.publish(String(data=json.dumps(meta)))
@@ -613,6 +620,7 @@ class STTNode(Node):
             text = self._provider.transcribe(pcm, SAMPLE_RATE)
         except ProviderUnavailable as e:
             self.get_logger().warning(f'{self._provider.name} failed ({e}); falling back to local')
+            self._fallback_reason = str(e)[:200]     # on stt_meta: agent_node says why, once
             fell_back = True
             text = self._fallback.transcribe(pcm, SAMPLE_RATE)
             provider = self._fallback.name
@@ -643,12 +651,18 @@ class STTNode(Node):
         # dropped, which made every exchange a one-shot command.
         stripped = strip_alias(text, self._aliases)
         if stripped is not None:
+            self._follow_ups = 0
             # Bare "Mitra?" is a real thing people say to get attention; forward
             # the name itself rather than dropping it as an empty remainder.
             self._forward(stripped or text)
             return
 
+        if time.monotonic() < self._awake_until and self._follow_ups >= self._max_follow_ups:
+            self.get_logger().info(f'follow-up limit ({self._max_follow_ups}) -- say the name again: {text!r}')
+            self._awake_until = 0.0
+            return
         if time.monotonic() < self._awake_until:
+            self._follow_ups += 1
             self.get_logger().info(f'follow-up: {text!r}')
             self._forward(text)
             return

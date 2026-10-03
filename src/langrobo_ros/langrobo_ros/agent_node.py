@@ -198,6 +198,9 @@ class AgentNode(Node):
         # Timers, alarms, reminders (langrobo_core.services.alarms): this process
         # rings them. Studio's tools may add items to the same file, never ring.
         self._stop_heard_at = -1e9
+        # A cloud voice that falls back is announced once (services/voice_health.py).
+        from langrobo_core.services.voice_health import FallbackNotices
+        self._fallback_notices = FallbackNotices()
         threading.Thread(target=self._alarm_loop, daemon=True, name="alarms").start()
 
         # ── Build graph ───────────────────────────────────────────────────
@@ -342,6 +345,25 @@ class AgentNode(Node):
         except Exception as e:
             out["objects_remembered"] = f"error: {e}"
         return out
+
+    # ── Degraded voice: say so ────────────────────────────────────────────
+
+    def _fallback_notice(self, leg: str, meta: dict) -> None:
+        """Sarvam (or any cloud voice) fell back to the local English one:
+        tell the owner, once per 6 h, after any reply in progress."""
+        text = self._fallback_notices.check(leg, meta, time.time())
+        if not text:
+            return
+        self.get_logger().warning(f"voice degraded ({leg}): {meta.get('fallback_reason', '')[:120]}")
+
+        def speak():
+            end = time.monotonic() + 30.0
+            while self._turn_active and time.monotonic() < end:
+                time.sleep(0.5)
+            time.sleep(1.0)
+            self._bridge.publish_speech(text)
+
+        threading.Thread(target=speak, daemon=True, name="fallback_notice").start()
 
     # ── Timers, alarms, reminders ─────────────────────────────────────────
 
@@ -535,6 +557,7 @@ class AgentNode(Node):
         """
         try:
             self._stt_meta = (time.time(), json.loads(msg.data))
+            self._fallback_notice("stt", self._stt_meta[1])
         except Exception:
             self.get_logger().debug("bad /voice/stt_meta payload")
 
@@ -552,6 +575,7 @@ class AgentNode(Node):
         except Exception:
             self.get_logger().debug("bad /voice/tts_meta payload")
             return
+        self._fallback_notice("tts", meta)
         trace = self._trace_for_tts
         with self._trace_span(
                 f"tts:{meta.get('provider', 'unknown')}",

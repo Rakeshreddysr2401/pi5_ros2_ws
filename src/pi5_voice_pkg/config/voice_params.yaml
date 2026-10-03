@@ -100,6 +100,7 @@ pi5_stt_node:
     wake_threshold: 0.45
     wake_verifier_path: ""                  # optional personal verifier: /home/rakhi24/ros2_ws/src/langrobo_ros/models/wake/mitra_verifier.pkl
     follow_up_window_s: 9.0
+    max_follow_ups: 2        # then the name again -- background talk chained forever without it
     # The name in the TEXT opens a 9 s follow-up window (no acoustic model: not trained
     # well enough, owner 2026-10-03). Spellings Whisper produced for it on the bench.
     wake_aliases: ["mitra", "hey mitra", "mithra", "mittra", "metra"]
