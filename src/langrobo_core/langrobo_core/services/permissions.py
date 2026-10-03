@@ -18,10 +18,11 @@ CAP_CHAT = "chat"      # converse, ask questions
 CAP_RELAY = "relay"    # send/relay messages to household members
 CAP_PHOTO = "photo"    # receive camera photos (it's a camera inside the home)
 CAP_MOVE = "move"      # drive the robot
+CAP_MEDIA = "media"    # volume, Bluetooth device, music (tools/audio.py)
 
 ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
-    "owner":  frozenset({CAP_CHAT, CAP_RELAY, CAP_PHOTO, CAP_MOVE}),
-    "family": frozenset({CAP_CHAT, CAP_RELAY}),
+    "owner":  frozenset({CAP_CHAT, CAP_RELAY, CAP_PHOTO, CAP_MOVE, CAP_MEDIA}),
+    "family": frozenset({CAP_CHAT, CAP_RELAY, CAP_MEDIA}),
     "guest":  frozenset({CAP_CHAT}),
 }
 

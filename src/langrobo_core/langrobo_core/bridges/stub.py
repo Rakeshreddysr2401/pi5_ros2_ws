@@ -102,6 +102,18 @@ class StubBridge:
         logger.info("[STUB] ground_pixel(%.0f, %.0f) -> no_reply_from_jetson", u, v)
         return {"ok": False, "reason": "no_reply_from_jetson"}
 
+    # ── Audio: volume, Bluetooth, music ───────────────────────────────────
+
+    def audio_request(self, cmd: dict, timeout: float = 10.0) -> dict:
+        """No speaker here: the same shape the real bridge returns when the
+        voice side is silent, so the tool says so instead of raising."""
+        logger.info("[STUB] audio_request(%s) -> no reply", cmd.get("op"))
+        return {}
+
+    def music_request(self, cmd: dict, timeout: float = 25.0) -> dict:
+        logger.info("[STUB] music_request(%s) -> no reply", cmd.get("op"))
+        return {}
+
     # ── Camera pan/tilt ───────────────────────────────────────────────────
 
     def set_pan_tilt(self, pan_deg: float, tilt_deg: float) -> None:

@@ -198,6 +198,17 @@ class ROS2Bridge:
         # frame is taken for the VLM, so the later pixel_query can be grounded
         # at the photo's instant (pixel_to_goal.py AT THE MOMENT OF THE PHOTO).
         self._pixel_snapshot_pub = node.create_publisher(PointStamped, "/vision/pixel_snapshot", 10)
+        # Volume / Bluetooth (audio_device_node) and music (media_node), both on
+        # the Pi 5's voice side. Requests carry an id; the latched state topics
+        # echo it in "last" -- audio_request()/music_request() wait for it.
+        from rclpy.qos import DurabilityPolicy as _Dur, QoSProfile as _QoS, ReliabilityPolicy as _Rel
+        _latched = _QoS(depth=1, durability=_Dur.TRANSIENT_LOCAL, reliability=_Rel.RELIABLE)
+        self._audio_cmd_pub = node.create_publisher(String, "/audio/cmd", 10)
+        self._music_cmd_pub = node.create_publisher(String, "/audio/music_cmd", 10)
+        self._audio_replies: dict[str, dict] = {}
+        self._audio_lock = threading.Lock()
+        node.create_subscription(String, "/audio/state", self._on_audio_state, _latched)
+        node.create_subscription(String, "/audio/music_state", self._on_audio_state, _latched)
 
         # ── Exact motion on the Jetson (rover repo phase3/) ──────────────────
         # goal_exec: turns and short straight moves closed on the fused pose
@@ -525,6 +536,42 @@ class ROS2Bridge:
                     return self._pixel_results.pop(req_id)
             time.sleep(0.05)
         return {"ok": False, "reason": "no_reply_from_jetson"}
+
+    # ── Audio: volume, Bluetooth, music (pi5_voice_pkg) ───────────────────
+
+    def _on_audio_state(self, msg) -> None:
+        try:
+            data = json.loads(msg.data)
+        except ValueError:
+            return
+        last = data.get("last") or {}
+        if last.get("id"):
+            with self._audio_lock:
+                while len(self._audio_replies) >= 16:
+                    self._audio_replies.pop(next(iter(self._audio_replies)))
+                self._audio_replies[last["id"]] = last
+
+    def _audio_round_trip(self, pub, cmd: dict, timeout: float) -> dict:
+        import uuid
+        req_id = uuid.uuid4().hex[:8]
+        pub.publish(String(data=json.dumps({**cmd, "id": req_id})))
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            with self._audio_lock:
+                if req_id in self._audio_replies:
+                    return self._audio_replies.pop(req_id)
+            time.sleep(0.05)
+        return {}
+
+    def audio_request(self, cmd: dict, timeout: float = 10.0) -> dict:
+        """Volume / mute / Bluetooth request to audio_device_node (/audio/cmd).
+        Returns its reply {ok, msg, ...}, or {} when nothing answered."""
+        return self._audio_round_trip(self._audio_cmd_pub, cmd, timeout)
+
+    def music_request(self, cmd: dict, timeout: float = 25.0) -> dict:
+        """play / pause / resume / next / stop / status to media_node
+        (/audio/music_cmd). Returns its reply, or {} when nothing answered."""
+        return self._audio_round_trip(self._music_cmd_pub, cmd, timeout)
 
     # ── Timing events (/diag/timing) ──────────────────────────────────────
 
