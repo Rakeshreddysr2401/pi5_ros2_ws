@@ -19,6 +19,7 @@ from .movement import (PAN_TILT_ENABLED, move_robot, navigate_to_pose,
                        point_camera, save_location)
 from .system import get_current_time, get_robot_status
 from .audio import AUDIO_TOOLS
+from .reminders import REMINDER_TOOLS
 from .handover import handover
 from .telegram import TELEGRAM_TOOLS, send_telegram_photo
 from .web import WEB_TOOLS
@@ -38,8 +39,9 @@ HEAD_TOOLS = [point_camera] if PAN_TILT_ENABLED else []
 # ask_photos: "where did you see my bag?" answered here, from the photo log,
 # with no handover (tools/photo_recall.py).
 # AUDIO_TOOLS: volume, Bluetooth device, music (tools/audio.py, owner 2026-10-04).
+# REMINDER_TOOLS: timers, alarms, reminders -- agent_node rings them (tools/reminders.py).
 CHAT_TOOLS = ([get_current_time, get_robot_status, ask_photos, handover] + WEB_TOOLS
-              + TELEGRAM_TOOLS + AUDIO_TOOLS)
+              + TELEGRAM_TOOLS + AUDIO_TOOLS + REMINDER_TOOLS)
 
 # local_agent — the only multimodal agent. look() puts the current camera
 # frame into the conversation as an image; keep_images in its AgentSpec is

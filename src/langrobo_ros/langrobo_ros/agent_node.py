@@ -195,6 +195,10 @@ class AgentNode(Node):
         # Teleop flipped to MANUAL mid-move = a person taking control: stop
         # whatever the brain is driving, as a new utterance does.
         threading.Thread(target=self._watch_manual, daemon=True, name="manual_watch").start()
+        # Timers, alarms, reminders (langrobo_core.services.alarms): this process
+        # rings them. Studio's tools may add items to the same file, never ring.
+        self._stop_heard_at = -1e9
+        threading.Thread(target=self._alarm_loop, daemon=True, name="alarms").start()
 
         # ── Build graph ───────────────────────────────────────────────────
         self._graph   = build_graph()
@@ -338,6 +342,37 @@ class AgentNode(Node):
         except Exception as e:
             out["objects_remembered"] = f"error: {e}"
         return out
+
+    # ── Timers, alarms, reminders ─────────────────────────────────────────
+
+    ALARM_RINGS = {"timer": 2, "alarm": 2, "reminder": 1}
+    ALARM_REPEAT_S = 10.0       # between the two rings; a "stop" in between ends it
+    ALARM_WAIT_TURN_S = 30.0    # let a reply in progress finish first, at most this long
+
+    def _alarm_loop(self) -> None:
+        """Speak what is due, once a second. Never raises: a broken alarms
+        file costs a log line, not the brain (CLAUDE.md #5)."""
+        from langrobo_core.services import alarms
+        while rclpy.ok():
+            time.sleep(1.0)
+            try:
+                due = alarms.pop_due()
+            except Exception as e:
+                self.get_logger().warning(f"alarms: could not read the list ({e})")
+                continue
+            for item in due:
+                end = time.monotonic() + self.ALARM_WAIT_TURN_S
+                while self._turn_active and time.monotonic() < end:
+                    time.sleep(0.5)
+                text = alarms.announcement(item)
+                self.get_logger().info(f"ringing {item['kind']} {item.get('label')!r}: {text}")
+                started = time.monotonic()
+                for n in range(self.ALARM_RINGS.get(item["kind"], 1)):
+                    if n:
+                        time.sleep(self.ALARM_REPEAT_S)
+                        if self._stop_heard_at > started:
+                            break                       # "stop" said: no second ring
+                    self._bridge.publish_speech(text)
 
     # ── Startup readiness check ───────────────────────────────────────────
 
@@ -483,6 +518,7 @@ class AgentNode(Node):
             # saying "stop", so neither may sweep the wheels — the new
             # utterance does its own motion stop on arrival.
             return
+        self._stop_heard_at = time.monotonic()      # silences a ringing timer/alarm too
         self.get_logger().info(f'Stop keyword ("{msg.data}") — cancelling motion')
         self._bridge.cancel_navigation()
         self._bridge.request_motion_stop()
