@@ -40,8 +40,8 @@ _POLL_TIMEOUT_S = 50        # getUpdates long-poll window
 _BACKOFF_MAX_S = 60
 _RATE_LIMIT_N = 10          # max messages per sender…
 _RATE_LIMIT_WINDOW_S = 60   # …per this window (protects the single turn queue)
-_DEFAULT_OFFSET_PATH = "~/.langrobo/telegram_offset"
-_DEFAULT_DEFERRED_PATH = "~/.langrobo/telegram_deferred.json"
+_DEFAULT_OFFSET_NAME = "telegram_offset"            # in config.state_path()
+_DEFAULT_DEFERRED_NAME = "telegram_deferred.json"
 
 
 _PHOTO_MAX_BYTES = 2_000_000   # inbound photo cap — it enters the LLM context
@@ -62,7 +62,7 @@ class TelegramService:
     """Thin, thread-safe wrapper over the Bot API. Safe to construct always."""
 
     def __init__(self, cfg: TelegramConfig, transport=None,
-                 offset_path: str = _DEFAULT_OFFSET_PATH):
+                 offset_path: str | None = None):
         self._cfg = cfg
         self._transport = transport      # tests inject httpx.MockTransport
         self._client = None              # lazy — created on first send
@@ -71,8 +71,9 @@ class TelegramService:
         self._last_error: str | None = None
         self._last_network_error = False
         # Inbound (start_polling)
-        self._offset_path = os.path.expanduser(offset_path)
-        self._deferred_path = os.path.expanduser(_DEFAULT_DEFERRED_PATH)
+        from .config import state_path
+        self._offset_path = os.path.expanduser(offset_path or state_path(_DEFAULT_OFFSET_NAME))
+        self._deferred_path = state_path(_DEFAULT_DEFERRED_NAME)
         self._stop = threading.Event()
         self._poll_thread: threading.Thread | None = None
         self._last_update_ts: float | None = None

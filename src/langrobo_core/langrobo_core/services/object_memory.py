@@ -54,8 +54,9 @@ _COLOURS = {"red", "orange", "yellow", "green", "blue", "purple", "violet", "pin
 
 
 def path() -> str:
+    from .config import state_path
     return os.path.expanduser(os.environ.get("LANGROBO_OBJECT_MEMORY",
-                                             "~/.langrobo/object_memory.json"))
+                                             state_path("object_memory.json")))
 
 
 # Where-it-is phrases are context, not the object: "the white rectangular box

@@ -77,7 +77,8 @@ class ROS2Bridge:
         # Locations saved at runtime (save_location tool) persist across
         # restarts and shadow config defaults on name collision -- but ONLY
         # once their stamped epoch matches the live one; see above.
-        self._locations_file = os.path.expanduser("~/.langrobo/locations.json")
+        from langrobo_core.services.config import state_path   # LANGROBO_STATE_DIR (the twin's own)
+        self._locations_file = state_path("locations.json")
         self._saved_locations: dict = {}   # {name: (x, y, yaw_deg, origin_epoch)}
         try:
             with open(self._locations_file) as f:
