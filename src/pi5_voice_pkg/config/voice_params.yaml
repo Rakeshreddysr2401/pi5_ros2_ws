@@ -42,7 +42,7 @@ pi5_tts_node:
     # local | sarvam | sarvam_translate | soniox. 'sarvam_translate' takes
     # English reply text and SPEAKS it in Telugu (translate -> TTS); see below.
     # Default = sarvam_translate so the brain's English replies are heard in Telugu.
-    tts_provider: sarvam_translate
+    tts_provider: local        # 2026-10-03 (owner): fully local voice -- Kokoro. Was sarvam_translate (cloud, en -> te)
     tts_language: en
     tts_sarvam_voice: ritu     # bulbul:v3 speaker (used by sarvam + sarvam_translate)
     tts_soniox_voice: Adrian
@@ -58,12 +58,12 @@ pi5_tts_node:
     # step), cue_language is the language of the text below. Leave both empty
     # to use tts_provider — but note sarvam_translate would TRANSLATE this,
     # and "chepandi boss" came back as చెపండి (misspelt) when we tried.
-    cue_text: "చెప్పండి బాస్"
+    cue_text: "Yes boss"            # Kokoro speaks English only; was "చెప్పండి బాస్" via sarvam
     # Spoken if a turn takes unusually long (cold cache, LLM unreachable) so
     # the robot never just goes quiet. Published by agent_node as cue "wait".
-    cue_wait_text: "ఒక నిమిషం బాస్"
-    cue_provider: sarvam
-    cue_language: te
+    cue_wait_text: "One moment boss"  # was "ఒక నిమిషం బాస్" via sarvam
+    cue_provider: local
+    cue_language: en
 
 pi5_stt_node:
   ros__parameters:
@@ -108,6 +108,6 @@ pi5_stt_node:
     # ⚠️ COST/PRIVACY: with the wake word OFF (wake_detector: transcript_alias) this
     # sends EVERY ambient utterance to Sarvam. Re-enable the wake word to gate it,
     # or set stt_provider: local for free offline transcription.
-    stt_provider: sarvam
+    stt_provider: local        # 2026-10-03 (owner): faster-whisper base, offline. Was sarvam (cloud, te -> en)
     stt_source_language: te   # Telugu
     stt_target_language: en
