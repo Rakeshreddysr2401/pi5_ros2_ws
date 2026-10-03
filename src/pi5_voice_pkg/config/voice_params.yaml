@@ -80,14 +80,14 @@ pi5_stt_node:
     # Acoustic wake word (openWakeWord). While asleep the node transcribes NOTHING
     # until it hears the wake word, then listens for follow_up_window_s. Set
     # wake_detector: transcript_alias to disable it and use the legacy name-in-text gate.
-    wake_detector: openwakeword
+    wake_detector: transcript_alias
     wake_word: mitra
     wake_model_path: /home/rakhi24/ros2_ws/src/langrobo_ros/models/wake/mitra.onnx
     wake_threshold: 0.45
     wake_verifier_path: ""                  # optional personal verifier: /home/rakhi24/ros2_ws/src/langrobo_ros/models/wake/mitra_verifier.pkl
     follow_up_window_s: 9.0
     wake_aliases: ["mitra", "hey mitra"]   # used as transcript fallback if model fails to load
-    require_wake: true
+    require_wake: false
     # Speak the acknowledgement only if you PAUSE after the name. Saying
     # "Mitra, go to the kitchen" in one breath skips it rather than talking
     # over the command (see wake_cue.py).
