@@ -43,3 +43,30 @@ def test_empty_and_missing_inputs():
 
 def test_first_matching_alias_wins():
     assert strip_alias("mitra and mitra", ALIASES) == "and mitra"
+
+
+from pi5_voice_pkg.addressing import strip_leading_alias  # noqa: E402
+
+LEADING = ["friend", "friends"]
+
+
+@pytest.mark.parametrize("text,expected", [
+    # what Sarvam actually returned for "మిత్ర, ..." on 2026-10-04
+    ("Friend, shall we go to a movie tomorrow?", "shall we go to a movie tomorrow"),
+    ("Hey friend, play a song", "play a song"),
+    ("Oh friend! What time is it?", "What time is it"),
+    ("My friend, set a timer for five minutes.", "set a timer for five minutes"),
+    ("Friend?", ""),
+])
+def test_translated_name_at_the_start(text, expected):
+    assert strip_leading_alias(text, LEADING) == expected
+
+
+@pytest.mark.parametrize("text", [
+    "My friend is coming over tomorrow",        # "friend" + no pause, a statement
+    "I called a friend yesterday",
+    "Shall we go with friends?",
+    "friendly people live here",
+])
+def test_friend_inside_a_sentence_is_not_the_name(text):
+    assert strip_leading_alias(text, LEADING) is None

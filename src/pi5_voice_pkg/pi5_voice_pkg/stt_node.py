@@ -56,7 +56,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, String
 
-from .addressing import strip_alias
+from .addressing import strip_alias, strip_leading_alias
 from .vad_gate import GateConfig, evaluate as gate_utterance
 from .wake_cue import DEFAULT_DELAY_S, CueGate
 from .stt_providers import REGISTRY, ProviderUnavailable
@@ -132,6 +132,9 @@ class STTNode(Node):
         self.declare_parameter('stt_beam_size', 5)
         self.declare_parameter('stt_hotwords', '')
         self.declare_parameter('wake_aliases', ['mitra', 'hey mitra'])
+        # Names as a TRANSLATING recogniser writes them (Sarvam: mitra -> "friend"):
+        # they count only at the start of the sentence. [''] = none.
+        self.declare_parameter('wake_leading_aliases', [''])
         self.declare_parameter('stop_words', ['stop'])
         self.declare_parameter('stt_provider', 'local')       # local | sarvam | soniox
         self.declare_parameter('stt_source_language', 'te')   # Telugu source for cloud translate
@@ -176,6 +179,7 @@ class STTNode(Node):
         _diag_s = float(self.get_parameter('diag_log_period_s').value)
         self._diag_every = int(_diag_s * 1000 / FRAME_MS) if _diag_s > 0 else 0
         self._aliases = [a.lower() for a in self.get_parameter('wake_aliases').value]
+        self._leading_aliases = [a.lower() for a in self.get_parameter('wake_leading_aliases').value if a]
         self._stop_words = [w.lower() for w in self.get_parameter('stop_words').value]
         self._require_wake = bool(self.get_parameter('require_wake').value)
         provider_name = self.get_parameter('stt_provider').value
@@ -650,6 +654,8 @@ class STTNode(Node):
         # "five minutes" — that third utterance has no alias and used to be
         # dropped, which made every exchange a one-shot command.
         stripped = strip_alias(text, self._aliases)
+        if stripped is None and self._leading_aliases:
+            stripped = strip_leading_alias(text, self._leading_aliases)
         if stripped is not None:
             self._follow_ups = 0
             # Bare "Mitra?" is a real thing people say to get attention; forward

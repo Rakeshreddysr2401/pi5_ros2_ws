@@ -39,3 +39,34 @@ def strip_alias(text: str, aliases) -> str | None:
             # Cutting a name out of the middle leaves a double space behind.
             return re.sub(r"\s+", " ", rest).strip(" ,.!?;:-")
     return None
+
+
+# Said before a name, not part of it: "hey friend", "oh friend", "my friend".
+_LEAD = r"(?:(?:hey|hi|hello|oh|o|my|dear)[\s,]+)*"
+# ...and the ones that make the next word a name being CALLED.
+_VOCATIVE = re.compile(r"\b(?:hey|hi|hello|oh|o|dear)\b", re.IGNORECASE)
+_PAUSE = re.compile(r"\s*(?:[,.!?:;-]|$)")
+
+
+def strip_leading_alias(text: str, aliases) -> str | None:
+    """Like strip_alias, but for names a translator turns into an ordinary
+    word: Sarvam renders "మిత్ర, సినిమాకి వెళ్దామా" as "Friend, shall we go
+    to a movie?" -- mitra means friend.
+
+    It counts only at the START of the sentence, and only when it is called:
+    followed by a pause ("Friend, ...", "Friend?") or after a calling word
+    ("Hey friend play a song"). "My friend is coming over" is a statement and
+    stays unaddressed.
+    """
+    if not text:
+        return None
+    for alias in sorted(((a or "").strip() for a in aliases or ()), key=len, reverse=True):
+        if not alias:
+            continue
+        m = re.match(rf"\s*(?P<lead>{_LEAD}){re.escape(alias)}\b", text, flags=re.IGNORECASE)
+        if not m:
+            continue
+        rest = text[m.end():]
+        if _VOCATIVE.search(m.group("lead")) or _PAUSE.match(rest):
+            return rest.strip(" ,.!?;:-")
+    return None

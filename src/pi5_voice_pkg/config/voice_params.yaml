@@ -104,6 +104,9 @@ pi5_stt_node:
     # The name in the TEXT opens a 9 s follow-up window (no acoustic model: not trained
     # well enough, owner 2026-10-03). Spellings Whisper produced for it on the bench.
     wake_aliases: ["mitra", "hey mitra", "mithra", "mittra", "metra"]
+    # Sarvam TRANSLATES the name: "మిత్ర, ..." comes back as "Friend, ..." (mitra = friend).
+    # These count only at the start of a sentence ("Friend, play a song" / "Hey friend, ...").
+    wake_leading_aliases: ["friend", "friends"]
     require_wake: true       # answer only when named (open mode answered the TV)
     # Speak the acknowledgement only if you PAUSE after the name. Saying
     # "Mitra, go to the kitchen" in one breath skips it rather than talking
