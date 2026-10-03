@@ -7,8 +7,12 @@
 #                               #   (D555 + lidar + fused pose + slam + nvblox +
 #                               #   nav2 + the VLM bridge + Studio + laptop RViz).
 #                               #   Voice is the Pi5's own trio.
-#   ./scripts/fleet.sh sim      # SIMULATION body: laptop Gazebo sim (+ its nav2)
-#                               #   + Pi5 voice. The Jetson is not used.
+#   ./scripts/fleet.sh sim      # SIMULATION body: the OLDER laptop sim, rover_sim
+#                               #   (mecanum, its own nav2) + Pi5 voice. The Jetson
+#                               #   is not used. To test the REAL Jetson stack in a
+#                               #   simulated home use the Mitra twin instead:
+#                               #   laptop /workspace/mitra_sim (./mitra up) + Jetson
+#                               #   ~/mitra_sim/jetson/sim_stack.sh up (CLAUDE.md).
 #   ./scripts/fleet.sh stop     # park the robot: stop the body, keep brain up
 #   ./scripts/fleet.sh down     # full shutdown incl. this Pi5's services (sudo)
 #   ./scripts/fleet.sh status   # who's up, everywhere
@@ -126,7 +130,8 @@ sim)
     # the sim's own Nav2 + slam_toolbox drive, look() has no Jetson frame.
     systemctl --user start langrobo-voice 2>/dev/null || true
     echo "pi5:    voice=$(systemctl --user is-active langrobo-voice)"
-    echo "fleet: SIM mode up. Nav2 needs ~1 min in the house world; check: $0 status"
+    echo "fleet: SIM mode up (rover_sim, the older sim). Nav2 needs ~1 min in the house world; check: $0 status"
+    echo "       To test the real Jetson stack instead: the Mitra twin (CLAUDE.md, mitra_sim)."
     ;;
 rover)
     set_body rover
@@ -147,7 +152,7 @@ rover)
         $SSH $JETSON "cd $ROVER_DIR && ./rover up" || echo "jetson: ./rover up FAILED — the last GATE above names the layer"
     fi
     # Voice lives on the Pi5 in rover mode (langrobo-voice user unit — the
-    # speaker/mic owner + STT + TTS; PI5_VOICE.md).
+    # speaker/mic owner + STT + TTS; docs/voice/PI5_VOICE.md).
     systemctl --user start langrobo-voice 2>/dev/null || true
     echo "pi5:    voice=$(systemctl --user is-active langrobo-voice)"
     echo "fleet: ROVER mode up. Talk to it (say \"Mitra\") or use Telegram."

@@ -5,7 +5,7 @@ API spec: soniox.com/docs/stt/rt/real-time-transcription
 
 $0.12/hr real-time, 260ms median latency in true streaming use (not the
 figure that applies here, since this sends one utterance and waits). See
-PI5_VOICE.md for the cost/latency comparison against Sarvam.
+docs/voice/PI5_VOICE.md for the cost/latency comparison against Sarvam.
 
 UNVERIFIED — no Soniox API key available at time of writing. The request/
 response shapes below are transcribed from the docs, not confirmed against

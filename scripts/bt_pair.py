@@ -4,7 +4,7 @@
     ./scripts/bt_speaker.sh pair        # (no address) runs this
 
 Already-paired devices never need this — switch them on and
-audio_device_node connects them (PI5_VOICE.md). This is for the one human
+audio_device_node connects them (docs/voice/PI5_VOICE.md). This is for the one human
 step a new device needs: put it in pairing mode, pick it from the list, done.
 No ROS, no sudo; uses the same bluez helpers as the node.
 """

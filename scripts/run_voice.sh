@@ -4,7 +4,7 @@
 #   ./scripts/run_voice.sh
 #
 # A user unit, not a system one: PipeWire/WirePlumber live in the user
-# session and wpctl/pactl only work there. See PI5_VOICE.md § Running it.
+# session and wpctl/pactl only work there. See docs/voice/PI5_VOICE.md § Running it.
 #
 # Never run this alongside the Jetson's ai_stack voice role — both would
 # transcribe and speak on the same /voice/* topics.

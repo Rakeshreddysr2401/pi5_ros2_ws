@@ -73,10 +73,11 @@ def look(tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
     pose = bridge.get_current_pose()
     when = time.time()
     pose_stamp.record_view(pose, when)
-    # Hold this photo's depth and camera pose at the Jetson, and survey it in
-    # the background: everything in view goes into object memory at its room
-    # position, so "go to the chair you saw" works later from anywhere
-    # (tools/survey.py). Nothing here waits on it.
+    # Hold this photo's depth and camera pose at the Jetson and log the photo
+    # (ask_photos finds things in it later, from anywhere). With
+    # LANGROBO_PHOTO_SURVEY=1 (off by default since 2026-10-02) it is also
+    # surveyed in the background into object memory (tools/survey.py).
+    # Nothing here waits on either.
     if stamp:
         bridge.hold_frame(stamp)
         epoch = bridge.get_origin_epoch()

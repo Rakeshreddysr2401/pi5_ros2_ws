@@ -10,7 +10,7 @@ path) and a QUIET room for ~15 s. Records the mic for 3 s of silence, then
 while the robot speaks a sentence, then 3 s after, and reports per segment:
 RMS (how loud), the VAD "speech" ratio (would stt_node think someone is
 talking?), and the leak in dB over the silent floor. Regression check for
-every audio-path change — VOICE_ROADMAP.md Phase 0b.
+every audio-path change — docs/voice/VOICE_ROADMAP.md Phase 0b.
 """
 
 import argparse

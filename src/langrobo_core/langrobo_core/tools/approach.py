@@ -51,8 +51,9 @@ _STANDOFF_M = float(os.environ.get("LANGROBO_STANDOFF_M", "0.45"))
 # at a seam (owner, 2026-09-27). At 45 deg every direction is seen twice, once
 # well inside the frame. A miss costs ~5 s of VLM per view (the reply is one
 # short JSON), so the full circle is ~1-2 min; a hit stops early. Every view
-# also goes to the photo survey (tools/survey.py), so the circle leaves
-# everything it saw in object memory for next time.
+# is logged as a photo (tools/photos.py), which ask_photos reads later. With
+# LANGROBO_PHOTO_SURVEY=1 (off by default since 2026-10-02) it also goes to
+# the background survey (tools/survey.py) and so into object memory.
 _SEARCH_STEPS = 8
 _SEARCH_STEP_DEG = 45.0
 
@@ -186,7 +187,8 @@ def _capture(bridge, settle_s: float = 2.5, source: str = "search") -> tuple:
         bridge.hold_frame(stamp)
     pose, when, epoch = bridge.get_current_pose(), time.time(), bridge.get_origin_epoch()
     _photos.record(frame, stamp, pose, when, epoch, source)
-    # Every photo also feeds object memory with everything in it (survey.py).
+    # Opt-in (LANGROBO_PHOTO_SURVEY=1): the survey also puts everything in it
+    # into object memory. Off, submit() returns at once.
     _survey.submit(frame, stamp, pose, source, when=when, epoch=epoch)
     return frame, {"stamp": stamp, "pose": pose, "when": when}
 

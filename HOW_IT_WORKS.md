@@ -11,8 +11,8 @@ All of this was verified live on 2026-07-03 (18 turns, zero errors).
 
 | Machine | Runs | Talks over |
 |---|---|---|
-| **Pi5** (this repo) | `langrobo-brain` (agent_node) + `langrobo-microros` (ESP32 bridge), both systemd; plus `pi5_voice_pkg` (CPU-only stt_node/tts_node — PI5_VOICE.md) | ROS2 DDS on Ethernet LAN |
-| **Jetson Orin** | Perception: cuVSLAM + nvblox + Nav2, plus the phase-4 VLM bridge (`image_bridge` republishes the colour frame as JPEG for `look()`; `pixel_to_goal` turns a VLM-picked pixel into an odom-frame Nav2 goal). Voice is OFF here — it runs on the Pi5 (PI5_VOICE.md) | ROS2 DDS |
+| **Pi5** (this repo) | `langrobo-brain` (agent_node) + `langrobo-microros` (ESP32 bridge), both systemd; plus `pi5_voice_pkg` (CPU-only stt_node/tts_node — docs/voice/PI5_VOICE.md) | ROS2 DDS on Ethernet LAN |
+| **Jetson Orin** | Perception: cuVSLAM + nvblox + Nav2, plus the phase-4 VLM bridge (`image_bridge` republishes the colour frame as JPEG for `look()`; `pixel_to_goal` turns a VLM-picked pixel into an odom-frame Nav2 goal). Voice is OFF here — it runs on the Pi5 (docs/voice/PI5_VOICE.md) | ROS2 DDS |
 | **Mac Mini** | llama.cpp server, Gemma multimodal GGUF, 4 KV-cache slots | HTTP (OpenAI-compatible) |
 | **ESP32** | wheel firmware — 2-motor diff drive, BTS7960 + encoders, 50 Hz PID | micro-ROS over WiFi UDP 8888 → Pi5 |
 
@@ -71,7 +71,7 @@ you speak → Pi 5 Bluetooth mic (audio_device_node owns the speaker + mic)
   → publishes String on /voice/user_input
 ```
 
-(PI5_VOICE.md has the whole voice trio. The old Jetson voice stack --
+(docs/voice/PI5_VOICE.md has the whole voice trio. The old Jetson voice stack --
 echo-cancelled mic, openWakeWord, Kokoro on the GPU -- is retired. Speaking
 while the robot talks is barge-in: the robot stops talking, and this brain
 abandons its in-flight turn for the new one.)

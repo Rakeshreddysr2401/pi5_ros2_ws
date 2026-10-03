@@ -35,7 +35,7 @@ pi5_tts_node:
     # pipewire = whatever pi5_audio_device made the default speaker.
     output_device: pipewire
     threads: 4
-    # local | sarvam | soniox — see PI5_VOICE.md. Local Kokoro measured RTF ~1.8
+    # local | sarvam | soniox — see docs/voice/PI5_VOICE.md. Local Kokoro measured RTF ~1.8
     # (slower than real time); both cloud options publish sub-second/streaming
     # latency instead — this switch is about speed, not translation (that's the
     # STT side's reason). Same key/degrade rules as pi5_stt_node below.
@@ -100,7 +100,7 @@ pi5_stt_node:
     # voiced_ratio stood between it and a hallucinated cloud transcript.
     min_utterance_rms: 0.05
     min_voiced_ratio: 0.35
-    # local | sarvam | soniox — see PI5_VOICE.md for the cost/latency comparison.
+    # local | sarvam | soniox — see docs/voice/PI5_VOICE.md for the cost/latency comparison.
     # sarvam/soniox need SARVAM_API_KEY / SONIOX_API_KEY in ~/ros2_ws/.env (example.env
     # has placeholders); missing key or any request failure falls back to local
     # automatically (never goes silent — CLAUDE.md #4).

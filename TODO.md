@@ -1,6 +1,6 @@
 # TODO — pending on-device work
 
-## NEEDS YOU — state at the end of 2026-10-02 (branch `dev-1.3.8`)
+## NEEDS YOU — state at the end of 2026-10-02 (branch `dev-1.4.1` since 2026-10-03)
 
 Done and floor-tested 2026-10-01/02: photo memory (`ask_photos`), find-and-go
 from photos, errands on arrival (`then`, voice + Telegram), the arrival
@@ -121,7 +121,7 @@ morning writeup and diagnostic playbook are kept below in case it recurs.
 
 <details><summary>Original writeup + diagnostic playbook (kept in case it recurs)</summary>
 
-Full writeup in PI5_VOICE.md. Summary of the morning's live testing, in order:
+Full writeup in docs/voice/PI5_VOICE.md. Summary of the morning's live testing, in order:
 
 1. **First real utterance ("Rakhi, ఇవాళ టైమ్ ఎంత") worked end-to-end**,
    through the actual mic, actual VAD, actual `agent_node`: Sarvam itself
@@ -186,7 +186,7 @@ removed.)
 
 ## OUTSTANDING 2026-09-04: Soniox STT provider needs a real API key to verify
 
-`stt_providers/soniox.py` (PI5_VOICE.md has the design + why) is written
+`stt_providers/soniox.py` (docs/voice/PI5_VOICE.md has the design + why) is written
 against the published WebSocket docs but never run against a real session —
 no key available yet, and blocked on the VAD issue above anyway. Sarvam's
 REST path is lower-risk (simple POST, fetched straight from current docs)

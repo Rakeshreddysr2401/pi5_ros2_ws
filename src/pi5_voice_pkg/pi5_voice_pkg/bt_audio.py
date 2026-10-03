@@ -6,7 +6,7 @@ indirect: connect the device over bluez, make it PipeWire's default sink (and
 source, for HFP), and let the nodes open the `pipewire` ALSA device. This
 module is the glue; `audio_device_node` is the ONE process that calls it.
 stt_node and tts_node never touch Bluetooth state — they just wait for
-/voice/audio_ready (see PI5_VOICE.md).
+/voice/audio_ready (see docs/voice/PI5_VOICE.md).
 
 No rclpy, no sounddevice — just subprocess and parsing, so it is testable off
 the robot.
@@ -244,7 +244,7 @@ def best_headset_profile(profiles: dict[str, bool]) -> str:
 
     mSBC is 16 kHz, CVSD is 8 kHz narrowband — a free accuracy win for both
     wake-word scoring and speech recognition where the device supports it
-    (VOICE_ROADMAP.md Phase 0a). The Buds negotiate mSBC; the Stone offers it
+    (docs/voice/VOICE_ROADMAP.md Phase 0a). The Buds negotiate mSBC; the Stone offers it
     too but WirePlumber had settled on CVSD.
     """
     for name in ("headset-head-unit-msbc", "headset-head-unit", "headset-head-unit-cvsd"):

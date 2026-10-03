@@ -282,7 +282,7 @@ def get_fallback_llm():
 # legitimately takes tens of seconds, but CONNECTING never should. With no
 # timeout at all (the default), a Mac Mini that rebooted onto a new DHCP
 # address left the client waiting on a dead socket — measured 50-108s of
-# silence on the first turn afterwards (PI5_VOICE.md), which reads as a dead
+# silence on the first turn afterwards (docs/voice/PI5_VOICE.md), which reads as a dead
 # robot. For a STREAMING request the read timeout is the gap BETWEEN chunks,
 # not the whole answer, so it can be tight; for the non-streaming cloud
 # fallback it bounds the whole reply, so it cannot be too tight.

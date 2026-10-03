@@ -21,9 +21,9 @@ touching approach/look/survey/photos or the Jetson's pixel_to_goal/reach.
 Read HOW_IT_WORKS.md for the end-to-end walkthrough (boot, turn lifecycle,
 failure paths); **ARCHITECTURE_LLD.md before touching graph/agent code**;
 INTEGRATION_GAPS.md before building anything that touches the world;
-OPERATIONS.md for run/deploy/troubleshooting; PI5_VOICE.md for the Pi5 voice trio
-(speaker/mic owner + STT + TTS); **VOICE_ROADMAP.md** for the phased voice plan
-(what is done, what is next); WAKE_WORD_INTEGRATION.md to train and plug in the
+OPERATIONS.md for run/deploy/troubleshooting; docs/voice/PI5_VOICE.md for the Pi5 voice trio
+(speaker/mic owner + STT + TTS); **docs/voice/VOICE_ROADMAP.md** for the phased voice plan
+(what is done, what is next); docs/voice/WAKE_WORD_INTEGRATION.md to train and plug in the
 "Mitra" wake word.
 
 ## Fleet start — one command brings up the whole robot
@@ -37,8 +37,8 @@ OPERATIONS.md for run/deploy/troubleshooting; PI5_VOICE.md for the Pi5 voice tri
   ~10 min from cold). Voice is the Pi5's own trio (`langrobo-voice` user
   unit, starts at boot). Switches `robot_body` to `rover` (plain Twist on
   `/cmd_vel`).
-- **`sim`** — the SIMULATION body: sshes the laptop and starts its Gazebo sim +
-  Nav2 (`rover_sim`); voice stays on the Pi5; the Jetson is not used (its old
+- **`sim`** — the SIMULATION body: sshes the laptop and starts the OLDER Gazebo sim +
+  its own Nav2 (`rover_sim`, not the Mitra twin -- see below); voice stays on the Pi5; the Jetson is not used (its old
   sim roles, `ai_stack` + `isaac_ros`, are retired). Switches `robot_body` to
   `sim` (TwistStamped on /mecanum_drive_controller/cmd_vel).
 - **`stop`** parks the robot: stops the body (sim + the Jetson's `rover` container) but
@@ -211,7 +211,7 @@ that moves wheels).
   one `./scripts/wake_switch.py mitra` away. It answers "చెప్పండి బాస్" when
   you pause after the name (`wake_cue.py`).
   `./scripts/wake_switch.py` swaps model/threshold and restarts the service;
-  `./scripts/wake_test.sh` shows a live score bar. WAKE_WORD_INTEGRATION.md
+  `./scripts/wake_test.sh` shows a live score bar. docs/voice/WAKE_WORD_INTEGRATION.md
   is the train-and-deploy recipe.
 
 ## Config split

@@ -22,16 +22,27 @@ hardware or a decision.
 
 ## 1. Topics this brain publishes into the void
 
+> **Status 2026-10-03: closed by removal, kept as history.** Re-checked
+> against both repos. The brain no longer subscribes to
+> `/vision/detections_3d` or `/vision/target_result`, and the tools that
+> needed them (`approach_object`, `where_is`, `world_model`,
+> `navigate_to_visible_object`, `tools/music.py`) are gone. Finding things
+> is the photo path now (`ask_photos` + `/vision/pixel_query`, §7). The
+> Jetson DOES have a publisher, `phase4/nodes/detections_3d.py`, started
+> only by `./rover detect` (not part of `./rover up`): wiring it back in is
+> rover INTELLIGENCE_PLAN.md B4 (a TensorRT detector feeding memory). The
+> pan/tilt publisher remains, gated off by `LANGROBO_PAN_TILT=0`.
+
 Checked by grepping the rover repo for every topic name `ros2_bridge.py`
 touches. These have **no publisher or subscriber on the rover at all** — not a
 dead node, not a stopped container: no code anywhere that speaks them.
 
 | topic | direction | what depends on it | status |
 |---|---|---|---|
-| `/vision/detections_3d` | rover → brain | `approach_object`, `where_is`, `list_known_objects`, `forget_object`, `scan_surroundings`'s object report, **the entire `world_model` service** | ⬜ |
-| `/vision/target` + `/vision/target_result` | both ways | `navigate_to_visible_object` (the mono visual-servo fallback) | ⬜ |
+| `/vision/detections_3d` | rover → brain | `approach_object`, `where_is`, `list_known_objects`, `forget_object`, `scan_surroundings`'s object report, **the entire `world_model` service** | ✅ removed (tools gone; Jetson publisher opt-in via `./rover detect`; returns with B4) |
+| `/vision/target` + `/vision/target_result` | both ways | `navigate_to_visible_object` (the mono visual-servo fallback) | ✅ removed (tool gone, movement.py) |
 | `/servo_pan`, `/servo_tilt`, `/camera/pan_tilt_state` | brain → ESP32 | `point_camera`, `ensure_head_centred`, `approach.py`'s pan sweep | ✅ gated off |
-| `/audio/music_cmd`, `/audio/music_state` | both ways | every tool in `tools/music.py` | ⬜ |
+| `/audio/music_cmd`, `/audio/music_state` | both ways | every tool in `tools/music.py` | ✅ removed (no music tools) |
 
 ### `/vision/detections_3d` is the expensive one
 

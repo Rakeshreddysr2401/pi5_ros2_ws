@@ -3,7 +3,7 @@
 
 ₹30/10K transcript characters, <150ms time-to-first-token in fast streaming
 mode (this uses the simpler REST endpoint, not streaming — matches how
-stt_node already batches one full utterance per call). See PI5_VOICE.md for
+stt_node already batches one full utterance per call). See docs/voice/PI5_VOICE.md for
 the cost/latency comparison against Soniox that led to adding this.
 """
 

@@ -4,7 +4,7 @@ ProviderUnavailable itself.
 
 Measured on the Pi5 (Cortex-A76, 4 threads), 2026-09-04: fp32, RTF ~1.8
 (slower than real time). int8 quantized measured WORSE (RTF ~3.75) — ARM
-NEON has no fast int8 path for this op set. Use fp32. See PI5_VOICE.md.
+NEON has no fast int8 path for this op set. Use fp32. See docs/voice/PI5_VOICE.md.
 """
 
 from collections.abc import Mapping

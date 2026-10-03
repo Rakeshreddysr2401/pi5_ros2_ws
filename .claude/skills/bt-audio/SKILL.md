@@ -3,7 +3,7 @@ name: bt-audio
 description: Check, pair, switch or fix the robot's Bluetooth speaker + mic on the Pi5 (boAt Stone, earbuds, any paired device). Use when the user asks whether audio/voice is connected, wants to add or switch a speaker/headphones, or the robot cannot hear or speak.
 ---
 
-You are helping with the robot's speaker + mic. Read PI5_VOICE.md § "The
+You are helping with the robot's speaker + mic. Read docs/voice/PI5_VOICE.md § "The
 speaker + mic have ONE owner" first if you have not this session. Explain
 every result to the user in plain words (what is wrong, what you did, what
 they need to do).
@@ -71,4 +71,4 @@ and ask them to say something. Done means: heard AND transcribed.
 `wired_fallback` (USB headset name when nothing Bluetooth is up),
 `poll_period_s`, `connect_retry_s`. Restart `langrobo-voice` after edits.
 Roadmap for what comes next (echo cancellation, wake word, pairing by
-voice/Telegram): VOICE_ROADMAP.md.
+voice/Telegram): docs/voice/VOICE_ROADMAP.md.

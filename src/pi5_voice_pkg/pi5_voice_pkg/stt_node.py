@@ -1,7 +1,7 @@
 """Pi5 STT — mic capture + VAD + wake gate, same /voice/* wire protocol as
 the Jetson's stt_node. Transcription itself is delegated to a swappable
 provider (stt_providers/) — local faster-whisper, or a cloud STT with
-built-in Telugu->English translation (Sarvam, Soniox). See PI5_VOICE.md.
+built-in Telugu->English translation (Sarvam, Soniox). See docs/voice/PI5_VOICE.md.
 
 Switching: set `stt_provider` in voice_params.yaml (local | sarvam | soniox)
 and restart the node. If the selected cloud provider fails for any reason —
@@ -139,7 +139,7 @@ class STTNode(Node):
         self.declare_parameter('wake_model_path', '')      # explicit .onnx (custom Mitra) wins
         self.declare_parameter('wake_threshold', 0.5)
         # Personal verifier trained on the owner's own clips (optional; see
-        # WAKE_WORD_INTEGRATION.md). Runs only on frames the base model
+        # docs/voice/WAKE_WORD_INTEGRATION.md). Runs only on frames the base model
         # already likes, and its score replaces the base score there.
         self.declare_parameter('wake_verifier_path', '')
         self.declare_parameter('wake_verifier_threshold', 0.3)

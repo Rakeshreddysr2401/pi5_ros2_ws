@@ -1,7 +1,7 @@
 """Pi5 TTS — queueing, playback and the /voice/* wire protocol, same as
 before. Synthesis itself is delegated to a swappable provider
 (tts_providers/) — local Kokoro, or a cloud TTS (Sarvam, Soniox). See
-PI5_VOICE.md.
+docs/voice/PI5_VOICE.md.
 
 Switching: set `tts_provider` in voice_params.yaml (local | sarvam | soniox)
 and restart the node. Same degrade rule as stt_node: any provider failure

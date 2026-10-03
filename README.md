@@ -22,9 +22,9 @@ ESP32     ──────  4-wheel drive chassis, 50 Hz PID (micro-ROS over W
 [INTEGRATION_GAPS.md](INTEGRATION_GAPS.md) — what this brain asks of the rover that the rover does not answer ·
 [OPERATIONS.md](OPERATIONS.md) — deploy, systemd, health API, troubleshooting ·
 [TELEGRAM.md](TELEGRAM.md) — chat with the robot from your phone: setup + usage ·
-[PI5_VOICE.md](PI5_VOICE.md) — the Pi5 voice trio (speaker/mic owner, STT, TTS) ·
-[VOICE_ROADMAP.md](VOICE_ROADMAP.md) — the phased voice plan and what is done ·
-[WAKE_WORD_INTEGRATION.md](WAKE_WORD_INTEGRATION.md) — train and plug in the "Mitra" wake word
+[docs/voice/PI5_VOICE.md](docs/voice/PI5_VOICE.md) — the Pi5 voice trio (speaker/mic owner, STT, TTS) ·
+[docs/voice/VOICE_ROADMAP.md](docs/voice/VOICE_ROADMAP.md) — the phased voice plan and what is done ·
+[docs/voice/WAKE_WORD_INTEGRATION.md](docs/voice/WAKE_WORD_INTEGRATION.md) — train and plug in the "Mitra" wake word
 
 ---
 
@@ -48,7 +48,7 @@ scripts/               fleet.sh (whole robot) · run_*.sh (systemd entry points)
                        latency_replay.py · llm_cache_check.py (KV-slot PASS/FAIL) · topic_rates.py
                        wake_*.py · train_mitra_local.py / train_rakhi_local.py (wake-word trainers, laptop)
                        mic_check.sh (is the mic hearing you?) · bt_*.{sh,py} · tts_say.py
-notebooks/             train_mitra_wakeword.ipynb (the supported wake-word trainer — WAKE_WORD_INTEGRATION.md)
+notebooks/             train_mitra_wakeword.ipynb (the supported wake-word trainer — docs/voice/WAKE_WORD_INTEGRATION.md)
 data/test_pos|test_neg wake-word spot-check clips
 graph_studio.py        LangGraph Studio entry point (langgraph dev)
 ```

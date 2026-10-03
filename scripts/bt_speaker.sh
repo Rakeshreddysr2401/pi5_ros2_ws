@@ -15,7 +15,7 @@
 # Pairing is a ONE-TIME human step: put the speaker in pairing mode first
 # (Boat Stone: hold the multifunction button until the LED blinks fast).
 # After `pair`, the device is trusted and audio_device_node (see
-# PI5_VOICE.md) connects it, routes it and reconnects it on its own from
+# docs/voice/PI5_VOICE.md) connects it, routes it and reconnects it on its own from
 # then on — `connect`/`profile` below are only for poking at it by hand.
 
 set -uo pipefail

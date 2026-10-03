@@ -7,7 +7,7 @@ does it stay quiet on everything else?
 
 Prints the peak score per clip and a summary: how many positives crossed the
 threshold (want ~all) and how many negatives did (want none). Run this on
-the laptop BEFORE copying a model to the robot — WAKE_WORD_INTEGRATION.md.
+the laptop BEFORE copying a model to the robot — docs/voice/WAKE_WORD_INTEGRATION.md.
 Needs: pip install openwakeword numpy
 """
 

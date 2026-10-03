@@ -3,7 +3,7 @@ soniox.com/docs/tts/rest-api/generate-speech
 
 Simpler than the STT side: plain REST (not WebSocket), response is raw WAV
 bytes directly (not base64, unlike Sarvam) — no session handshake needed.
-~$0.70/hr of generated audio. See PI5_VOICE.md.
+~$0.70/hr of generated audio. See docs/voice/PI5_VOICE.md.
 
 UNVERIFIED — no Soniox API key available at time of writing (same caveat as
 stt_providers/soniox.py). Request shape is transcribed from docs, not

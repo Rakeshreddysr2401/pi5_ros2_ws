@@ -4,7 +4,7 @@ docs.sarvam.ai/api-reference/text-to-speech/convert
 ₹30/10K input characters, sub-250ms streaming latency (this uses the
 simpler non-streaming REST call — matches how tts_node already speaks one
 full sentence per call). Response is base64-encoded WAV, decoded with the
-shared _wav helper. See PI5_VOICE.md for the cost/latency comparison
+shared _wav helper. See docs/voice/PI5_VOICE.md for the cost/latency comparison
 against Soniox and against local Kokoro (measured RTF ~1.8 — this is the
 "why": both cloud TTS options are meaningfully faster).
 

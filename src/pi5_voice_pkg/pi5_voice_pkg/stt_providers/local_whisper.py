@@ -3,7 +3,7 @@ provider falls back to this on failure, so this one must never raise
 ProviderUnavailable itself (a transcribe() bug here has no fallback left).
 
 Measured on the Pi5 (Cortex-A76, 4 threads), 2026-09-04: base/int8, RTF ~0.75.
-Filters match VOICE_QUALITY.md's validated fix (see PI5_VOICE.md).
+Filters match docs/voice/VOICE_QUALITY.md's validated fix (see docs/voice/PI5_VOICE.md).
 """
 
 from collections.abc import Mapping
@@ -35,7 +35,7 @@ class LocalWhisperProvider(STTProvider):
         self._language = language
         self._task = task  # 'transcribe' or 'translate' (-> English); base model is weak at
         # translate — this is the degrade-to-local path when a cloud provider is down, not the
-        # primary Telugu->English path (that's sarvam/soniox). See PI5_VOICE.md.
+        # primary Telugu->English path (that's sarvam/soniox). See docs/voice/PI5_VOICE.md.
         self._model = WhisperModel(
             model_size, device='cpu', compute_type='int8',
             cpu_threads=threads, download_root=model_dir or None,

@@ -26,4 +26,4 @@ Unlike the large TTS/STT models (Kokoro, Whisper) which are gigabytes and downlo
       require_wake: true
   ```
 
-See `WAKE_WORD_INTEGRATION.md` in the project root for the end-to-end recipe.
+See `docs/voice/WAKE_WORD_INTEGRATION.md` in the project root for the end-to-end recipe.

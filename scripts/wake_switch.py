@@ -15,7 +15,7 @@ and the transcript-fallback aliases), then restarts langrobo-voice and shows
 what the node loaded. Any .onnx in models/wake/ is a valid choice.
 
 Only the WAKE WORD changes. What the robot calls itself when it speaks comes
-from the persona in langrobo_core/prompts.py — see WAKE_WORD_INTEGRATION.md.
+from the persona in langrobo_core/prompts.py — see docs/voice/WAKE_WORD_INTEGRATION.md.
 """
 
 import argparse

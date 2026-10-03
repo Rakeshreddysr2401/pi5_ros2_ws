@@ -640,7 +640,7 @@ class AgentNode(Node):
     # ── LangSmith tracing helpers ─────────────────────────────────────────
     # Tracing is opt-in (LANGROBO_TRACING=true + a key; services.config scrubs
     # the env otherwise), so everything here is a no-op on a robot that has not
-    # opted in. See PI5_VOICE.md / OPERATIONS.md for what the UI then shows.
+    # opted in. See docs/voice/PI5_VOICE.md / OPERATIONS.md for what the UI then shows.
 
     def _trace_metadata(self, trace: str, source: str, entry_agent: str,
                         telegram=None) -> dict:

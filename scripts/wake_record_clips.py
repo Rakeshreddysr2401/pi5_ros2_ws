@@ -7,7 +7,7 @@
 Runs on any machine with a mic (laptop or the Pi): needs only numpy +
 sounddevice (pip install sounddevice numpy). Writes 16 kHz mono 16-bit WAVs,
 the format openWakeWord training and the personal verifier expect. See
-WAKE_WORD_INTEGRATION.md for how the clips are used.
+docs/voice/WAKE_WORD_INTEGRATION.md for how the clips are used.
 
 positive : say ONLY the wake word ("Mitra") once per clip, in different
            tones, distances and speeds — a few whispered, a few from across

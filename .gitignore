@@ -35,7 +35,7 @@ src/langrobo_ros/models/**/*.onnx
 src/langrobo_ros/models/**/*.bin
 src/langrobo_ros/models/whisper/
 # ...except the wake-word model: a few hundred KB, trained by us, and the
-# robot is deaf to its name without it (WAKE_WORD_INTEGRATION.md).
+# robot is deaf to its name without it (docs/voice/WAKE_WORD_INTEGRATION.md).
 !src/langrobo_ros/models/wake/
 !src/langrobo_ros/models/wake/*.onnx
 !src/langrobo_ros/models/wake/*.pkl
