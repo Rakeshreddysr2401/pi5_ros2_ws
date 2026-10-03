@@ -16,19 +16,25 @@ requests: 17/18 right, 0.67 s median (0.93 s max). The miss was a garbled
 from __future__ import annotations
 
 import json
+import re
 import urllib.request
 
 SYSTEM = ("You filter a living-room microphone for Mitra, a home robot assistant "
           "(in Telugu 'mitra' means 'friend', so 'Friend, ...' is the robot being called). "
           "Speech is translated from Telugu. Decide if the sentence is directed AT THE ROBOT: "
           "a question or request to an assistant, a command, or an answer to what the robot just said. "
-          "Answer no for people talking to each other, TV or video audio, songs, filler like "
-          "'okay' or 'hmm', and fragments. Answer only yes or no.")
+          "Answer no for people talking to each other, TV or video audio, songs, and bare reactions "
+          "or fragments ('What?', 'Okay, tell me', 'Yes', 'It is happening', 'Put it below') -- "
+          "unless they answer a question the robot just asked. A real request names what it "
+          "wants: a question, an action, music (play, next, pause, stop, volume), a timer, a list. "
+          "Answer only yes or no.")
 GRAMMAR = 'root ::= "yes" | "no"'
 
 
-def request_body(heard: str, robot_last: str = "") -> dict:
-    user = (f"Robot's last words: {robot_last!r}\n" if robot_last else "") + \
+def request_body(heard: str, robot_last: str = "", context: str = "") -> dict:
+    """context: what is going on ("[music playing: Kesariya]")."""
+    user = (f"{context}\n" if context else "") + \
+        (f"Robot's last words: {robot_last!r}\n" if robot_last else "") + \
         f"Heard: {heard!r}\nDirected at the robot?"
     return {"messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
             "max_tokens": 2, "temperature": 0, "grammar": GRAMMAR, "cache_prompt": True}
@@ -42,10 +48,26 @@ def parse(response: dict) -> bool:
         return False
 
 
-def is_for_robot(heard: str, robot_last: str, url: str, timeout: float = 3.0) -> bool | None:
+# While music plays, its controls are short and unambiguous -- and a one-word
+# "Louder." was the filter's miss even with the music in context (2026-10-04).
+# These are accepted at once, no LLM.
+_MUSIC_CONTROL = re.compile(
+    r"^\W*(?:please\s+)?(?:louder|quieter|softer|next(?:\s+(?:song|one|track))?|skip(?:\s+(?:it|this|song))?|"
+    r"pause(?:\s+(?:it|the\s+music|music))?|resume|play\s+again|stop(?:\s+(?:it|the\s+music|music|the\s+song))?|"
+    r"(?:turn\s+(?:it\s+)?)?volume\s+(?:up|down)|turn\s+(?:it\s+)?(?:up|down)|"
+    r"(?:a\s+(?:little|bit)\s+)?(?:louder|quieter))(?:\s+please)?\W*$", re.IGNORECASE)
+
+
+def music_control(heard: str) -> bool:
+    """A bare music control ("Louder.", "Next song", "Pause it") -- for when music is playing."""
+    return bool(_MUSIC_CONTROL.match(heard or ""))
+
+
+def is_for_robot(heard: str, robot_last: str, url: str, timeout: float = 3.0,
+                 context: str = "") -> bool | None:
     """True / False, or None when the LLM could not be asked (caller decides)."""
     try:
-        req = urllib.request.Request(url, json.dumps(request_body(heard, robot_last)).encode(),
+        req = urllib.request.Request(url, json.dumps(request_body(heard, robot_last, context)).encode(),
                                      {"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return parse(json.load(r))

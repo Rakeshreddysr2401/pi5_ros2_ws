@@ -50,3 +50,21 @@ def test_heard_chime():
     assert 0.15 < len(c) / 24000 < 0.25
     assert c.dtype == np.float32 and np.max(np.abs(c)) <= 0.26
     assert abs(c[0]) < 0.05 and abs(c[-1]) < 0.05          # faded: no click
+
+
+@pytest.mark.parametrize("text", ["Louder.", "louder please", "Next song", "next", "Skip it",
+                                  "Pause it.", "Resume", "volume up", "Turn it down", "a bit quieter",
+                                  "Stop the music."])
+def test_music_controls(text):
+    assert R.music_control(text)
+
+
+@pytest.mark.parametrize("text", ["What is next on my list?", "Turn left", "Play Kesariya",
+                                  "He said louder voices win", "Stop talking to him", ""])
+def test_not_bare_music_controls(text):
+    assert not R.music_control(text)
+
+
+def test_context_goes_first():
+    user = R.request_body("Next song.", "", "[music playing: Kesariya]")["messages"][1]["content"]
+    assert user.startswith("[music playing: Kesariya]")

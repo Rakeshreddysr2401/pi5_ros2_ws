@@ -242,6 +242,12 @@ class STTNode(Node):
         # "For how long?"). Assembled from /voice/robot_speech chunks.
         self._robot_words, self._robot_last, self._robot_last_at = '', '', 0.0
         self.create_subscription(String, '/voice/robot_speech', self._on_robot_speech, 20)
+        # What is playing (media_node): context for the relevance check, and the
+        # bare music controls ("Louder.") pass at once while it plays.
+        self._music_title = ''
+        from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+        self.create_subscription(String, '/audio/music_state', self._on_music_state, QoSProfile(
+            depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.RELIABLE))
         # Additive topic: tts_node plays a clip it rendered once at startup.
         # The Jetson's voice stack ignores it, like /voice/*_meta.
         self._cue_pub = self.create_publisher(String, '/voice/cue', 10)
@@ -679,9 +685,14 @@ class STTNode(Node):
             if stripped is not None:
                 self._accept(stripped or text, 'name')
                 return
+            if self._music_title and relevance.music_control(text):
+                self._accept(text, 'music control')
+                return
             t0 = time.monotonic()
             last = self._robot_last if time.monotonic() - self._robot_last_at < 30.0 else ''
-            verdict = relevance.is_for_robot(text, last, self._relevance_url, self._relevance_timeout)
+            ctx = f'[music playing: {self._music_title}]' if self._music_title else ''
+            verdict = relevance.is_for_robot(text, last, self._relevance_url,
+                                             self._relevance_timeout, context=ctx)
             ms = int((time.monotonic() - t0) * 1000)
             if verdict:
                 self._accept(text, f'llm {ms} ms')
@@ -714,6 +725,13 @@ class STTNode(Node):
             self._cue_pub.publish(String(data='heard'))
         self.get_logger().info(f'for me ({why})')
         self._forward(text)
+
+    def _on_music_state(self, msg: String) -> None:
+        try:
+            st = json.loads(msg.data)
+        except ValueError:
+            return
+        self._music_title = st.get('title') or '' if st.get('playing') else ''
 
     def _on_robot_speech(self, msg: String) -> None:
         if msg.data == '<|eou|>':                  # SPEECH_EOU, end of one reply
