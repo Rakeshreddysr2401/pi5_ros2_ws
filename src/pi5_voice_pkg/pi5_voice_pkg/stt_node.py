@@ -127,6 +127,10 @@ class STTNode(Node):
         # expensive, useless cloud call. Cutting means the speaker gets
         # transcribed in pieces, which is far better than not at all.
         self.declare_parameter('max_utterance_s', 20.0)
+        # local whisper decoding (stt_providers/local_whisper.py): beam 5 is
+        # faster-whisper's default; hotwords biases it toward the robot's name
+        self.declare_parameter('stt_beam_size', 5)
+        self.declare_parameter('stt_hotwords', '')
         self.declare_parameter('wake_aliases', ['mitra', 'hey mitra'])
         self.declare_parameter('stop_words', ['stop'])
         self.declare_parameter('stt_provider', 'local')       # local | sarvam | soniox
@@ -189,6 +193,8 @@ class STTNode(Node):
         base_params = {
             'model_size': model_size, 'model_dir': model_dir, 'threads': threads,
             'source_language': src_lang, 'target_language': tgt_lang,
+            'beam_size': int(self.get_parameter('stt_beam_size').value),
+            'hotwords': str(self.get_parameter('stt_hotwords').value or '').strip(),
         }
         # Fallback path when a cloud provider fails: same task/language intent as the primary
         # provider, so "degraded" still means "still tries to answer the same question".

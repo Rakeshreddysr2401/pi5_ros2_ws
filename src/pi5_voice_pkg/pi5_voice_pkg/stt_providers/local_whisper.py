@@ -28,11 +28,21 @@ class LocalWhisperProvider(STTProvider):
         return cls(
             params['model_size'], params['model_dir'], params['threads'],
             language=params.get('language', 'en'), task=params.get('task', 'transcribe'),
+            beam_size=int(params.get('beam_size', 5)), hotwords=params.get('hotwords') or None,
         )
 
     def __init__(self, model_size: str, model_dir: str, threads: int,
-                 language: str = 'en', task: str = 'transcribe'):
+                 language: str = 'en', task: str = 'transcribe',
+                 beam_size: int = 5, hotwords: str | None = None):
         self._language = language
+        # beam_size 1 + hotwords, measured 2026-10-03 on Kokoro-spoken commands
+        # degraded like the 8 kHz Bluetooth (HFP) mic: with base the name came
+        # through 13/20 at beam 5 ("Metro", "Metra", "Misha", "Mittra") and
+        # 20/20 with hotwords="Mitra" at beam 1, faster too; tiny.en the same
+        # 20/20 at about half base's time. An initial_prompt instead made it
+        # DROP the name (9/20). docs/voice/PI5_VOICE.md, "Local voice tuning".
+        self._beam_size = beam_size
+        self._hotwords = hotwords
         self._task = task  # 'transcribe' or 'translate' (-> English); base model is weak at
         # translate — this is the degrade-to-local path when a cloud provider is down, not the
         # primary Telugu->English path (that's sarvam/soniox). See docs/voice/PI5_VOICE.md.
@@ -44,6 +54,7 @@ class LocalWhisperProvider(STTProvider):
     def transcribe(self, pcm: np.ndarray, sample_rate: int) -> str:
         segments, info = self._model.transcribe(
             pcm, language=self._language, task=self._task, condition_on_previous_text=False,
+            beam_size=self._beam_size, hotwords=self._hotwords,
         )
         parts = []
         for s in segments:

@@ -326,6 +326,56 @@ different model has a different score distribution.
 
 ---
 
+## Local voice tuning (2026-10-03) — what runs now, and why
+
+The owner switched voice to **fully local** and asked for it to work without
+the acoustic wake-word models (not trained well enough: `mitra.onnx` scored
+0.02 on the owner's "Hey Mitra" through the boAt Stone, the same as silence).
+
+**Now:** STT faster-whisper **tiny.en**, beam 1, `stt_hotwords: "Mitra"`, 2
+threads; TTS **Piper** `en_US-lessac-medium` (Kokoro loaded as its fallback);
+the name in the TEXT opens a 9 s follow-up window (`wake_detector:
+transcript_alias`, `require_wake: true`); stop words `stop halt freeze quiet
+silence` halt speech AND wheels, no name needed.
+
+**Why (bench, Pi 5, voice service stopped).** Kokoro spoke the test commands
+in five voices (incl. Hindi-accent `hf_alpha`, `hm_omega`); each clip was put
+through 8 kHz and back with ~0.02 RMS noise, like the boAt's Bluetooth HFP mic.
+
+| STT | name heard | time per clip | notes |
+|---|---|---|---|
+| base, beam 5, 4 thr (before) | 13/20 | — | "Metro", "Metra", "Misha", "Mittra" |
+| base, beam 1 + hotwords | 20/20 | ~2.7 s | "Mitra stop" -> "Mitra Star" (1/2) |
+| base, beam 1 + initial_prompt | 9/20 | — | the prompt makes it DROP the name |
+| base.en + hotwords | 10/20 | ~2.8 s | drops the name |
+| **tiny.en + hotwords** | **20/20** | **~1.4 s** | "what do you see" -> "think" (2/2) |
+| small.en + hotwords | 19/20 | ~7 s | too slow |
+
+| TTS | RTF (time / speech length) |
+|---|---|
+| Kokoro fp32 (before) | ~2.0 alone, 3-5 while Whisper ate ~3 cores on room noise |
+| Kokoro int8 | ~3.9 (no fast int8 path on the A76) |
+| **Piper lessac-medium** | **~0.25** (3.05 s of speech in 0.74 s) |
+
+End to end, typed into `/voice/user_input` (STT not included): first sound
+5.2 s / 3.0 s after the question with Piper, against 30.8 s with Kokoro and a
+cold brain cache. Spoken, add ~1.5-2 s (tiny.en + end-of-speech pause).
+
+**Known limits.** The boAt Stone's mic runs Bluetooth HFP at **8 kHz**: it
+caps transcript quality and is why the wake model cannot work. A 16 kHz USB
+mic (the config's `wired_fallback: "Blackwire"`) fixes both and lets the
+speaker use A2DP; then `./scripts/wake_switch.py mitra` can be tried again.
+Open mode (`require_wake: false`) answered the TV non-stop and filled the
+brain's history with it: keep the name gate on.
+
+**Switch back:** `model_size: base` (STT); `tts_provider: local` (Kokoro) or
+`sarvam_translate` (cloud, Telugu out); `stt_provider: sarvam` (cloud, Telugu
+in). Then `systemctl --user restart langrobo-voice`.
+
+**Piper voice download** (not tracked in git):
+`cd src/langrobo_ros/models/piper && python3 -m piper.download_voices en_US-lessac-medium`
+(`pip install --user --break-system-packages piper-tts` first, 1.8.0 here).
+
 ## Measured performance (this Pi5, Cortex-A76 @ 2.4GHz, 4 cores, 2026-09-04)
 
 | | RTF | note |

@@ -42,7 +42,10 @@ pi5_tts_node:
     # local | sarvam | sarvam_translate | soniox. 'sarvam_translate' takes
     # English reply text and SPEAKS it in Telugu (translate -> TTS); see below.
     # Default = sarvam_translate so the brain's English replies are heard in Telugu.
-    tts_provider: local        # 2026-10-03 (owner): fully local voice -- Kokoro. Was sarvam_translate (cloud, en -> te)
+    # piper: fast local (RTF ~0.25: 3 s of speech in 0.74 s). local = Kokoro, more natural but
+    # RTF ~2 on this Pi (5.9 s for 2.9 s); it stays loaded as the fallback. Was sarvam_translate.
+    tts_provider: piper
+    tts_piper_model: /home/rakhi24/ros2_ws/src/langrobo_ros/models/piper/en_US-lessac-medium.onnx
     tts_language: en
     tts_sarvam_voice: ritu     # bulbul:v3 speaker (used by sarvam + sarvam_translate)
     tts_soniox_voice: Adrian
@@ -62,7 +65,7 @@ pi5_tts_node:
     # Spoken if a turn takes unusually long (cold cache, LLM unreachable) so
     # the robot never just goes quiet. Published by agent_node as cue "wait".
     cue_wait_text: "One moment boss"  # was "ఒక నిమిషం బాస్" via sarvam
-    cue_provider: local
+    cue_provider: piper
     cue_language: en
 
 pi5_stt_node:
@@ -73,10 +76,16 @@ pi5_stt_node:
     # A2DP buffers 100-250ms on top, so raise to ~1.2 with a Bluetooth speaker
     # or the robot transcribes the tail of its own reply.
     tts_tail_mute_s: 1.2   # raised for A2DP buffering (was 0.5, for the USB headset)
-    model_size: base
+    # tiny.en, beam 1, hotword "Mitra" (2026-10-03, bench on 8 kHz HFP-degraded speech):
+    # name 20/20, about half base's time, and "stop" right where base heard "Star".
+    # Its slip: "what do you see" -> "think". base: model_size: base.
+    model_size: tiny.en
+    stt_beam_size: 1
+    stt_hotwords: "Mitra"
     model_dir: /home/rakhi24/ros2_ws/src/langrobo_ros/models/whisper
-    threads: 4
+    threads: 2              # was 4: Whisper on room noise took ~3 of 4 cores and starved Kokoro (RTF 3-5)
     vad_aggressiveness: 2
+    max_utterance_s: 12.0   # was the 20 s default: long TV stretches clogged the queue
     # Acoustic wake word (openWakeWord). While asleep the node transcribes NOTHING
     # until it hears the wake word, then listens for follow_up_window_s. Set
     # wake_detector: transcript_alias to disable it and use the legacy name-in-text gate.
@@ -86,14 +95,17 @@ pi5_stt_node:
     wake_threshold: 0.45
     wake_verifier_path: ""                  # optional personal verifier: /home/rakhi24/ros2_ws/src/langrobo_ros/models/wake/mitra_verifier.pkl
     follow_up_window_s: 9.0
-    wake_aliases: ["mitra", "hey mitra"]   # used as transcript fallback if model fails to load
-    require_wake: false
+    # The name in the TEXT opens a 9 s follow-up window (no acoustic model: not trained
+    # well enough, owner 2026-10-03). Spellings Whisper produced for it on the bench.
+    wake_aliases: ["mitra", "hey mitra", "mithra", "mittra", "metra"]
+    require_wake: true       # answer only when named (open mode answered the TV)
     # Speak the acknowledgement only if you PAUSE after the name. Saying
     # "Mitra, go to the kitchen" in one breath skips it rather than talking
     # over the command (see wake_cue.py).
     wake_cue: true
     wake_cue_delay_s: 0.4
-    stop_words: ["stop"]
+    # Any of these ALONE (no name needed) halts speech AND the wheels (agent_node._on_tts_stop).
+    stop_words: ["stop", "halt", "freeze", "quiet", "silence"]
     # Noise gate before the cloud call — see vad_gate.py. 0.05 clears the
     # measured Bluetooth-mic noise floor (~0.029) with margin; the old 0.012
     # shipped below that floor, so idle-room noise passed this check and only

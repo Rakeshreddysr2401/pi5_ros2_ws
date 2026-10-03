@@ -62,6 +62,7 @@ class TTSNode(Node):
         # Only used by tts_provider=sarvam_translate (English text -> Telugu speech).
         self.declare_parameter('tts_translate_from', 'en')
         self.declare_parameter('tts_translate_to', 'te')
+        self.declare_parameter('tts_piper_model', '')   # piper voice .onnx (tts_provider: piper)
         # Acknowledgement spoken the moment the wake word is heard. Rendered
         # ONCE at startup through the configured provider (so it is instant,
         # costs no API call per wake, and sounds like the robot's own voice).
@@ -99,6 +100,7 @@ class TTSNode(Node):
             'soniox_voice': self.get_parameter('tts_soniox_voice').value,
             'translate_from': self.get_parameter('tts_translate_from').value,
             'translate_to': self.get_parameter('tts_translate_to').value,
+            'piper_model': self.get_parameter('tts_piper_model').value,
         }
         self._params = params          # reused when rendering the wake cue
         self._fallback = LocalKokoroProvider.from_config(params, os.environ)
