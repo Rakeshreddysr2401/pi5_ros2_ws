@@ -40,7 +40,10 @@ on simulated 8 kHz speech.
 | S11 | **Music volume** ("quieter") | — | — | `speaker_volume` while music plays changes the music level | ✅ one knob: the speaker volume |
 | S12 | **Robot talks while music plays** (a reply, a reminder) | — | music dips, voice on top, music returns | ducking on `/voice/tts_speaking` and `/voice/user_input` (25 %) | ✅ built; ear test pending |
 | S13 | **"Stop" / a question over loud music** | the mic hears the music itself (same box) | — | needs echo cancellation with music as a reference | 🚫 in HFP at full volume; ⏳ low-volume test. Pause from Telegram / phone works |
-| S14 | **Reminders, timers, announcements** | — | speak at the time | brain → TTS (music ducks) | ⏳ (existed; cut in the minimal brain) |
+| S14 | **Timers, alarms, reminders** ("timer 10 minutes", "wake me at 6", "remind me at 7 to…", daily) | — | speak at the time, twice for timers/alarms | `set_reminder` / `reminders` → services/alarms.py; agent_node rings (music ducks) | ✅ live 2026-10-04 (00c3ffc) |
+| S17 | **Household lists** ("add milk to the shopping list", "what's on my list", to-do) | — | — | `household_list` → services/lists.py | ✅ live 2026-10-04 |
+| S18 | **Cloud voice down** (Sarvam out of credits / unreachable) | falls back to English Whisper | falls back to English Piper | the robot SAYS so, once per 6 h (services/voice_health.py) | ✅ live 2026-10-04 (d13f6fc) |
+| S19 | **Background talk** keeps a conversation going | — | — | at most 2 follow-ups without the name (`max_follow_ups`) | ✅ (d13f6fc) |
 | S15 | **Quiet hours** (lower at night) | — | capped volume | volume cap by clock | ⏳ |
 | S16 | **Phone call through the robot** | HFP | HFP | Phase 6 | ⏳ |
 
