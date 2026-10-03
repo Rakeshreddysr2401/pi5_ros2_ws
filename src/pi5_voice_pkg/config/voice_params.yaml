@@ -44,7 +44,10 @@ pi5_tts_node:
     # Default = sarvam_translate so the brain's English replies are heard in Telugu.
     # piper: fast local (RTF ~0.25: 3 s of speech in 0.74 s). local = Kokoro, more natural but
     # RTF ~2 on this Pi (5.9 s for 2.9 s); it stays loaded as the fallback. Was sarvam_translate.
-    tts_provider: piper
+    # DEFAULT (owner, 2026-10-04): English replies spoken in Telugu through Sarvam.
+    # Sarvam down -> tts_fallback speaks them in English. Fully local: tts_provider piper.
+    tts_provider: sarvam_translate
+    tts_fallback: piper
     tts_piper_model: /home/rakhi24/ros2_ws/src/langrobo_ros/models/piper/en_US-lessac-medium.onnx
     tts_language: en
     tts_sarvam_voice: ritu     # bulbul:v3 speaker (used by sarvam + sarvam_translate)
@@ -61,12 +64,12 @@ pi5_tts_node:
     # step), cue_language is the language of the text below. Leave both empty
     # to use tts_provider — but note sarvam_translate would TRANSLATE this,
     # and "chepandi boss" came back as చెపండి (misspelt) when we tried.
-    cue_text: "Yes boss"            # Kokoro speaks English only; was "చెప్పండి బాస్" via sarvam
+    cue_text: "చెప్పండి బాస్"           # Telugu: rendered by Sarvam at startup (needs it up then)
     # Spoken if a turn takes unusually long (cold cache, LLM unreachable) so
     # the robot never just goes quiet. Published by agent_node as cue "wait".
-    cue_wait_text: "One moment boss"  # was "ఒక నిమిషం బాస్" via sarvam
-    cue_provider: piper
-    cue_language: en
+    cue_wait_text: "ఒక నిమిషం బాస్"
+    cue_provider: sarvam
+    cue_language: te
 
 pi5_stt_node:
   ros__parameters:
@@ -79,6 +82,8 @@ pi5_stt_node:
     # tiny.en, beam 1, hotword "Mitra" (2026-10-03, bench on 8 kHz HFP-degraded speech):
     # name 20/20, about half base's time, and "stop" right where base heard "Star".
     # Its slip: "what do you see" -> "think". base: model_size: base.
+    # With stt_provider sarvam this is only the fallback: English-only, so a failed
+    # Sarvam call degrades to English transcription (owner: English is fine then).
     model_size: tiny.en
     stt_beam_size: 1
     stt_hotwords: "Mitra"
@@ -120,6 +125,8 @@ pi5_stt_node:
     # ⚠️ COST/PRIVACY: with the wake word OFF (wake_detector: transcript_alias) this
     # sends EVERY ambient utterance to Sarvam. Re-enable the wake word to gate it,
     # or set stt_provider: local for free offline transcription.
-    stt_provider: local        # 2026-10-03 (owner): faster-whisper base, offline. Was sarvam (cloud, te -> en)
+    # DEFAULT (owner, 2026-10-04): Telugu speech -> English text for the brain.
+    # Sarvam down -> local Whisper (tiny.en) transcribes English. Fully local: local.
+    stt_provider: sarvam
     stt_source_language: te   # Telugu
     stt_target_language: en

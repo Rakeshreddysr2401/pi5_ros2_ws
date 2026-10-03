@@ -198,7 +198,12 @@ class STTNode(Node):
         }
         # Fallback path when a cloud provider fails: same task/language intent as the primary
         # provider, so "degraded" still means "still tries to answer the same question".
-        fallback_task = 'translate' if provider_name != 'local' and tgt_lang == 'en' and src_lang != 'en' else 'transcribe'
+        # ...unless the local model is English-only (tiny.en, base.en): it cannot
+        # translate, so a failed Telugu cloud call degrades to English (owner, 2026-10-04:
+        # "if Sarvam fails, English is fine").
+        english_only = str(model_size).endswith('.en')
+        fallback_task = ('translate' if provider_name != 'local' and tgt_lang == 'en'
+                         and src_lang != 'en' and not english_only else 'transcribe')
         self._fallback = LocalWhisperProvider.from_config(
             {**base_params, 'task': fallback_task,
              'language': src_lang if fallback_task == 'translate' else 'en'},

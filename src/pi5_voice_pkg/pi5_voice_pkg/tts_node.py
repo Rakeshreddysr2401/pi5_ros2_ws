@@ -63,6 +63,9 @@ class TTSNode(Node):
         self.declare_parameter('tts_translate_from', 'en')
         self.declare_parameter('tts_translate_to', 'te')
         self.declare_parameter('tts_piper_model', '')   # piper voice .onnx (tts_provider: piper)
+        # The local voice a failing cloud provider falls back to: 'local' (Kokoro) or
+        # 'piper' (~8x faster on this Pi; English). Kokoro stays the last resort.
+        self.declare_parameter('tts_fallback', 'local')
         # Acknowledgement spoken the moment the wake word is heard. Rendered
         # ONCE at startup through the configured provider (so it is instant,
         # costs no API call per wake, and sounds like the robot's own voice).
@@ -103,11 +106,20 @@ class TTSNode(Node):
             'piper_model': self.get_parameter('tts_piper_model').value,
         }
         self._params = params          # reused when rendering the wake cue
-        self._fallback = LocalKokoroProvider.from_config(params, os.environ)
-        self.get_logger().info('kokoro model loaded (fallback path)')
+        self._fallback = None
+        fallback_name = (self.get_parameter('tts_fallback').value or 'local').strip()
+        if fallback_name != 'local' and fallback_name in REGISTRY:
+            try:
+                self._fallback = REGISTRY[fallback_name].from_config(params, os.environ)
+                self.get_logger().info(f'{fallback_name} loaded (fallback path)')
+            except Exception as e:
+                self.get_logger().warning(f'{fallback_name} fallback unavailable ({e}); using kokoro')
+        if self._fallback is None:
+            self._fallback = LocalKokoroProvider.from_config(params, os.environ)
+            self.get_logger().info('kokoro model loaded (fallback path)')
 
-        self._provider = self._fallback if provider_name == 'local' else self._build_provider(
-            provider_name, params)
+        self._provider = (self._fallback if provider_name == self._fallback.name
+                          else self._build_provider(provider_name, params))
         self.get_logger().info(f'tts_provider = {self._provider.name}')
 
         self._speaking_pub = self.create_publisher(Bool, '/voice/tts_speaking', 10)
