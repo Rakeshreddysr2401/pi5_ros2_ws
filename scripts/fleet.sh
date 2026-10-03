@@ -13,6 +13,10 @@
 #                               #   simulated home use the Mitra twin instead:
 #                               #   laptop /workspace/mitra_sim (./mitra up) + Jetson
 #                               #   ~/mitra_sim/jetson/sim_stack.sh up (CLAUDE.md).
+#   ./scripts/fleet.sh twin [up|down|status] [world]
+#                               # the MITRA TWIN (default up home_real): the laptop's Gazebo
+#                               #   world + the Jetson's own nav stack + a SECOND brain here,
+#                               #   all on ROS domain 42. The real robot (domain 0) is untouched.
 #   ./scripts/fleet.sh stop     # park the robot: stop the body, keep brain up
 #   ./scripts/fleet.sh down     # full shutdown incl. this Pi5's services (sudo)
 #   ./scripts/fleet.sh status   # who's up, everywhere
@@ -46,6 +50,7 @@ SSH="ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-ne
 
 SIM_SCRIPT=/workspace/ros2_ws/src/rover_sim/rover_bringup/scripts/fleet_sim.sh
 ROVER_DIR="~/rover"
+TWIN_LAPTOP_DIR=/workspace/mitra_sim     # the Mitra twin's world (github mitra_sim)
 BRAIN_ENV=/home/rakhi24/.langrobo/brain.env
 
 # Which body (rover|sim) the brain's cmd_vel should drive — see ros2_bridge.py
@@ -115,7 +120,42 @@ jetson_status() {
         printf "%s=%s " "$p" "$s"; done; echo' 2>/dev/null | sed 's/^/jetson: /'
 }
 
+twin_up() {
+    local world="${1:-home_real}"
+    echo "twin: world '$world' on domain 42 (the real robot, domain 0, is not touched)"
+    if reachable "$LAPTOP_HOST"; then
+        $SSH $LAPTOP "cd $TWIN_LAPTOP_DIR && git pull -q --ff-only 2>/dev/null; ./mitra up $world" 2>&1 | sed 's/^/laptop: /'
+    else
+        echo "laptop: UNREACHABLE ($LAPTOP_HOST) -- is it on and awake? (LANGROBO_LAPTOP_HOST=<ip>)"; return 1
+    fi
+    if reachable "$JETSON_HOST"; then
+        $SSH $JETSON "git -C ~/mitra_sim pull -q --ff-only 2>/dev/null; ~/mitra_sim/jetson/sim_stack.sh up" 2>&1 | sed 's/^/jetson: /'
+    else
+        echo "jetson: UNREACHABLE ($JETSON_HOST)"; return 1
+    fi
+    "$(dirname "$0")/twin_brain.sh" up | sed 's/^/pi5:    /'
+    echo "twin: talk to it -- $(dirname "$0")/twin_brain.sh say \"Mitra, what do you see?\""
+    echo "      watch it    -- on the laptop: cd $TWIN_LAPTOP_DIR && ./mitra rviz"
+}
+twin_down() {
+    "$(dirname "$0")/twin_brain.sh" down | sed 's/^/pi5:    /'
+    reachable "$JETSON_HOST" && $SSH $JETSON "~/mitra_sim/jetson/sim_stack.sh down" 2>&1 | sed 's/^/jetson: /'
+    reachable "$LAPTOP_HOST" && $SSH $LAPTOP "cd $TWIN_LAPTOP_DIR && ./mitra down" 2>&1 | sed 's/^/laptop: /'
+    return 0
+}
+
 case "$CMD" in
+twin)
+    case "${2:-up}" in
+        up)     twin_up "${3:-home_real}" ;;
+        down)   twin_down ;;
+        status)
+            "$(dirname "$0")/twin_brain.sh" status | sed 's/^/pi5:    /'
+            reachable "$JETSON_HOST" && $SSH $JETSON "~/mitra_sim/jetson/sim_stack.sh status" 2>&1 | sed 's/^/jetson: /'
+            reachable "$LAPTOP_HOST" && $SSH $LAPTOP "cd $TWIN_LAPTOP_DIR && ./mitra status" 2>&1 | sed 's/^/laptop: /' ;;
+        *)      echo "usage: $0 twin [up|down|status] [world]"; exit 2 ;;
+    esac
+    ;;
 sim)
     set_body sim
     ensure_local_units
@@ -285,7 +325,8 @@ print("%s object(s) remembered; survey: %s" % (r.get("objects_remembered", "?"),
     else echo "check: $fails FAIL(s) — each line says what to run."; exit 1; fi
     ;;
 *)
-    echo "usage: $0 {sim|rover|stop|down|status|check}"
+    echo "usage: $0 {twin|sim|rover|stop|down|status|check}"
+    echo "  twin   the Mitra twin [up|down|status] [world]: laptop world + Jetson stack + a 2nd brain, domain 42"
     echo "  rover  start real body (Pi5 micro-ROS wheels + Jetson ./rover up; Pi5 voice)"
     echo "  sim    start simulation body (laptop Gazebo+Nav2; Pi5 voice)"
     echo "  stop   stop the robot body; keep brain + discovery (Telegram) alive"

@@ -292,7 +292,7 @@ no longer exist.
 
 ## The Mitra twin (mitra_sim) — test the real brain in a simulated home
 
-Since 2026-10-04 (owner: "nav2, cuVSLAM, nvblox, all planning on the Jetson
+Since 2026-10-03 (owner: "nav2, cuVSLAM, nvblox, all planning on the Jetson
 only; the laptop is just the simulator"). Repo
 github.com/Rakeshreddysr2401/mitra_sim (private), laptop
 `/workspace/mitra_sim`. The laptop is the WORLD only: Gazebo homes, the
@@ -304,9 +304,21 @@ domain 42**, so the twin can never reach the real wheels (domain 0); its
 learned state goes to `/tmp/mitra_state`, never `/logs`. Laptop: `./mitra up
 home`, `./mitra rviz`, `./mitra goal X Y`, `./mitra scenario <world>`. From
 this Pi: `tools/run_suite.sh` runs every world end to end, judged on the true
-pose. Results, fixes and open items: mitra_sim `docs/STATUS.md`. The Pi 5
-brain is not wired to the twin yet (it stays on domain 0); `fleet.sh sim`
-still means the older rover_sim below.
+pose. Results, fixes and open items: mitra_sim `docs/STATUS.md`.
+
+**The brain on the twin (2026-10-03):** `scripts/twin_brain.sh up` runs a
+SECOND agent_node, unchanged, on domain 42 beside the real one (langrobo-brain,
+domain 0, untouched): `LANGROBO_STATE_DIR=~/.langrobo_twin` (its photos, saved
+places and object memory never mix with the real robot's), Telegram off, no
+voice, its own teleop switch (`twin_brain.sh manual on|off`, a file), health on
+:8092, LangSmith project `mitra-twin`. Talk to it with `twin_brain.sh say "..."`
+(prints the replies and the later arrival report). The Jetson half runs the
+rover's own `pixel_to_goal`, so "go near X" is the real path. It shares the Mac
+mini's llama.cpp slots with the real brain. **Default is the real robot**: the
+twin runs only when started. Whole twin at once: `./scripts/fleet.sh twin
+[up|down|status] [world]` (default `home_real`: real-looking household models).
+First run, `home`: "go near the red cylinder" -> reached, 24 cm from it on the
+true pose. `fleet.sh sim` still means the older rover_sim below.
 
 ## Simulation laptop (rover_sim) — the second body
 

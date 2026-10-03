@@ -43,8 +43,11 @@ def main():
 
     def on_speech(m):
         state["last"] = time.monotonic()
+        text = m.data.replace("<|eou|>", "").strip()   # end-of-utterance marker, for the speaker
+        if not text:
+            return
         state["said"] += 1
-        print(f"[{time.monotonic() - t0:6.1f}s] MITRA: {m.data}", flush=True)
+        print(f"[{time.monotonic() - t0:6.1f}s] MITRA: {text}", flush=True)
 
     def on_thinking(m):
         state["thinking"] = bool(m.data)
