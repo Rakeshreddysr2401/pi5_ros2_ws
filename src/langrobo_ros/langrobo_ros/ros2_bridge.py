@@ -144,6 +144,12 @@ class ROS2Bridge:
         self._nav_lock      = threading.Lock()
         self._nav_cancel_event: threading.Event | None = None
         self._nav_thread:       threading.Thread | None = None
+        # What the robot is driving to, and how its last drive ended -- read by
+        # get_robot_status, so "where are you?" is answered from the robot, not
+        # from the last thing it said (2026-10-04: "1.5 m from the door",
+        # long after it had arrived).
+        self._nav_goal:         dict | None = None
+        self._last_nav:         dict | None = None
 
         # ── Motion interrupt ───────────────────────────────────────────────────
         # Set by agent_node when new user input arrives, so blocking motion tools
@@ -812,6 +818,15 @@ class ROS2Bridge:
         with self._nav_lock:
             return bool(self._nav_thread and self._nav_thread.is_alive())
 
+    def navigation_state(self) -> dict:
+        """{"active": bool, "goal": {x, y, label, since} | None, "last":
+        {success, message, label, at} | None} -- the background drive now, and
+        how the previous one ended."""
+        with self._nav_lock:
+            active = bool(self._nav_thread and self._nav_thread.is_alive())
+            return {"active": active, "goal": dict(self._nav_goal) if self._nav_goal else None,
+                    "last": dict(self._last_nav) if self._last_nav else None}
+
     def start_nav_to_pose(self, x: float, y: float, yaw_deg: float, label: str = "") -> None:
         """Start driving to (x, y, yaw) in NAV_FRAME asynchronously -- through
         reach_node, or plain Nav2 (see NAV_BACKEND).
@@ -846,6 +861,7 @@ class ROS2Bridge:
         )
         with self._nav_lock:
             self._nav_thread = thread
+            self._nav_goal = {"x": x, "y": y, "label": label, "since": time.time()}
         thread.start()
 
     def _nav_worker(
@@ -1047,11 +1063,18 @@ class ROS2Bridge:
                     elif d["result"] == "cancelled":
                         self._fire_nav_done(False, f"Navigation to {dest} cancelled")
                     else:
+                        # reach's own final reason, unless it is only the
+                        # count ("gave up after N attempts") -- then the last
+                        # attempt's. Its note says why the way back the rover
+                        # came did not work either (Jetson trail.way_back_note).
                         tried = d.get("tried") or []
-                        why = tried[-1] if tried else d.get("why", "")
+                        final = d.get("why", "")
+                        why = tried[-1] if tried and final.startswith("gave up") else (
+                            final or (tried[-1] if tried else ""))
+                        note = f" ({d['note']})" if d.get("note") else ""
                         self._fire_nav_done(
-                            False, f"Navigation to {dest} failed after retrying -- {why}."
-                            if why else f"Navigation to {dest} failed.")
+                            False, f"Navigation to {dest} failed after retrying -- {why}.{note}"
+                            if why else f"Navigation to {dest} failed.{note}")
                     return
                 waited = time.monotonic() - t0
                 if not lines and waited > 10.0:
@@ -1119,6 +1142,9 @@ class ROS2Bridge:
         # arrival is indistinguishable from a nav that never finished unless
         # this line is in the log (2026-09-10: a goal failed after 44 s of
         # follow_path aborts and nothing anywhere recorded that it had).
+        with self._nav_lock:
+            self._last_nav = {"success": success, "message": message, "at": time.time(),
+                              "label": (self._nav_goal or {}).get("label", "")}
         cb = self._nav_done_callback
         self._node.get_logger().info(
             f"nav done: success={success} listener={'yes' if cb else 'NONE'} "

@@ -18,6 +18,7 @@ ToolMessage error and the LLM responds gracefully.
 
 import logging
 import os
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +172,9 @@ class StubBridge:
     def navigation_active(self) -> bool:
         return False
 
+    def navigation_state(self) -> dict:
+        return {"active": False, "goal": None, "last": getattr(self, "_last_nav", None)}
+
     def reach_and_wait(self, x: float, y: float, yaw_deg: float,
                        timeout: float = 240.0) -> dict:
         """No Jetson: "unavailable", which is the real bridge's answer when
@@ -209,6 +213,8 @@ class StubBridge:
     def start_nav_to_pose(self, x: float, y: float, yaw_deg: float, label: str = "") -> None:
         dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"
         logger.info("[STUB] navigate_to_pose → %s", dest)
+        self._last_nav = {"success": True, "message": f"[STUB] Simulated arrival at {dest}",
+                          "label": label, "at": time.time()}
         if self._nav_done_callback:
             self._nav_done_callback(True, f"[STUB] Simulated arrival at {dest}")
 

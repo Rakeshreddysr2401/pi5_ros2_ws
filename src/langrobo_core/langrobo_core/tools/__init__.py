@@ -56,10 +56,13 @@ CHAT_TOOLS = ([get_current_time, get_robot_status, ask_photos, handover] + WEB_T
 LOCAL_AGENT_TOOLS = [look, locate_object, ask_photos, handover] + HEAD_TOOLS + TELEGRAM_TOOLS
 
 # navigate — everything that moves the wheels.
+# get_robot_status: "where are you now?" / "did you get there?" right after a
+# drive -- the follow-up stays here (sticky), and without it the model guessed
+# from its own earlier reply and sent a STOP to "check" (2026-10-04).
 # Telegram: the photo only. "Go to the bag and send me a pic" needs it here --
 # called mid-drive, it holds the photo until arrival (telegram.py). Messages
 # are chat's job: navigate never sent one in 3 weeks of logs, and the schema
 # cost ~150 tokens on every move (2026-10-02).
 NAVIGATE_TOOLS = [move_robot, navigate_to_pose, approach_described_object,
                   scan_surroundings, save_location, list_saved_locations,
-                  ask_photos, handover] + HEAD_TOOLS + [send_telegram_photo]
+                  get_robot_status, ask_photos, handover] + HEAD_TOOLS + [send_telegram_photo]

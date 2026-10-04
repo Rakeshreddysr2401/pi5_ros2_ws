@@ -128,6 +128,10 @@ class _FakeService:
         return {"rakesh": TelegramMember(111, "Rakesh", "owner"),
                 "mom": TelegramMember(222, "Mom", "family")}.get(name.casefold())
 
+    def members_with_role(self, role):
+        return [m for m in (TelegramMember(111, "Rakesh", "owner"),
+                            TelegramMember(222, "Mom", "family")) if m.role == role]
+
     def send_message(self, chat_id, text):
         self.sent.append(("message", chat_id))
         return None
@@ -182,6 +186,27 @@ def test_family_sender_can_relay_but_not_photo(fake_channel):
 def test_unknown_recipient_lists_members(fake_channel):
     out = send_telegram_message.func(recipient="Uncle", message="hi", state={})
     assert "Rakesh, Mom" in out
+
+
+def test_unknown_recipient_says_not_sent(fake_channel):
+    """2026-10-04: 'I don't know Boss' came back, and the model told the user
+    the photo had gone to Rakesh."""
+    out = send_telegram_photo.func(recipient="Uncle", caption="", state={})
+    assert out.startswith("NOT sent") and fake_channel.sent == []
+
+
+@pytest.mark.parametrize("who", ["Boss", "me", "the owner"])
+def test_boss_and_me_from_voice_or_studio_mean_the_owner(fake_channel, who):
+    out = send_telegram_photo.func(recipient=who, caption="", state={})
+    assert "Photo sent to Rakesh" in out
+    assert fake_channel.sent == [("photo", 111)]
+
+
+def test_me_over_telegram_means_the_sender(fake_channel):
+    state = {"channel": "telegram", "sender_name": "Mom", "sender_role": "family",
+             **_explicit("send me a message")}
+    out = send_telegram_message.func(recipient="me", message="hi", state=state)
+    assert "delivered to Mom" in out
 
 
 def test_photo_with_dead_camera_is_honest(fake_channel, monkeypatch):

@@ -196,7 +196,7 @@ def test_other_depth_failures_are_not_retried(robot, scripted, monkeypatch):
     vlm.append((448.0, 250.0, None))
     robot.replies = [{"ok": False, "reason": "no_depth_at_pixel"}]
     out = approach_described_object.invoke({"description": "the orange bottle", "state": dict(STATE)})
-    assert "no_depth_at_pixel" in out and len(robot.queries) == 1
+    assert "glass, a mirror" in out and len(robot.queries) == 1
 
 
 

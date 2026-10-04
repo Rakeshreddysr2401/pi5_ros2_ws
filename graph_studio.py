@@ -153,6 +153,63 @@ def _make_stub_bridge():
 _active_bridge = _try_ros2_bridge() or _make_stub_bridge()
 bridge_module.init(_active_bridge)
 
+# ── Drive reports back into the Studio thread that asked ─────────────────────
+# A drive runs in the background and finishes minutes after its turn ended.
+# agent_node queues the report as a [SYSTEM] turn; Studio had no listener, so
+# the bridge logged "nav done with NO listener" and the report was thrown away.
+# On 2026-10-04 that made the robot say it was "1.5 m from the door" after it
+# had arrived, and a "say good morning on arrival" errand could never run.
+# Here the same report (movement.nav_report) is posted as a new run on the
+# thread whose tool started the drive -- the Studio page shows it as a turn.
+
+_STUDIO_URL = os.getenv("LANGROBO_STUDIO_URL", "http://127.0.0.1:2024")
+_last_thread: str | None = None     # for tool-injected turns, which carry no thread
+
+
+def _post_system_turn(thread_id: str | None, text: str) -> None:
+    import json
+    import urllib.request
+    if not thread_id:
+        logger.warning("Studio: no thread to report to -- dropped: %s", text[:120])
+        return
+    body = {"assistant_id": "agent",
+            "input": {"messages": [{"type": "human", "content": text}],
+                      "active_agent": "chat", "channel": "system"},
+            # A turn the user started meanwhile finishes first.
+            "multitask_strategy": "enqueue"}
+    req = urllib.request.Request(f"{_STUDIO_URL}/threads/{thread_id}/runs",
+                                 data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=10).read()
+        logger.info("Studio: report posted to thread %s: %s", thread_id, text[:120])
+    except Exception as e:
+        logger.error("Studio: could not post the report to thread %s (%s): %s",
+                     thread_id, e, text[:120])
+
+
+def _on_nav_done(success: bool, message: str) -> None:
+    global _last_thread
+    from langrobo_core.tools.movement import nav_report
+    rep = nav_report(success, message)
+    thread_id = rep["requester"].get("thread_id") or _last_thread
+    _last_thread = thread_id
+    text = rep["text"]
+    if rep["check"]:
+        # Already on the bridge's nav thread, so the 5-15 s photo check holds
+        # nothing else up.
+        from langrobo_core.tools.approach import arrival_check
+        target, at = rep["check"]
+        text = text[:at] + arrival_check(target) + text[at:]
+    _post_system_turn(thread_id, text)
+
+
+if hasattr(_active_bridge, "register_nav_done_callback"):
+    _active_bridge.register_nav_done_callback(_on_nav_done)
+if hasattr(_active_bridge, "register_system_turn_callback"):
+    _active_bridge.register_system_turn_callback(
+        lambda text: _post_system_turn(_last_thread, text))
+
 # ── Build and export graph ────────────────────────────────────────────────────
 
 from langrobo_core.graph import build_graph

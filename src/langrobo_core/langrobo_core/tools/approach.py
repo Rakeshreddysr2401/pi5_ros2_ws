@@ -193,6 +193,34 @@ def _capture(bridge, settle_s: float = 2.5, source: str = "search") -> tuple:
     return frame, {"stamp": stamp, "pose": pose, "when": when}
 
 
+# Depth failures the Jetson can report, in language a user can act on. Every
+# one of these means "the pixel was found but the sensor could not measure it",
+# which is a different answer from "I cannot see it" and must not be collapsed
+# into one — the object IS there.
+DEPTH_FAIL_HELP = {
+    "no_depth_at_pixel": ("the depth sensor has no reading there — it may be "
+                          "glass, a mirror, something very dark, or an edge"),
+    "depth_out_of_range": ("it is outside the depth camera's usable range — "
+                           "closer than 0.3 m or too far away"),
+    "no_depth_frame": "the depth stream has stopped",
+    "no_camera_info": "the camera calibration is not being published",
+    "pixel_out_of_bounds": "I picked a point outside the image",
+    "no_robot_pose": "I do not currently know where I am",
+    "no_reply_from_jetson": ("the depth service on the Jetson is not "
+                             "answering"),
+    # Grounding at the moment of the photo (approach._ground) failed and the
+    # robot has moved since, so the newest depth is a different view.
+    "snapshot_expired": ("the depth for that photo is no longer held and I "
+                         "have moved since, so I need a fresh look"),
+    "no_depth_near_stamp": ("the depth stream had a gap when that photo was "
+                            "taken and I have moved since"),
+    "tf_failed": "I could not tell where the camera was when the photo was taken",
+    # _ground_retrying: the first photo's depth failed, and the fresh photo
+    # taken to measure again no longer shows it -- a person who walked off.
+    "lost_sight": "when I looked again to measure it, it was no longer in view -- it may have moved",
+}
+
+
 # The photo's own depth and pose are gone (the hold did not arrive, or the
 # depth stream had a gap there). The newest depth and pose describe the same
 # view only if the robot has not moved since the photo.
@@ -239,7 +267,7 @@ def _ground_retrying(bridge, description: str, uv: tuple, capture: dict | None) 
     except Exception:
         return res, capture
     if uv2 is None:
-        return res, capture
+        return {"ok": False, "reason": "lost_sight", "first": res.get("reason")}, capture
     return _ground(bridge, uv2, fresh, description), fresh
 
 
@@ -284,6 +312,47 @@ def _face(bridge, bearing_deg: float) -> tuple:
     return _mv.turn_robot(bridge, bearing_deg)
 
 
+# Who a person IS, as opposed to what they look like. "Go to my dad" on
+# 2026-10-04 drove at the first man the camera saw -- the owner's brother, in
+# another room: the vision model was asked for "the man who is my Dad" and had
+# nothing to go on but "man". Not intent matching (CLAUDE.md): the model has
+# already chosen to approach; this checks whether the description gives the
+# camera anything to find. Telugu kinship words too -- the household speaks it.
+_RELATIONS = {
+    "dad", "daddy", "father", "papa", "mom", "mum", "mummy", "mommy", "mother",
+    "brother", "bro", "sister", "sis", "son", "daughter", "wife", "husband",
+    "grandma", "grandmother", "granny", "grandpa", "grandfather", "uncle",
+    "aunt", "aunty", "auntie", "cousin", "friend", "boss", "nephew", "niece",
+    "nanna", "amma", "anna", "akka", "tammudu", "thammudu", "chelli", "babai",
+    "pinni", "mavayya", "atha", "tatayya", "ammamma", "nanamma",
+}
+_PERSON_WORDS = {"man", "woman", "person", "guy", "lady", "boy", "girl", "kid",
+                 "child", "someone", "he", "she", "him", "her", "people"}
+_FILLER = {"the", "a", "an", "my", "our", "your", "his", "their", "who", "is",
+           "that", "which", "named", "called", "of", "me", "mine", "elder",
+           "younger", "little", "big", "older"}
+
+
+def _names_a_person_only(description: str) -> bool:
+    """True when the description names a person -- a relation ("my dad") or a
+    household member's name -- and says nothing the camera could see."""
+    words = re.findall(r"[a-z]+", description.casefold())
+    if not words:
+        return False
+    names = set()
+    try:
+        from ..services import telegram as telegram_service
+        svc = telegram_service.get()
+        if svc is not None:
+            names = {n.casefold() for n in svc.member_names()}
+    except Exception:
+        pass
+    who = _RELATIONS | names
+    if not any(w in who for w in words):
+        return False
+    return all(w in who or w in _PERSON_WORDS or w in _FILLER for w in words)
+
+
 @tool
 def approach_described_object(description: str,
                               state: Annotated[dict, InjectedState],
@@ -291,7 +360,8 @@ def approach_described_object(description: str,
     """Find a described object with the camera and drive up close to it,
     avoiding obstacles (Nav2). Use for ANY object the user describes but has
     not saved as a location: "the red coffee mug", "my black backpack", "the
-    chair", "the surf excel packet".
+    chair", "the surf excel packet". A person is described by how they look
+    ("the man in the blue shirt") -- it cannot tell who someone is.
 
     If the robot has seen it before (in any photo, from anywhere), it goes to
     where it was -- turning to it if it is close, driving over if it is far or
@@ -319,6 +389,12 @@ def _approach(description: str, state: dict, then: str = "") -> str:
     # for the replies: "the orange bottle" -> "orange bottle", so the text does
     # not read "the the orange bottle" (floor test, 2026-09-26)
     name = re.sub(r"^(the|a|an)\s+", "", description, flags=re.IGNORECASE)
+    if _names_a_person_only(description):
+        return (f"I can't recognise who people are -- I only see what they look "
+                f"like, so I could go to the wrong person. Ask the user what "
+                f"\"{description}\" looks like or is wearing, or where they are "
+                f"(\"the man in the blue shirt by the sofa\"), then try again "
+                f"with that description. I have not moved.")
     bridge.clear_motion_stop()
 
     try:
@@ -337,6 +413,7 @@ def _approach(description: str, state: dict, then: str = "") -> str:
     note = ""            # what the photo check found, said before the rest
     first_view = 0       # 1 = the view ahead has been checked already
     at_its_spot = False  # looking from where it was seen (so "moved?" means something)
+    drove_over = ""     # said when a later step fails: the drive there DID happen
 
     # ── 1. The photos first: seen before -> go to where it was, THEN look ───
     # Every photo the robot took this session is in the photo log; one
@@ -400,6 +477,8 @@ def _approach(description: str, state: dict, then: str = "") -> str:
                     note = (f"I saw the {name} {age} over there, but couldn't get to that "
                             f"spot ({leg.get('why') or leg.get('result')}), so I'm "
                             f"searching from here. ")
+                else:
+                    drove_over = f"I drove over to where I saw the {name} {age}. "
             at_its_spot = went
             if went and not drove and looked_here:
                 first_view = 1          # at the viewpoint already, and just looked
@@ -498,9 +577,15 @@ def _approach(description: str, state: dict, then: str = "") -> str:
             return ("I can see it, but the depth-grounding service on the "
                     "Jetson isn't answering, so I can't work out where it is "
                     "in the room.")
-        return (f"I can see the {name}, but I couldn't measure its "
-                f"distance (depth reading failed: {reason}) — it may be too "
-                f"close, too far, or reflective.")
+        # Say what happened, including a drive that did happen: on 2026-10-04
+        # the robot drove 2.5 m to a person, lost her when she walked off, and
+        # answered "couldn't measure its distance -- it may be reflective".
+        help_text = DEPTH_FAIL_HELP.get(reason, f"the depth reading failed ({reason})")
+        if reason == "lost_sight":
+            return (f"{drove_over}I saw the {name}, but {help_text}, so I "
+                    f"have not driven to it.")
+        return (f"{drove_over}I can see the {name}, but I couldn't measure how "
+                f"far it is: {help_text}. I have not driven to it.")
 
     obj = res.get("object")
     if placed and obj and at_its_spot:

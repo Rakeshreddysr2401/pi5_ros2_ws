@@ -33,7 +33,7 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
 from . import _bridge
-from .approach import _capture, _ground_retrying, _vlm_locate
+from .approach import DEPTH_FAIL_HELP, _capture, _ground_retrying, _vlm_locate
 
 # Turned into "to my left" / "ahead" for speech. The VLM's pixel is itself only
 # good to a few degrees and ground_pixel medians over a window, so finer
@@ -54,31 +54,6 @@ def describe_bearing(bearing_deg: float) -> str:
         if mag <= limit:
             return phrase.format(side=side)
     return _BEARING_BANDS[-1][1].format(side=side)
-
-
-# Depth failures the Jetson can report, in language a user can act on. Every
-# one of these means "the pixel was found but the sensor could not measure it",
-# which is a different answer from "I cannot see it" and must not be collapsed
-# into one — the object IS there.
-_DEPTH_FAIL_HELP = {
-    "no_depth_at_pixel": ("the depth sensor has no reading there — it may be "
-                          "glass, a mirror, something very dark, or an edge"),
-    "depth_out_of_range": ("it is outside the depth camera's usable range — "
-                           "closer than 0.3 m or too far away"),
-    "no_depth_frame": "the depth stream has stopped",
-    "no_camera_info": "the camera calibration is not being published",
-    "pixel_out_of_bounds": "I picked a point outside the image",
-    "no_robot_pose": "I do not currently know where I am",
-    "no_reply_from_jetson": ("the depth service on the Jetson is not "
-                             "answering"),
-    # Grounding at the moment of the photo (approach._ground) failed and the
-    # robot has moved since, so the newest depth is a different view.
-    "snapshot_expired": ("the depth for that photo is no longer held and I "
-                         "have moved since, so I need a fresh look"),
-    "no_depth_near_stamp": ("the depth stream had a gap when that photo was "
-                            "taken and I have moved since"),
-    "tf_failed": "I could not tell where the camera was when the photo was taken",
-}
 
 
 @tool
@@ -124,7 +99,7 @@ def locate_object(description: str,
     res, capture = _ground_retrying(bridge, description, uv, capture)   # at the moment of the photo
     if not res.get("ok"):
         reason = res.get("reason", "unknown")
-        help_text = _DEPTH_FAIL_HELP.get(reason, f"depth reading failed: {reason}")
+        help_text = DEPTH_FAIL_HELP.get(reason, f"depth reading failed: {reason}")
         return (f"I can see {description}, but I can't measure its distance — "
                 f"{help_text}.")
 

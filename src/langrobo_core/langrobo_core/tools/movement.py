@@ -482,6 +482,62 @@ def remember_requester(state: dict | None, then: str = "", target: str = "") -> 
         "role": state.get("sender_role"),
         "then": (then or "").strip() or None,
         "target": (target or "").strip() or None,
+        # The LangGraph thread that asked: Studio posts the arrival report back
+        # into it (graph_studio.py). None under agent_node, which has one history.
+        "thread_id": _current_thread_id(),
+    }
+
+
+def _current_thread_id() -> str | None:
+    try:
+        from langgraph.config import get_config
+        return (get_config().get("configurable") or {}).get("thread_id")
+    except Exception:            # outside a graph run (tests, a bare call)
+        return None
+
+
+def nav_report(success: bool, message: str) -> dict:
+    """The [SYSTEM] turn that reports a finished drive, for whichever process
+    ran it -- agent_node queues it, Studio posts it into the asking thread.
+
+    {"text", "check": (target, index) | None -- run approach.arrival_check for
+    target and insert its sentence at index, "quiet", "sender": (name, role) |
+    None, "requester", "photo_note"}.
+
+    A system turn replies to the speaker by default; when the navigation was
+    requested over Telegram the report belongs in that chat, so the turn
+    carries an explicit routing instruction."""
+    status = "Navigation succeeded" if success else "Navigation failed"
+    req = get_last_nav_requester() or {}
+    telegram = req.get("channel") == "telegram"
+    routing = ""
+    if telegram:
+        routing = (f" (This navigation was requested by {req.get('sender')} "
+                   f"over Telegram — send this report to them with "
+                   f"send_telegram_message instead of saying it aloud.)")
+    # A photo asked for mid-drive is sent HERE, by code, on arrival (and
+    # dropped on failure); the note stops the model sending a second one.
+    from .telegram import send_pending_photo
+    photo_note = send_pending_photo(success)
+    if photo_note:
+        routing += f" ({photo_note})"
+    # Is the object really there? approach.arrival_check, one fresh photo,
+    # 5-15 s -- run by the caller when it processes the turn, not here: run
+    # in the nav callback it held the report back, and a message that came in
+    # meanwhile was answered first (Telegram 2026-10-02).
+    check = req.get("target") if success else None
+    # The errand that came with the drive ("...and tell me what is on it").
+    task_note = arrival_task_note(success, message)
+    head = f"[SYSTEM] {status}: {message}"
+    return {
+        "text": f"{head}{task_note}{routing}",
+        "check": (check, len(head)) if check else None,
+        # Routed to Telegram = QUIET: the report goes to the phone, and nothing
+        # of this turn reaches the speaker (2026-09-27).
+        "quiet": telegram,
+        "sender": (req.get("sender"), req.get("role")) if telegram else None,
+        "requester": req,
+        "photo_note": photo_note,
     }
 
 

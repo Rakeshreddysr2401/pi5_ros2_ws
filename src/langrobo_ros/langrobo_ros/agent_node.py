@@ -445,49 +445,19 @@ class AgentNode(Node):
                 f"from Studio, stop this brain first.")
 
     def _on_nav_done(self, success: bool, message: str) -> None:
-        """Called by bridge when Nav2 goal finishes. Injects system message.
-
-        A system turn replies to the speaker by default; when the navigation
-        was requested over Telegram the report belongs in that chat, so the
-        turn carries an explicit routing instruction."""
-        status = "Navigation succeeded" if success else "Navigation failed"
-        from langrobo_core.tools.movement import get_last_nav_requester
-        req = get_last_nav_requester() or {}
-        routing = ""
-        if req.get("channel") == "telegram":
-            routing = (f" (This navigation was requested by {req.get('sender')} "
-                       f"over Telegram — send this report to them with "
-                       f"send_telegram_message instead of saying it aloud.)")
-        # A photo asked for mid-drive is sent HERE, by code, on arrival (and
-        # dropped on failure); the note stops the model sending a second one.
-        from langrobo_core.tools.telegram import send_pending_photo
-        photo_note = send_pending_photo(success)
-        if photo_note:
-            routing += f" ({photo_note})"
+        """Called by bridge when Nav2 goal finishes. Injects system message
+        (movement.nav_report -- the same report Studio posts). The worker runs
+        the arrival check as the first part of processing it, and system turns
+        go before any user turn."""
+        from langrobo_core.tools.movement import nav_report
+        rep = nav_report(success, message)
+        req = rep["requester"]
         self.get_logger().info(
             f"nav report queued -> channel={req.get('channel') or 'voice'} "
-            f"sender={req.get('sender') or '-'} routed={bool(routing)} photo={photo_note!r} "
-            f"task={req.get('then')!r}")
-        # Is the object really there? Checked by code (approach.arrival_check,
-        # one fresh photo, 5-15 s) -- but NOT here: run here it held the report
-        # back, and a message that came in meanwhile was answered first ("I am
-        # already on my way" after the robot had arrived, Telegram 2026-10-02).
-        # The report is queued now; the worker runs the check as the first part
-        # of processing it, and system turns go before any user turn.
-        check = req.get("target") if success else None
-        # The errand that came with the drive ("...and tell me what is on it"):
-        # do it now, or say it was not done (movement.arrival_task_note).
-        from langrobo_core.tools.movement import arrival_task_note
-        task_note = arrival_task_note(success, message)
-        # Routed to Telegram = QUIET: the report goes to the phone, and nothing
-        # of this turn reaches the speaker. It used to say "one moment" and
-        # then the model's leftover text aloud to an empty room (2026-09-27).
-        head = f"[SYSTEM] {status}: {message}"
-        self._enqueue_system(f"{head}{task_note}{routing}",
-                             check=(check, len(head)) if check else None,
-                             quiet=req.get("channel") == "telegram",
-                             sender=((req.get("sender"), req.get("role"))
-                                     if req.get("channel") == "telegram" else None))
+            f"sender={req.get('sender') or '-'} quiet={rep['quiet']} "
+            f"photo={rep['photo_note']!r} task={req.get('then')!r}")
+        self._enqueue_system(rep["text"], check=rep["check"],
+                             quiet=rep["quiet"], sender=rep["sender"])
 
     # ── Two-slot queue (spin thread → worker thread) ──────────────────────
 

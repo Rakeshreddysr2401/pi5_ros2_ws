@@ -50,11 +50,34 @@ def _gate(state: dict, capability: str, recipient: str):
         return None, None, (
             f"Permission denied: {sender} ({role}) is not allowed to use "
             f"'{capability}'. Politely refuse and offer to ask the owner instead.")
-    member = svc.member_by_name(recipient)
+    member = svc.member_by_name(recipient) or _self_member(svc, state, recipient)
     if member is None:
-        return None, None, (f"I don't know {recipient!r} on Telegram. "
-                            f"Known members: {', '.join(svc.member_names())}.")
+        _audit(sender, capability, recipient, "unknown_recipient")
+        # "NOT sent" in so many words: with a softer line the model told the
+        # user "I have sent a photo to Rakesh" -- nothing had gone (2026-10-04).
+        return None, None, (f"NOT sent -- nothing went to anyone: I don't know "
+                            f"{recipient!r} on Telegram. Known members: "
+                            f"{', '.join(svc.member_names())}. Tell the user it was "
+                            f"not sent and ask who they meant.")
     return svc, member, None
+
+
+# How people name THEMSELVES as the recipient ("send me the picture"; the owner
+# is addressed as "Boss", 2026-10-04). Names, not intent: this only resolves who
+# "me" is, after the model has already chosen to send.
+_SELF_NAMES = {"me", "myself", "boss", "the boss", "owner", "the owner", "user",
+               "the user"}
+
+
+def _self_member(svc, state: dict, recipient: str):
+    """The asker, when the recipient is how people name themselves: the
+    Telegram sender if they are a member, else (voice, Studio) the one owner."""
+    if recipient.strip().casefold() not in _SELF_NAMES:
+        return None
+    if state.get("channel") == "telegram" and state.get("sender_name"):
+        return svc.member_by_name(state["sender_name"])
+    owners = svc.members_with_role("owner")
+    return owners[0] if len(owners) == 1 else None
 
 
 @tool
