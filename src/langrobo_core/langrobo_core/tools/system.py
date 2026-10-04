@@ -45,8 +45,12 @@ def get_robot_status() -> str:
 
     pose = bridge.get_current_pose()
     if pose:
+        # The distance in words: given only x/y, the model read "x=0.42,
+        # y=0.10" plus "no drive asked" as "I'm where I started" (live test
+        # 2026-10-04) -- the rover had been moved by other means.
         parts.append(f"I'm at x={pose[0]:.2f} m, y={pose[1]:.2f} m, facing "
-                     f"{pose[2]:.0f} deg (measured from where I started this session)")
+                     f"{pose[2]:.0f} deg -- {math.hypot(pose[0], pose[1]):.2f} m from "
+                     f"where I started this session")
     else:
         parts.append("I don't know where I am right now (no pose)")
     parts.append(_drive_status(bridge.navigation_state(), pose))
@@ -73,7 +77,7 @@ def _drive_status(nav: dict, pose: tuple | None) -> str:
         mins = (time.time() - goal.get("since", time.time())) / 60.0
         return f"I'm still driving to {where} ({mins:.0f} min so far{togo})"
     if not last:
-        return "I haven't driven anywhere this session"
+        return "nobody has sent me on a drive this session"
     where = f" to '{last['label']}'" if last.get("label") else ""
     ago = _ago(time.time() - last["at"])
     if last["success"]:

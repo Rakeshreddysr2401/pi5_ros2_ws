@@ -46,7 +46,8 @@ def bridge(monkeypatch):
 def test_status_says_where_the_robot_is(bridge):
     bridge()
     out = get_robot_status.invoke({})
-    assert "x=1.00 m, y=2.00 m" in out and "haven't driven" in out
+    assert "x=1.00 m, y=2.00 m" in out and "2.24 m from where I started" in out
+    assert "nobody has sent me on a drive" in out
 
 
 def test_status_while_driving_gives_the_distance_left(bridge):
