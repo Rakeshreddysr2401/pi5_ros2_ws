@@ -73,7 +73,7 @@ the robot's question as context.
 |---|---|---|
 | boAt Stone is the mic **and** the speaker (owner's choice) | HFP: 8 kHz mic, phone-quality sound; music sounds like a call | kept |
 | the Stone cancels its own playback in hardware | an acoustic self-test is impossible on it; latency is measured per stage | measured per stage |
-| Wi-Fi drops (SSH lost ~6 times overnight) | spikes in every cloud call | **owner, with sudo:** `sudo nmcli con mod "Airtel_Singireddy's" 802-11-wireless.powersave 2 && sudo nmcli con up "Airtel_Singireddy's"` |
+| Wi-Fi drops (SSH lost ~6 times overnight) | spikes in every cloud call | **done 2026-10-04 05:38**: Wi-Fi power saving off for Airtel_Singireddy's (nmcli powersave 2), reconnected |
 | Sarvam credits | out of credits = English fallback, announced once | new key in `.env` 2026-10-04 |
 | Mac mini runs the brain **and** the relevance check | under load the check took up to 3 s and was ignored | timeout 3 s, safe default |
 
