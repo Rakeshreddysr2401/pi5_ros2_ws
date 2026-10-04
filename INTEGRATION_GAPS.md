@@ -368,7 +368,7 @@ neither.** Every pose is in `NAV_FRAME` (`odom`).
 | `/goal_exec/turn`, `/goal_exec/goal` | PoseStamped | the target pose; `header.stamp` doubles as the goal key |
 | `/goal_exec/status` | String (JSON) | `goal_stamp` = `"<sec>.<nanosec 9 digits>"` of that key, `state` (`done` ends it), `result` (`reached` = ok; `refused`/`stalled`/`failed`/`cancelled`), `why` |
 | `/reach/goal` | PoseStamped | same keying as goal_exec |
-| `/reach/status` | String (JSON) | `goal_stamp`, `result` on the final line (`reached`/`failed`/`cancelled`), `tried` (list of attempt notes; the last is shown), `why`, `note` (arrived, final face-turn blocked) |
+| `/reach/status` | String (JSON) | `goal_stamp`, `result` on the final line (`reached`/`failed`/`cancelled`), `tried` (list of attempt notes; the last is shown), `why` (since 2026-10-04 `no way from here: <why> -- 3 times from the same spot` is a final reason the bridge shows as is), `note` (arrived: final face-turn blocked; failed: why the way back along the trail did not work) |
 | `/goal_exec/cancel`, `/reach/cancel` | Empty | cancel whatever is running |
 | `/fusion/status` | String (JSON) | `origin_epoch` — object memory and saved locations are only valid under the same one |
 

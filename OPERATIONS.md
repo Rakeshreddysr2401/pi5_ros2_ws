@@ -43,7 +43,10 @@ only.** With `agent_node` up you get `/studio_bridge` beside it and two
 publishers that can both command the wheels. It does not touch micro-ROS, so
 there is no UDP 8888 conflict. A `navigate` turn typed into the Studio browser
 box **moves the real robot** — a human watches, and MANUAL on the teleop is the
-stop.
+stop. Since 2026-10-04 such a drive reports back into the Studio thread that
+started it (arrival, failure and its reason, the "on arrival" errand) --
+`graph_studio.py` registers the nav-done callback and posts
+`movement.nav_report` as a new run. Before, the report was thrown away.
 
 One thing it gets right that is easy to get wrong by hand:
 
@@ -233,7 +236,7 @@ debugging.
 | "I cannot see right now" | Frame >10s stale or absent. That topic is published by `phase4/nodes/image_bridge.py` **in the perception repo** — start it with `./rover vlm` on the Jetson. It also skips encoding entirely when nothing is subscribed, so check the brain is up before blaming the Jetson |
 | Vision turn slow (~60s end-to-end) | Measured 2026-07-19: router call ~43s + vision call ~16s on the Mac, sequential. `local_agent` is sticky, so the FOLLOW-UP question about the same scene skips the router; the first one still pays it |
 | Tool calls flaky / early stops | GGUF chat template mislabels control tokens → suspect the quant, and check the server has `--jinja` |
-| "I couldn't measure its distance" | `pixel_to_goal.py` isn't running on the Jetson (`./rover vlm`), or depth had a hole at that pixel — the reason string says which |
+| "I couldn't measure how far it is: ..." | `pixel_to_goal.py` isn't running on the Jetson (`./rover vlm`), or depth had a hole at that pixel — the sentence after the colon says which (`approach.DEPTH_FAIL_HELP`). "...no longer in view" = the photo's depth had expired and a fresh photo did not show it: it moved (a person walking off). "I drove over to where I saw..." first = the drive there did happen |
 | ESP32 not moving | `langrobo-microros` unit down, or ESP32 not on WiFi → `systemctl status langrobo-microros`, then power-cycle ESP32 |
 | DDS discovery fails Pi5↔Jetson | `ROS_DOMAIN_ID` mismatch, or a stray `ROS_DISCOVERY_SERVER` in the environment. **Prod is plain multicast since 2026-07-16** (the D555 is a raw DDS participant that discovery-server clients cannot see) — every prod script unsets `ROS_DISCOVERY_SERVER`; `langrobo-discovery` still starts at boot but nothing uses it (NETWORKING.md). A client accidentally pointed at it goes silently invisible to the Jetson |
 

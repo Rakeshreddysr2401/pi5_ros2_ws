@@ -72,7 +72,9 @@ so family and guests get the camera's view **described in words**.
   agents, same tools as voice.
 - **Get a photo** — "send me a pic of the room" (owner only; taken from where
   the robot currently stands — ask it to drive somewhere first if you want a
-  different view).
+  different view). "me", "Boss" or "the owner" as the recipient is whoever
+  asked (by voice or Studio: the one owner). An unknown name comes back as
+  "NOT sent", never as a sent photo (2026-10-04).
 - **Send a photo** — attach a picture (+ optional caption question); the
   multimodal model actually sees it.
 - **Relay by voice** — say "Mitra, tell Mom I'll be late" → lands on Mom's

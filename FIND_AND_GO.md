@@ -110,3 +110,7 @@ Brain: `journalctl -u langrobo-brain -o cat | grep -E "Invoking graph|Step messa
   rewind (not `--swa-full`): `photo_recall.py` THE REWIND LIMIT.
 - **One errand per drive**: "...then come back and tell me" keeps the "tell"
   and drops the "come back".
+- **People by how they look, not who they are**: the camera cannot tell who
+  someone is, so "go to my dad" / "go to Rakesh" asks what they look like and
+  does not move (`approach._names_a_person_only`; 2026-10-04 it drove at the
+  brother). "my dad in the blue shirt" goes ahead.

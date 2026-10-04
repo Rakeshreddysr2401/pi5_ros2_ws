@@ -159,6 +159,16 @@ the turn ends. A minute later the robot speaks without being spoken to:
    whichever agent the user happened to leave active.
 4. chat's reply streams to TTS: **"I've arrived at the kitchen."**
 
+The report is built once, `movement.nav_report` (status, the errand from
+`then`, Telegram routing, the held photo, the arrival check), for BOTH
+processes that can drive: `agent_node` queues it as above, and LangGraph Studio
+(`graph_studio.py`) posts it as a new run on the thread whose tool started the
+drive -- before 2026-10-04 Studio had no listener and every report of a drive
+started there was thrown away (`nav done ... listener=NONE`). "Where are you?"
+and "did you get there?" are answered by `get_robot_status` from
+`bridge.navigation_state()` -- the pose, the drive in progress and how far is
+left, or how the last one ended -- never from the conversation.
+
 The report carries more than "arrived" since 2026-10-02 (FIND_AND_GO.md
 step 4): for a drive to an object, code checks it is really there ("I can see
 the box in front of me, 0.5 m" / "But I can't see the box…"); and if the

@@ -238,6 +238,11 @@ turning (`phase2/nodes/depth_gate.py`); goal_exec / reach / pass judge
 obstacles on nvblox's fused map, not single depth frames
 (`phase3/nodes/fused_obstacles.py`, `ROVER_OBSTACLES=depth` reverts); nav2
 routes keep 4 cm, tighter gaps go to reach's look + straight pass.
+Since 2026-10-04 that map is `/ghost_clear/grid`: nvblox with the marks of
+moved things erased (a mark the LiDAR also saw, then sees through -- people;
+low things stay; `phase2/nodes/ghost_clear.py`). And on "no path" reach drives
+back along its own trail (`phase3/nodes/trail.py`); the same failure 3 times
+from one spot ends the goal, with a `note` saying why the way back failed.
 
 The topic contract between the repos is in INTEGRATION_GAPS.md (brain side) and
 `~/rover/phase4` (Jetson side: `/vision/pixel_query` → `/vision/pixel_result`,
