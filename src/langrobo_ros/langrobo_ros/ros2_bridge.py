@@ -309,7 +309,9 @@ class ROS2Bridge:
                     m.ns, m.id, m.action = f"brain_objects_{kind}", i, M.ADD
                     m.pose.position.x, m.pose.position.y = float(e["x"]), float(e["y"])
                     m.pose.orientation.w = 1.0
-                    m.color.r, m.color.g, m.color.b, m.color.a = 1.0, 0.55, 0.0, alpha
+                    # teal: the brain's colour family in RViz (its target is green);
+                    # amber there means "the camera blocks" (Jetson blocker_view.py)
+                    m.color.r, m.color.g, m.color.b, m.color.a = 0.0, 0.75, 0.62, alpha
                     if kind == "dot":
                         m.type = M.SPHERE
                         m.pose.position.z = 0.10
