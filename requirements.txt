@@ -16,3 +16,4 @@ opencv-python-headless
 
 # colcon --symlink-install needs setup.py develop (removed in setuptools 80+)
 setuptools<80
+fastembed>=0.8        # entry classifier + facts memory (optional: both degrade without it)

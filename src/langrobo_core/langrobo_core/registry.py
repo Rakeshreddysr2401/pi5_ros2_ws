@@ -79,6 +79,10 @@ class AgentSpec:
     keep_images             feed this agent the image-preserving projection of
                             the shared log (multimodal agents only).
     context                 optional callable returning the dynamic prompt tail.
+    intent_examples         more utterances for the Pi's entry classifier
+                            (routing/intent.py) on top of `examples`. NEVER
+                            rendered into a prompt -- growing this list costs
+                            no tokens and leaves every KV cache untouched.
     """
 
     name: str
@@ -90,6 +94,7 @@ class AgentSpec:
     sticky: bool = False
     keep_images: bool = False
     context: Optional[Callable[[], str]] = None
+    intent_examples: tuple[str, ...] = ()
 
 
 _SPECS: tuple[AgentSpec, ...] = (
@@ -103,6 +108,22 @@ _SPECS: tuple[AgentSpec, ...] = (
         slot=0,
         sticky=True,
         context=_today_line,
+        intent_examples=(
+            "set a timer for 10 minutes", "remind me to call amma at six",
+            "add milk to the shopping list", "play a song", "stop the music",
+            "turn the volume up", "who is the prime minister of india",
+            "where did you see my bag earlier", "where is my bag",
+            "what did you see in the kitchen before", "thank you", "good morning",
+            "good night", "what is your name", "search the web for cricket scores",
+            "what's on my to do list", "what's your battery status",
+            "what's the date today", "send me a photo",
+            "send a message to dad on telegram", "what can you do",
+            "I am leaving", "that's enough", "nothing",
+            # memory (tools/memory.py) -- personal facts are chat's
+            "remember that the keys are in the drawer", "remember that I like filter coffee",
+            "when is my father's birthday", "what does amma like to drink",
+            "what is the wifi password", "do you remember what I told you",
+            "what medicine does grandma take", "forget what I said about the keys"),
     ),
     AgentSpec(
         name="local_agent",
@@ -114,6 +135,15 @@ _SPECS: tuple[AgentSpec, ...] = (
         slot=1,
         sticky=True,
         keep_images=True,
+        intent_examples=(
+            "what is in front of you", "what are you looking at", "describe the room",
+            "how far is the water bottle from you", "how far away is the chair",
+            "what colour is the bag", "is the door open",
+            "look again, what do you see now", "how many chairs can you see",
+            "is the light on", "read what is written on that box",
+            "which way is the spray can", "take a fresh look", "can you see my phone",
+            "what is on the table", "is anyone sitting on the sofa",
+            "send me a pic of what you are seeing", "send me a photo"),
     ),
     AgentSpec(
         name="navigate",
@@ -132,6 +162,19 @@ _SPECS: tuple[AgentSpec, ...] = (
         # handed back to chat — NAVIGATE_PROMPT rule 6 is what makes that
         # reliable, so the two must stay in step.
         sticky=True,
+        intent_examples=(
+            "save this spot as dining area", "move forward one metre",
+            "go back 50 centimetres", "rotate 180 degrees", "come here",
+            "go near the chair", "can you go near to the bottle", "drive to the door",
+            "turn right a little", "go back to where you started", "move back a bit",
+            "go near the bag and tell me what is on it",
+            "go to the sofa and send me a photo", "look around the room",
+            "come out of the room", "go to the charging dock",
+            "take me to the bedroom", "move forward a little", "spin around",
+            "back up", "go 10 centimetres ahead", "please go near it",
+            "go near the red bag", "go to the backpack", "go near the umbrella",
+            "approach the table", "find the bottle and go there",
+            "go near the black bag and send me a pic", "go to the person"),
     ),
 )
 

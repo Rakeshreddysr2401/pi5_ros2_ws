@@ -19,10 +19,11 @@ CAP_RELAY = "relay"    # send/relay messages to household members
 CAP_PHOTO = "photo"    # receive camera photos (it's a camera inside the home)
 CAP_MOVE = "move"      # drive the robot
 CAP_MEDIA = "media"    # volume, Bluetooth device, music (tools/audio.py)
+CAP_MEMORY = "memory"  # remember / recall / forget household facts (tools/memory.py)
 
 ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
-    "owner":  frozenset({CAP_CHAT, CAP_RELAY, CAP_PHOTO, CAP_MOVE, CAP_MEDIA}),
-    "family": frozenset({CAP_CHAT, CAP_RELAY, CAP_MEDIA}),
+    "owner":  frozenset({CAP_CHAT, CAP_RELAY, CAP_PHOTO, CAP_MOVE, CAP_MEDIA, CAP_MEMORY}),
+    "family": frozenset({CAP_CHAT, CAP_RELAY, CAP_MEDIA, CAP_MEMORY}),
     "guest":  frozenset({CAP_CHAT}),
 }
 

@@ -40,6 +40,9 @@ from langrobo_core.services.logging import new_trace, setup_logging
 from langrobo_core.tools import _bridge as bridge_module
 from langrobo_core import registry
 from langrobo_core.services import jev
+from langrobo_core import routing as intent_routing
+from langrobo_core.services import embedder
+from langrobo_core.services import memory as memory_store
 from langrobo_core.graph import build_graph
 from langrobo_core.utils import timing
 from langrobo_core.utils import pose_stamp
@@ -279,6 +282,11 @@ class AgentNode(Node):
 
         # ── Worker + startup threads ──────────────────────────────────────
         threading.Thread(target=self._startup_check, daemon=True).start()
+        # The sentence embedder (memory search + entry classifier) loads in
+        # the background; until it is ready memory searches by words and
+        # turns route as before (LANGROBO_INTENT_ROUTING).
+        embedder.start_loading()
+        intent_routing.start_loading()
         threading.Thread(target=self._worker_loop,   daemon=True).start()
 
         # ── Telegram inbound (long-poll daemon → worker queue) ────────────
@@ -327,7 +335,16 @@ class AgentNode(Node):
             "navigating": self._bridge.navigation_active(),
             **self._perception_status(),
             "jev": jev.status(),
+            "intent": intent_routing.status(),
+            "memory": {"facts": self._memory_count(), "embedder": embedder.status()},
         }
+
+    @staticmethod
+    def _memory_count():
+        try:
+            return memory_store.count()
+        except Exception as e:                    # a broken db must not break /status
+            return f"error: {e}"
 
     def _perception_status(self) -> dict:
         """What the robot has seen: the photo survey's progress and how many
@@ -870,13 +887,14 @@ class AgentNode(Node):
             # check. shadow: asked in the background, changes nothing, logged
             # against what actually happened. [SYSTEM] turns are never asked.
             jev_read, jev_shadow, jev_mode = None, None, jev.mode()
+            jev_acted = False
             if not is_system and jev_mode != "off":
                 args = (text, registry.AGENTS, self._sticky_agent,
                         self._last_reply(history))
                 if jev_mode == "on":
                     jev_read = jev.read_turn(*args)
-                    incoming_agent, acted = jev.entry_for(jev_read, incoming_agent)
-                    if acted:
+                    incoming_agent, jev_acted = jev.entry_for(jev_read, incoming_agent)
+                    if jev_acted:
                         self.get_logger().info(
                             f"jev: entering {incoming_agent} directly "
                             f"(conf {jev_read.route_conf:.2f}, {jev_read.latency_ms} ms)")
@@ -885,6 +903,21 @@ class AgentNode(Node):
                     threading.Thread(
                         target=lambda: jev_shadow.setdefault("read", jev.read_turn(*args)),
                         daemon=True, name="jev_shadow").start()
+
+            # Entry classifier (langrobo_core.routing, ~15 ms on the Pi): a
+            # confident pick enters that agent directly -- the chat call that
+            # would only have handed over (median 3.0 s) never happens. No pick
+            # -> the rule above. Jev, when it acted, keeps the turn.
+            intent_pick, intent_acted = None, False
+            if not is_system and not jev_acted and intent_routing.mode() != "off":
+                intent_pick = intent_routing.classify(text)
+                if intent_routing.mode() == "on":
+                    incoming_agent, intent_acted = intent_routing.entry_for(
+                        intent_pick, incoming_agent)
+                    if intent_acted:
+                        self.get_logger().info(
+                            f"intent: entering {incoming_agent} directly "
+                            f"(score {intent_pick.score:.2f}, margin {intent_pick.margin:.2f})")
 
             self.get_logger().info(
                 f"Invoking graph with input: {text} (entry={incoming_agent}, "
@@ -1001,6 +1034,9 @@ class AgentNode(Node):
             self._jev_outcome(jev_read if jev_mode == "on" else
                               (jev_shadow or {}).get("read"), self._sticky_agent,
                               shadow=jev_mode == "shadow")
+            fields = intent_routing.record_outcome(intent_pick, self._sticky_agent, intent_acted)
+            if fields:
+                self.get_logger().info(intent_routing.log_line(fields))
 
             # Persist the FULL message list from the graph (including any frames
             # captured via look()), so follow-up turns reason over the same image.
