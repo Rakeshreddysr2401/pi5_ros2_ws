@@ -16,11 +16,22 @@ Hardware this plan is limited to — nothing new to buy:
 | ESP32 | wheel PID | unchanged |
 | Cloud (already paid for) | Sarvam (Telugu STT/TTS), Tavily | Telugu voice, web |
 
+## 0. Status — 2026-10-07 evening
+
+| | what | state |
+|---|---|---|
+| ✅ | **Entry classifier** on the Pi (`langrobo_core/routing`) — 70/70 right on real turns, skips 45 of 67 handovers (~3 s each) | built, `LANGROBO_INTENT_ROUTING=on` in `.env`; live after a brain restart |
+| ✅ | **Facts memory** (`memory` tool, `~/.langrobo/memory.db`) — survives reboots | built; tested end to end on the Mac's Gemma |
+| ⏳ | **Mac speed-up** (MTP drafter, `--swa-full`, `--metrics`) | written up: MAC_MINI_TASKS.md Task 3 + 5 — owner applies |
+| ❌ | **Gemma as the ears** (§1A) | measured and rejected: Sarvam stays |
+| ⏸ | Smart-Turn, speaker-ID, errands, object map, Pocket TTS, MCP / Home Assistant | next, in §5's order |
+
 ---
 
 ## 1. Two measurements that change the plan (2026-10-07)
 
-**A. The Mac's Gemma can hear.** `/props` reports `audio: true`. Sent a WAV of
+**A. The Mac's Gemma can hear — but not well enough. REJECTED as the ears
+(measured later the same day, below).** First impression: `/props` reports `audio: true`. Sent a WAV of
 "Mitra, can you go near the red bag in the kitchen and tell me what is on it?"
 straight to `/v1/chat/completions` (`input_audio`, slot 3):
 
@@ -31,9 +42,21 @@ straight to `/v1/chat/completions` (`input_audio`, slot 3):
 | 8 kHz + noise | JSON `{intent, text}` | `"move"`, correct text ("Mira") | 4.8 s |
 
 Our current English fallback (Whisper `tiny.en` on the Pi) turns "what do you
-see" into "think". The 12B model on the Mac hears 8 kHz speech almost
-perfectly, and can transcribe and *route* in the same call. The name slip is a
-one-line fix (tell it the robot is called Mitra). Telugu is not measured yet.
+see" into "think". That first sentence was Piper's clean synthetic voice. **The real test** — 14
+utterances in Indian-accented English and Telugu (Sarvam TTS), degraded to the
+BT mic's 8 kHz + noise, sent to Gemma and to today's Sarvam STT side by side:
+
+| | Sarvam Saaras v3 (today) | Gemma 4 12B audio |
+|---|---|---|
+| latency | **0.2–0.4 s** | 4.5 s warm (2 s transcribe-only) |
+| English | right (name → "Friend", handled by `wake_leading_aliases`) | "turn left ninety degrees" → "Metro, ton, neuf, neuf, neuf" |
+| Telugu | right | invented sentences, or Hindi |
+| routing in the same call | — | 6/14 |
+
+So the "front door" (§3.2 below) is NOT built: Sarvam stays as the ears and
+the routing hop is removed on the Pi instead (§3.2a). Re-test if the server
+moves to a model with a stronger audio encoder; the bench is
+`scratchpad`-style and quick to redo (synth with Sarvam TTS, 8 kHz + noise).
 
 **B. Decode speed is 13.5 tok/s** (same calls). That speed is behind most of every wait.
 llama.cpp gained Gemma 4 **MTP speculative decoding** in June 2026 (Gemma ships
@@ -94,7 +117,17 @@ What changes against today (`HOW_IT_WORKS.md`):
   tiny by a wide margin, built for the Pi) replaces `tiny.en` for when the Mac
   is down.
 
-### 3.2 Hearing + routing = the front door (Mac, slot 3)
+### 3.2a Routing on the Pi — BUILT 2026-10-07
+
+`langrobo_core/routing`: bge-small (fastembed, ~20 ms on the Pi) nearest-
+example cosine over each agent's `examples` + `intent_examples` (never in a
+prompt — no KV cache touched). Confident pick → enter that agent; unsure, or
+nearest to an ABSTAIN reply ("yes", "do it") → today's sticky/chat rule.
+Measured on the 188 distinct real utterances that entered chat in the
+journal: **70 picks, 70 right; 45 of the 67 handovers skipped** (median 3.0 s
+each). /status → `intent` keeps the live precision.
+
+### 3.2 (REJECTED — see §1A) Hearing + routing = the front door (Mac, slot 3)
 
 One request per utterance: the audio clip plus a fixed ~300-token prompt (the
 three agents' one-line descriptions, rendered from `registry.py`, and "the
@@ -211,7 +244,7 @@ Every number in the right column is a target until §5's eval says otherwise.
 
 | # | Phase | Needs from the owner | Exit test |
 |---|---|---|---|
-| 0 | **Eval set**: ~50 real utterances (LangSmith traces + Telugu recordings) scored for agent, tool, latency; twin suite for motion | — | runs in one command; today's baseline recorded |
+| 0 | **Eval set** (routing part done: the journal-mined 188-utterance set, §3.2a): ~50 real utterances (LangSmith traces + Telugu recordings) scored for agent, tool, latency; twin suite for motion | — | runs in one command; today's baseline recorded |
 | 1 | **Mac speed**: MTP drafter, `--swa-full`, `--metrics` | ssh key on the Mac; its RAM | decode ≥ 25 tok/s; cache check PASS |
 | 2 | **Front door**: Gemma hears + routes; Smart-Turn; name hint | — | eval: routing ≥ 95 %, transcript better than Sarvam on English; move/vision turns = 1 agent call |
 | 3 | **Memory**: memory.db, remember / recall, core block, nightly consolidation, places persist | decide TODO #4 | "what do I like to drink?" answered after a reboot |

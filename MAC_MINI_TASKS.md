@@ -43,6 +43,14 @@ Remote Login is already on (port 22 answers).
    - `ls -ld ~ ~/.ssh ~/.ssh/authorized_keys` — home must not be group/world
      writable, or sshd ignores the key.
 
+3. **Also add the robot's Pi 5 key** (added 2026-10-07 — lets the Pi's
+   Claude session check the server itself instead of asking the owner):
+
+   ```bash
+   grep -qF 'pi5-langrobo' ~/.ssh/authorized_keys 2>/dev/null || \
+     echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMmCtBs74ieo4tgdarMI29kD53FBhU28aeA1uwigPslr pi5-langrobo' >> ~/.ssh/authorized_keys
+   ```
+
 **Done when:** the owner says the MacBook can run `ssh mac-mini` with no password.
 (The MacBook side will test it; nothing else needed here.)
 
@@ -138,6 +146,47 @@ the server comes back by itself and Task 3's checks pass again.
 
 ---
 
+## Task 5 — Make it write ~2× faster: Gemma 4's own draft model (MTP)
+
+Added 2026-10-07 (MITRA_2_PLAN.md §1B). The robot measured **13.5 tokens/s**
+of writing; that is most of every wait. Gemma 4 ships a small co-trained
+"assistant" drafter: it guesses the next few tokens and the 12B model checks
+them in one go. Same answers, reported 2–3× faster on Apple Silicon. Needs
+llama.cpp **b9549+** (this server is b9830 — OK).
+
+Do this AFTER Task 3/4, as its own change, so a problem is easy to pin on it.
+
+1. Download the drafter that matches the 12B model (do not touch the 12B file):
+   ```bash
+   huggingface-cli download google/gemma-4-12B-it-assistant-GGUF --include "*Q8*" \
+     --local-dir ~/llm_models/gemma/12B
+   ```
+2. Add to the Task 3 command line (keep everything else):
+   ```
+   --model-draft ~/llm_models/gemma/12B/<the downloaded assistant .gguf> \
+   --spec-type draft-mtp --spec-draft-n-max 3 --metrics
+   ```
+   - **Do NOT** quantize the KV cache (`-ctk q8_0` / `-ctv q8_0`): with it the
+     drafter's guesses are never accepted (known bug) — f16 KV, the default.
+   - `--metrics` exposes `/metrics` (tokens/s, draft acceptance) for the robot.
+3. Memory: the Q8 drafter is small next to the 12B model, but check free RAM
+   after load as in Task 3. If tight, keep `--parallel 4` and lower the
+   context size, never drop slots.
+4. Verify:
+   ```bash
+   curl -s localhost:8080/v1/chat/completions -H 'Content-Type: application/json' \
+     -d '{"messages":[{"role":"user","content":"Count from one to forty in words."}],"max_tokens":200}' \
+     | python3 -c 'import json,sys; t=json.load(sys.stdin)["timings"]; print(t["predicted_per_second"], "tok/s", t.get("draft_n"), t.get("draft_n_accepted"))'
+   curl -s localhost:8080/metrics | grep -iE 'tokens_predicted|draft' | head
+   ```
+   **Done when:** tok/s is clearly above 13.5 (target ≥ 25) with the
+   drafter loaded, photos still work (send one in a request), and from the
+   Pi `python3 scripts/llm_cache_check.py` still PASSES.
+5. If speed does not improve or anything breaks: remove the three flags,
+   restart — that is the whole rollback.
+
+---
+
 ## Report back (paste this, filled in, to the owner)
 
 ```
@@ -152,4 +201,6 @@ TASK 3  NEW command line: <full>
         problems: <none / ..>
 TASK 4  pmset sleep 0: done/owner-pending   LaunchAgent: <path>, KeepAlive yes/no
         auto-login: yes/no/declined   survives kickstart: yes/no
+TASK 5  drafter file: <..>   tok/s before/after: <..>/<..>   draft acceptance: <..>
+        photos still OK: yes/no   cache check from the Pi: PASS/FAIL
 ```
