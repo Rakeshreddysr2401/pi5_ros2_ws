@@ -40,6 +40,20 @@ CMD="${1:-status}"
 #   LANGROBO_LAPTOP_HOST=192.168.1.12 ./scripts/fleet.sh sim
 LAPTOP_HOST="${LANGROBO_LAPTOP_HOST:-rakhi24.local}"
 JETSON_HOST="${LANGROBO_JETSON_HOST:-rakhi-jetson.local}"
+# After a power cycle the Jetson's avahi can lose its name (a clash renames it
+# rakhi-jetson-N.local) while the Jetson itself is fine; "unreachable" then sent
+# us looking at a healthy machine (2026-10-09). Remember the last address the
+# name gave, and fall back to it -- saying so, with the fix.
+JETSON_IP_CACHE="${LANGROBO_STATE_DIR:-$HOME/.langrobo}/jetson_ip"
+if [ -z "${LANGROBO_JETSON_HOST:-}" ]; then
+    if ip=$(getent hosts "$JETSON_HOST" 2>/dev/null | awk '{print $1; exit}') && [ -n "$ip" ]; then
+        echo "$ip" > "$JETSON_IP_CACHE" 2>/dev/null || true
+    elif [ -s "$JETSON_IP_CACHE" ]; then
+        echo "jetson: $JETSON_HOST does not resolve -- using its last address $(cat "$JETSON_IP_CACHE")" >&2
+        JETSON_HOST=$(cat "$JETSON_IP_CACHE")
+        echo "        (fix the name: ssh rakhi24@$JETSON_HOST 'sudo systemctl restart avahi-daemon')" >&2
+    fi
+fi
 LAPTOP=rakhi24@$LAPTOP_HOST
 JETSON=rakhi24@$JETSON_HOST
 # IdentityAgent=none: use ~/.ssh/id_ed25519 directly. A shell whose

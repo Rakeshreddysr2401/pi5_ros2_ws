@@ -14,7 +14,7 @@ Mac Mini  ──────  llama.cpp — Gemma multimodal GGUF, --parallel 4 
 Jetson    ──────  ~/rover: D555 + RPLidar · fused pose · slam · nvblox · Nav2 + exact moves · VLM pixel→goal
 Laptop    ──────  RViz (pushed and started by the Jetson's `./rover view`) · Gazebo sim body
 Pi 5      ──────  THIS REPO — LangGraph brain + STT/TTS + micro-ROS agent
-ESP32     ──────  4-wheel drive chassis, 50 Hz PID (micro-ROS over WiFi UDP 8888)
+ESP32     ──────  4-wheel drive chassis, 50 Hz PID (micro-ROS over USB serial to the Pi 5)
 ```
 
 **Docs:** [HOW_IT_WORKS.md](HOW_IT_WORKS.md) — end-to-end walkthrough (start here) ·

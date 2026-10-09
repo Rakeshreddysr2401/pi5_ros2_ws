@@ -2,8 +2,8 @@
 # Dev loop: LangGraph Studio on :2024, plus a micro-ROS agent if none is up.
 #
 # Usage:
-#   ./scripts/dev.sh          # UDP port 8888 (default)
-#   ./scripts/dev.sh 9999     # custom UDP port
+#   ./scripts/dev.sh              # ESP32 on USB serial (default)
+#   ./scripts/dev.sh udp [port]   # ESP32 on WiFi (run_microros.sh's arguments)
 #
 # Studio itself is scripts/start_studio.sh — the ONE place that sets its
 # discovery (plain SUBNET, like agent_node and the Jetson) and loads the
@@ -18,19 +18,13 @@
 # Ctrl+C stops both.
 
 set -eo pipefail
-UDP_PORT="${1:-8888}"
 
 MICRO_ROS_PID=""
 if systemctl is-active --quiet langrobo-microros; then
     echo "==> micro-ROS agent: already running (langrobo-microros) — not starting a second"
 else
-    set +u
-    source /opt/ros/jazzy/setup.bash
-    source ~/microros_ws/install/setup.bash
-    set -u
-    unset ROS_DISCOVERY_SERVER || true
-    echo "==> micro-ROS agent: UDP port $UDP_PORT"
-    ros2 run micro_ros_agent micro_ros_agent udp4 --port "$UDP_PORT" &
+    echo "==> micro-ROS agent: ${1:-serial}"
+    "$(dirname "$0")/run_microros.sh" "$@" &
     MICRO_ROS_PID=$!
 fi
 

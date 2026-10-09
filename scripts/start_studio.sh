@@ -10,6 +10,14 @@
 
 cd "$HOME/ros2_ws" || { echo "no ~/ros2_ws"; exit 1; }
 
+# One Studio only. `./rover up` on the Jetson calls this every time; a second
+# server cannot get :2024 but used to leave its workers and a second
+# /studio_bridge behind (rover OPEN_ISSUES, "two Studio servers").
+if curl -s -m 3 http://127.0.0.1:2024/ok 2>/dev/null | grep -q '"ok":true'; then
+    echo "Studio already running on :2024 -- not starting a second"
+    exit 0
+fi
+
 # ROS must match agent_node's own discovery settings. The Pi 5 uses plain SUBNET
 # discovery; a stale ROS_DISCOVERY_SERVER gives a bridge that starts perfectly
 # cleanly and silently sees no robot at all.

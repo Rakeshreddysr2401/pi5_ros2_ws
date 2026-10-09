@@ -9,7 +9,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -32,9 +32,9 @@ def generate_launch_description():
             description="LLM provider: llamacpp | openai | anthropic | gemini | ollama",
         ),
         DeclareLaunchArgument(
-            "agent_port",
-            default_value="8888",
-            description="UDP port for micro-ROS agent (ESP32 connects here)",
+            "esp32_dev",
+            default_value="/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0",
+            description="ESP32's USB serial port (micro-ROS agent, 115200 baud)",
         ),
         DeclareLaunchArgument(
             "start_micro_ros",
@@ -48,14 +48,15 @@ def generate_launch_description():
                         "or 'sim' (rover_sim, TwistStamped on /mecanum_drive_controller/cmd_vel)",
         ),
 
-        # ── micro-ROS agent (Pi5 ↔ ESP32 WiFi bridge) ───────────────────────
-        # ESP32 connects to Pi5 IP:8888 over WiFi UDP; bridges /cmd_vel → wheels.
-        # Built from source in ~/microros_ws — see OPERATIONS.md.
-        Node(
-            package="micro_ros_agent",
-            executable="micro_ros_agent",
+        # ── micro-ROS agent (Pi5 ↔ ESP32 USB serial bridge) ─────────────────
+        # ESP32 on the Pi5's USB cable since 2026-10-07; bridges /cmd_vel → wheels.
+        # The SAME script the langrobo-microros unit runs: it picks the XRCE
+        # agent build and resets the ESP32 first, without which a restarted
+        # agent never gets the board back (run_microros.sh).
+        ExecuteProcess(
+            cmd=[os.path.join(os.path.expanduser("~"), "ros2_ws", "scripts", "run_microros.sh"),
+                 "serial", LaunchConfiguration("esp32_dev")],
             name="micro_ros_agent",
-            arguments=["udp4", "--port", LaunchConfiguration("agent_port")],
             output="screen",
             condition=IfCondition(LaunchConfiguration("start_micro_ros")),
         ),

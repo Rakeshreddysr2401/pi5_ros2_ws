@@ -13,7 +13,8 @@ Home robot "Mitra" (renamed from "Rakhi" 2026-09-20; the `rakhi24` username and 
   `./rover up`. (`~/langrobo_perception` and `~/robot` are the old stacks.)
 - **Mac Mini** — the LLM and VLM (llama.cpp, `singireddys-mac-mini.local:8080`).
   **Must run with `--jinja --parallel 4`** — one KV slot per agent + one for photo questions (`ask_photos`).
-- **ESP32** — 50 Hz closed-loop PID on four wheels, micro-ROS over WiFi.
+- **ESP32** — 50 Hz closed-loop PID on four wheels, micro-ROS over USB serial to the Pi 5
+  (`/dev/ttyUSB0`, since 2026-10-07; firmware `UROS_SERIAL` switch, `run_microros.sh udp` = old WiFi link).
 
 **FIND_AND_GO.md is the priority flow** ("what do you see?" … "go near it":
 photo-grounded object positions, go-to-the-spot, search) — read it before
@@ -71,7 +72,7 @@ cd src/langrobo_core && python3 -m pytest tests/ -q
 # Build + deploy after code changes
 colcon build --symlink-install && sudo systemctl restart langrobo-brain
 
-# Run modes (NEVER two at once — both drive /cmd_vel + UDP 8888)
+# Run modes (NEVER two at once — both drive /cmd_vel + the ESP32's serial port)
 systemctl status langrobo-brain langrobo-microros   # production (systemd)
 ros2 launch langrobo_ros brain_launch.py            # foreground all-in-one
 ./scripts/dev.sh                                    # LangGraph Studio :2024 (draws the graph)

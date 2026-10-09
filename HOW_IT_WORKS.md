@@ -14,15 +14,15 @@ All of this was verified live on 2026-07-03 (18 turns, zero errors).
 | **Pi5** (this repo) | `langrobo-brain` (agent_node) + `langrobo-microros` (ESP32 bridge), both systemd; plus `pi5_voice_pkg` (CPU-only stt_node/tts_node — docs/voice/PI5_VOICE.md) | ROS2 DDS on Ethernet LAN |
 | **Jetson Orin** | Perception: cuVSLAM + nvblox + Nav2, plus the phase-4 VLM bridge (`image_bridge` republishes the colour frame as JPEG for `look()`; `pixel_to_goal` turns a VLM-picked pixel into an odom-frame Nav2 goal). Voice is OFF here — it runs on the Pi5 (docs/voice/PI5_VOICE.md) | ROS2 DDS |
 | **Mac Mini** | llama.cpp server, Gemma multimodal GGUF, 4 KV-cache slots | HTTP (OpenAI-compatible) |
-| **ESP32** | wheel firmware — 2-motor diff drive, BTS7960 + encoders, 50 Hz PID | micro-ROS over WiFi UDP 8888 → Pi5 |
+| **ESP32** | wheel firmware — 2-motor diff drive, BTS7960 + encoders, 50 Hz PID | micro-ROS over USB serial → Pi5 (`/dev/ttyUSB0`) |
 
 ---
 
 ## 1. Boot — what happens when the Pi powers on
 
 1. systemd starts `langrobo-microros.service` → `scripts/run_microros.sh` →
-   micro-ROS agent listens on UDP 8888. The ESP32 (whenever it's powered)
-   connects here and subscribes to `/cmd_vel`.
+   micro-ROS agent opens the ESP32's USB serial port (`/dev/ttyUSB0`, 115200;
+   `run_microros.sh` resets the board first) and the ESP32 connects and subscribes to `/cmd_vel`.
 2. systemd starts `langrobo-brain.service` (3s grace for the network) →
    `scripts/run_brain.sh` → `ros2 launch langrobo_ros brain_launch.py
    start_micro_ros:=false` → **agent_node** comes up. Its init order

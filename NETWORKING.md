@@ -13,10 +13,15 @@ name.** No discovery server, no IP lists, no XML profiles.
 | Mac Mini | `singireddys-mac-mini.local` | moves | — (HTTP only) | llama.cpp LLM + VLM on :8080 |
 | Laptop | `rakhi24.local` | moves | host | RViz (`./rover view` finds it) and the Gazebo sim |
 | D555 camera | — | 192.168.11.55 (PoE) | itself — a raw DDS participant | depth + IR + IMU |
-| ESP32 | — | WiFi | micro-ROS → Pi 5 UDP 8888 | wheels |
+| ESP32 | — | USB cable to the Pi 5 | micro-ROS → Pi 5 serial `/dev/ttyUSB0` 115200 (was WiFi UDP 8888 until 2026-10-07) | wheels |
 
-A direct cable (Pi 5 `eth0` 192.168.2.10 ↔ Jetson 192.168.2.20) exists but
-has not reliably carried data; WiFi is the working path.
+A direct cable (Pi 5 `eth0` 192.168.2.10 ↔ Jetson `enP8p1s0`) was retested
+2026-10-07 and is clean (jumbo 8972-byte pings 2000/2000, 0.6 ms; rover
+OPEN_ISSUES), but is not in use: **WiFi is the working path**, and the
+Jetson's signal decides how well everything works. On 2026-10-09 it sat at
+-72 dBm / 6 Mbit/s and `fleet.sh check` lost every Jetson topic while the
+Jetson's own rates were fine -- fix the signal (or move to the cable) before
+debugging nodes.
 
 ## The rules
 

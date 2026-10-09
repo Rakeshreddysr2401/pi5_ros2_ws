@@ -15,7 +15,7 @@ Deploy, run, observe, and troubleshoot the Pi5 brain.
 | Voice | `systemctl --user status langrobo-voice` (user unit, starts at boot; foreground: `./scripts/run_voice.sh`) | speaker/mic owner + CPU-only STT + TTS on the Pi 5 (see docs/voice/PI5_VOICE.md) |
 | Studio, brain live | `./scripts/start_studio.sh` | inspect the graph **while `agent_node` keeps running** — see the caveat below |
 
-**Never run two brains at once** — both drive `/cmd_vel` and micro-ROS UDP 8888.
+**Never run two brains at once** — both drive `/cmd_vel` and the micro-ROS agent on the ESP32's serial port.
 
 The llama.cpp server on the Mac Mini must be started with **`--jinja --parallel 4`**:
 one KV-cache slot per agent (chat, local_agent, navigate) plus slot 3 for
@@ -41,7 +41,7 @@ Studio attaches beside it, for inspecting the graph on a running robot.
 **It knowingly breaks the "never two modes at once" rule above, for `/cmd_vel`
 only.** With `agent_node` up you get `/studio_bridge` beside it and two
 publishers that can both command the wheels. It does not touch micro-ROS, so
-there is no UDP 8888 conflict. A `navigate` turn typed into the Studio browser
+there is no conflict on the ESP32's serial port. A `navigate` turn typed into the Studio browser
 box **moves the real robot** — a human watches, and MANUAL on the teleop is the
 stop. Since 2026-10-04 such a drive reports back into the Studio thread that
 started it (arrival, failure and its reason, the "on arrival" errand) --
@@ -237,7 +237,7 @@ debugging.
 | Vision turn slow (~60s end-to-end) | Measured 2026-07-19: router call ~43s + vision call ~16s on the Mac, sequential. `local_agent` is sticky, so the FOLLOW-UP question about the same scene skips the router; the first one still pays it |
 | Tool calls flaky / early stops | GGUF chat template mislabels control tokens → suspect the quant, and check the server has `--jinja` |
 | "I couldn't measure how far it is: ..." | `pixel_to_goal.py` isn't running on the Jetson (`./rover vlm`), or depth had a hole at that pixel — the sentence after the colon says which (`approach.DEPTH_FAIL_HELP`). "...no longer in view" = the photo's depth had expired and a fresh photo did not show it: it moved (a person walking off). "I drove over to where I saw..." first = the drive there did happen |
-| ESP32 not moving | `langrobo-microros` unit down, or ESP32 not on WiFi → `systemctl status langrobo-microros`, then power-cycle ESP32 |
+| ESP32 not moving | `langrobo-microros` unit down, or ESP32 USB cable out (`ls /dev/serial/by-id/`), or rakhi24 not in `dialout` → `systemctl status langrobo-microros`, then power-cycle ESP32 |
 | DDS discovery fails Pi5↔Jetson | `ROS_DOMAIN_ID` mismatch, or a stray `ROS_DISCOVERY_SERVER` in the environment. **Prod is plain multicast since 2026-07-16** (the D555 is a raw DDS participant that discovery-server clients cannot see) — every prod script unsets `ROS_DISCOVERY_SERVER`; `langrobo-discovery` still starts at boot but nothing uses it (NETWORKING.md). A client accidentally pointed at it goes silently invisible to the Jetson |
 
 ## Pi5 system record
