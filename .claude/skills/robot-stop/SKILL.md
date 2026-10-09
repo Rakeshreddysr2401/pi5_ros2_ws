@@ -30,7 +30,7 @@ curl -s localhost:8091/mode                                # {"manual": true} = 
 
 ```bash
 source /opt/ros/jazzy/setup.bash; unset ROS_DISCOVERY_SERVER
-ros2 topic pub --once -w 1 /voice/user_input std_msgs/msg/String "{data: 'stop'}"
+ros2 topic pub --once -w 2 /voice/user_input std_msgs/msg/String "{data: 'stop'}"
 ```
 
   Usually ~4 s, but the CLI can time out before it is matched and deliver

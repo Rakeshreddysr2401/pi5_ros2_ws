@@ -66,11 +66,11 @@ Every line OK = ready. Then a no-motion live turn (answers through the speaker):
 
 ```bash
 source /opt/ros/jazzy/setup.bash; unset ROS_DISCOVERY_SERVER
-ros2 topic pub --once -w 1 /voice/user_input std_msgs/msg/String "{data: 'what do you see?'}"
+ros2 topic pub --once -w 2 /voice/user_input std_msgs/msg/String "{data: 'what do you see?'}"
 journalctl -u langrobo-brain -f -o cat | grep -E "Step message \[AI|→ TTS"
 ```
 
-(`-w 1` matters: without it `--once` often publishes before the brain is matched and the turn is silently lost.)
+(`-w 2` matters: `/voice/user_input` has TWO listeners (agent_node and pi5_media). `--once` publishes as soon as `-w N` are matched, so `-w 1` -- or none -- often sends before the brain is matched and the turn is silently lost (seen 2026-10-09). Do not pipe its output into `grep -q`/`head`: that kills it before the message is out.)
 
 ## Step 4 — tell the user how to use it
 
