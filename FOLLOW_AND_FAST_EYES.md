@@ -1,7 +1,7 @@
 # Follow me, and fast eyes — the plan
 
-Branches: Pi 5 `feat/follow-and-fast-eyes` (from `dev-1.6.1`), Jetson
-`~/rover` `feat/follow-me` (from `rover-v1.1.8`, which is left exactly at
+Branches: Pi 5 `dev-1.6.2-follow-me` (from `dev-1.6.1`), Jetson
+`~/rover` `rover-v1.1.9-follow-me` (from `rover-v1.1.8`, which is left exactly at
 `origin`). Owner, 2026-10-10: "make sure the things we add improve it, not
 make it worse … think of the general things users might ask … implement
 after a proper plan."
@@ -65,7 +65,7 @@ Roadmap page for people: https://claude.ai/artifact/E7o4XrtZ93i6b4wVCLTope
 
 ## 2. Phase A — follow me, end to end (now)
 
-### Jetson (`feat/follow-me`)
+### Jetson (`rover-v1.1.9-follow-me`)
 - [x] `phase4/nodes/person_tracker.py` + `/vision/people` (58e3e63)
 - [x] `phase3/nodes/follow.py`, `follow_node.py`, tests; dedupe; TF own node (4bd0a97)
 - [ ] `./rover` stops nodes gently: `kill_match` sends SIGINT, waits, then -9.
@@ -78,7 +78,7 @@ Roadmap page for people: https://claude.ai/artifact/E7o4XrtZ93i6b4wVCLTope
       Lets the real follower be floor-tested with nobody in the room, and is
       repeatable.
 
-### Pi 5 (`feat/follow-and-fast-eyes`)
+### Pi 5 (`dev-1.6.2-follow-me`)
 - [ ] `ROS2Bridge.start_follow(mode)`: cancels any drive, publishes
       `/follow/start`, waits ≤ 5 s for the first status (so the tool can say
       "I can't see anyone" honestly), then a background worker watches
