@@ -49,6 +49,7 @@ from langrobo_core.utils import pose_stamp
 from langrobo_core.utils.history import trim_history
 from langrobo_core.utils.utterance import join_utterances, looks_incomplete
 from langrobo_core.utils.speech_stream import SPEECH_ABANDON, SpeechStreamHandler
+from langrobo_core.utils.stop_words import says_stop
 
 # A warm turn speaks within ~1.5s; 6s means the LLM is cold or unreachable.
 SLOW_TURN_CUE_S = 6.0
@@ -485,8 +486,15 @@ class AgentNode(Node):
         timing.emit("brain_receive", chars=len(text))
         # New user input cancels any active navigation AND interrupts any blocking
         # motion tool (visual servoing / timed drive), then replaces pending input.
-        self._bridge.cancel_navigation()
-        self._bridge.request_motion_stop()
+        # Except during "follow me": people talk while they walk, and the first
+        # real follow ended 3 s in on the transcript "Friend." (2026-10-10).
+        # Then only a stop word halts the wheels (utils/stop_words.py); any new
+        # drive the turn starts ends the follow on the Jetson by itself.
+        if self._bridge.is_following() and not says_stop(text):
+            self.get_logger().info("following: talk without a stop word -- the follow goes on")
+        else:
+            self._bridge.cancel_navigation()
+            self._bridge.request_motion_stop()
         # ...and shuts the robot up. The graph-level interrupt below only fires
         # while a turn is RUNNING; measured 2026-09-26, a reply whose graph had
         # already finished kept playing for 14-17s with nothing able to stop

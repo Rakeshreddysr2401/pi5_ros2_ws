@@ -826,6 +826,14 @@ class ROS2Bridge:
         with self._nav_lock:
             return bool(self._nav_thread and self._nav_thread.is_alive())
 
+    def is_following(self) -> bool:
+        """True while a "follow me" (start_follow mode "follow") is the
+        background drive -- not "come to me", which is over in seconds.
+        agent_node then halts the wheels only on a stop word (utils/stop_words.py)."""
+        with self._nav_lock:
+            return bool(self._nav_thread and self._nav_thread.is_alive()
+                        and (self._nav_goal or {}).get("label") == "following you")
+
     def navigation_state(self) -> dict:
         """{"active": bool, "goal": {x, y, label, since} | None, "last":
         {success, message, label, at} | None} -- the background drive now, and

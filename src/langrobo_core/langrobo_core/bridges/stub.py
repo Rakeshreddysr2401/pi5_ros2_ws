@@ -172,6 +172,9 @@ class StubBridge:
     def navigation_active(self) -> bool:
         return False
 
+    def is_following(self) -> bool:
+        return False
+
     def navigation_state(self) -> dict:
         return {"active": False, "goal": None, "last": getattr(self, "_last_nav", None)}
 
