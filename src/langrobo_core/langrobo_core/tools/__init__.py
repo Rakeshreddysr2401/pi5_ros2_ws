@@ -75,3 +75,12 @@ NAVIGATE_TOOLS = ([move_robot, navigate_to_pose, approach_described_object,
                   scan_surroundings, save_location, list_saved_locations,
                   get_robot_status, ask_photos, handover] + HEAD_TOOLS + FOLLOW_TOOLS
                  + [send_telegram_photo])
+
+# The tools that MOVE the robot (wheels or the whole body), by name. While one
+# of these runs, agent_node lets talk without a stop word wait instead of
+# halting the motion (utils/stop_words.py). Names, so a tool switched off
+# (follow_person, point_camera) still counts if it is ever bound.
+MOTION_TOOL_NAMES = frozenset({
+    move_robot.name, navigate_to_pose.name, approach_described_object.name,
+    scan_surroundings.name, follow_person.name, point_camera.name,
+})

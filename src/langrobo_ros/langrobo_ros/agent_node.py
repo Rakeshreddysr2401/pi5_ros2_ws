@@ -49,7 +49,8 @@ from langrobo_core.utils import pose_stamp
 from langrobo_core.utils.history import trim_history
 from langrobo_core.utils.utterance import join_utterances, looks_incomplete
 from langrobo_core.utils.speech_stream import SPEECH_ABANDON, SpeechStreamHandler
-from langrobo_core.utils.stop_words import says_stop
+from langrobo_core.tools import MOTION_TOOL_NAMES
+from langrobo_core.utils.stop_words import keeps_moving
 
 # A warm turn speaks within ~1.5s; 6s means the LLM is cold or unreachable.
 SLOW_TURN_CUE_S = 6.0
@@ -248,6 +249,9 @@ class AgentNode(Node):
         # JETSON_VOICE_UPGRADE.md; without AEC this fires only on queued input.)
         self._turn_interrupt = threading.Event()
         self._turn_active    = False
+        # True while the running turn's last step is a call to a movement tool
+        # still executing (MOTION_TOOL_NAMES): _on_user_input's motion gate.
+        self._turn_moving    = False
         # Channel of the in-flight turn. Barge-in only applies to voice turns —
         # a spoken answer goes stale when the user speaks over it, but a
         # Telegram reply doesn't; new voice input queues behind it instead.
@@ -486,12 +490,17 @@ class AgentNode(Node):
         timing.emit("brain_receive", chars=len(text))
         # New user input cancels any active navigation AND interrupts any blocking
         # motion tool (visual servoing / timed drive), then replaces pending input.
-        # Except during "follow me": people talk while they walk, and the first
-        # real follow ended 3 s in on the transcript "Friend." (2026-10-10).
-        # Then only a stop word halts the wheels (utils/stop_words.py); any new
-        # drive the turn starts ends the follow on the Jetson by itself.
-        if self._bridge.is_following() and not says_stop(text):
-            self.get_logger().info("following: talk without a stop word -- the follow goes on")
+        # Except while the robot MOVES -- a background drive, or a movement tool
+        # running in the turn: people talk while a robot drives, and on
+        # 2026-10-10 "Friend." ended a follow and "Akulam." killed a search for
+        # the dining table. Then only a stop word halts it (utils/stop_words.py);
+        # the words are answered after the motion, and a new drive they ask for
+        # replaces the old one by itself.
+        moving = self._bridge.navigation_active() or self._turn_moving
+        keep = keeps_moving(moving, text)
+        if keep:
+            self.get_logger().info("moving: talk without a stop word -- the motion goes on, "
+                                   "answered after")
         else:
             self._bridge.cancel_navigation()
             self._bridge.request_motion_stop()
@@ -513,9 +522,10 @@ class AgentNode(Node):
                     self.get_logger().warning("User queue: replacing pending message with newer input")
                 self._user_pending = text
             self._user_pending_at = now
-            if self._turn_active and self._turn_channel == "voice":
+            if self._turn_active and self._turn_channel == "voice" and not keep:
                 # Barge-in: abandon the in-flight turn — the user has moved on.
                 # Telegram turns are never abandoned; this input queues behind.
+                # Nor is a turn that is moving the robot, unless told to stop.
                 self._turn_interrupt.set()
         self._input_event.set()
 
@@ -824,6 +834,7 @@ class AgentNode(Node):
             self._turn_interrupt.clear()
             self._turn_channel = "telegram" if telegram else "voice"
             self._turn_active = True
+            self._turn_moving = False
         if not telegram and not quiet:
             # /brain/thinking drives the robot's physical "thinking" cue —
             # meaningless (and misleading) for a phone conversation.
@@ -995,6 +1006,8 @@ class AgentNode(Node):
                     break
                 if "messages" in event:
                     msg = event["messages"][-1]
+                    self._turn_moving = any(tc.get("name") in MOTION_TOOL_NAMES
+                                            for tc in (getattr(msg, "tool_calls", None) or []))
                     self.get_logger().info(f"Step message [{type(msg).__name__}]: {str(msg.content)[:200]} (tool_calls: {getattr(msg, 'tool_calls', None)})")
                 result = event
 
@@ -1109,6 +1122,7 @@ class AgentNode(Node):
                 pass
             with self._queue_lock:
                 self._turn_active = False
+                self._turn_moving = False
             self._last_turn_ts = time.time()
             metrics.set_gauge("last_turn_duration_seconds",
                               round(time.time() - turn_start, 3))
