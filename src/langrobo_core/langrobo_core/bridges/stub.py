@@ -218,5 +218,11 @@ class StubBridge:
         if self._nav_done_callback:
             self._nav_done_callback(True, f"[STUB] Simulated arrival at {dest}")
 
+    def start_follow(self, mode: str = "follow") -> dict:
+        """No Jetson: "unavailable", the real bridge's answer when follow_node
+        is not running."""
+        logger.info("[STUB] start_follow(%s) -> unavailable", mode)
+        return {"ok": False, "result": "unavailable", "why": "no Jetson (StubBridge)"}
+
     def wait_for_nav_server(self, timeout: float = 30.0) -> bool:
         return True

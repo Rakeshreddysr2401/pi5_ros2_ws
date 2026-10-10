@@ -237,6 +237,14 @@ class ROS2Bridge:
                                  lambda m: self._on_status(m, self._goal_exec_status), 10)
         node.create_subscription(String, "/reach/status",
                                  lambda m: self._on_status(m, self._reach_status), 10)
+        # follow: "follow me" / "come to me" (Jetson phase3/nodes/follow_node.py).
+        # Its status lines echo the "req" we send, as goal_stamp does above.
+        self._follow_start_pub = node.create_publisher(String, "/follow/start", 10)
+        self._follow_cancel_pub = node.create_publisher(Empty, "/follow/cancel", 10)
+        self._follow_status: dict[str, list] = {}
+        self._follow_current_key = None     # the follow a cancel is for (start_follow)
+        node.create_subscription(String, "/follow/status",
+                                 lambda m: self._on_status(m, self._follow_status, "req"), 10)
 
         # Subscribe to Kokoro speaking status (half-duplex state, stop-keyword later)
         node.create_subscription(Bool, "/voice/tts_speaking", self._on_speaking, 10)
@@ -717,12 +725,12 @@ class ROS2Bridge:
     #    "unavailable", "why": str, "turned_deg": float, "moved_cm": float}
     # "unavailable" = goal_exec is not running; the caller may fall back.
 
-    def _on_status(self, msg, store: dict) -> None:
+    def _on_status(self, msg, store: dict, key_field: str = "goal_stamp") -> None:
         try:
             d = json.loads(msg.data)
         except (json.JSONDecodeError, TypeError):
             return
-        key = d.get("goal_stamp")
+        key = d.get(key_field)
         if not key:
             return
         with self._status_lock:
@@ -1136,6 +1144,116 @@ class ROS2Bridge:
         finally:
             with self._status_lock:
                 self._reach_status.pop(key, None)
+
+    # ── Follow me (Jetson follow_node) ─────────────────────────────────────
+    FOLLOW_START_WAIT_S = 7.0   # follow_node waits 3 s for a person, +1 s for no people at all
+    FOLLOW_SILENT_S = 10.0      # follow_node reports at 2 Hz while following
+
+    def start_follow(self, mode: str = "follow") -> dict:
+        """Start "follow me" (mode "follow") or "come to me" (mode "come":
+        drive to ~1 m from the person and stop) on the Jetson, and WAIT for its
+        first answer, so the tool can say "I can't see anyone" instead of
+        promising. On a start it becomes the background drive: a new utterance
+        (cancel_navigation) stops it, and its end -- reached, lost, blocked --
+        arrives through the nav-done callback as the [SYSTEM] report, exactly
+        like an arrival. {"ok", "result": following | nobody | unavailable |
+        ..., "why", "target", "dist"}."""
+        if self._follow_start_pub.get_subscription_count() == 0:
+            return {"ok": False, "result": "unavailable",
+                    "why": "the Jetson's follow node is not running (./rover follow)"}
+        # The new follow's key is current BEFORE the old drive is cancelled, so
+        # an old follow worker sees it was superseded and does not send
+        # /follow/cancel -- which could land after this start and kill it (the
+        # same race start_nav_to_pose guards with _reach_current_key).
+        stamp, key = self._stamp_now()
+        self._follow_current_key = key
+        self.cancel_navigation()
+        come = mode == "come"
+        self._follow_start_pub.publish(String(data=json.dumps({"req": key, "stop_at_gap": come})))
+        t0 = time.monotonic()
+        first = None
+        while time.monotonic() - t0 < self.FOLLOW_START_WAIT_S:
+            with self._status_lock:
+                lines = list(self._follow_status.get(key, []))
+            first = next((d for d in lines if d.get("state") in ("following", "done")), None)
+            if first:
+                break
+            time.sleep(0.1)
+        if first is None:
+            self._follow_cancel_pub.publish(self._Empty())
+            with self._status_lock:
+                self._follow_status.pop(key, None)
+            return {"ok": False, "result": "unavailable",
+                    "why": "the Jetson's follow node did not answer"}
+        if first["state"] == "done":
+            with self._status_lock:
+                self._follow_status.pop(key, None)
+            return {"ok": False, "result": first.get("result", "failed"),
+                    "why": first.get("why", "")}
+
+        label = "you" if come else "following you"
+        cancel_event = threading.Event()
+        with self._nav_lock:
+            self._nav_cancel_event = cancel_event
+        thread = threading.Thread(target=self._follow_worker,
+                                  args=(key, come, cancel_event), daemon=True)
+        with self._nav_lock:
+            self._nav_thread = thread
+            self._nav_goal = {"x": None, "y": None, "label": label, "since": time.time()}
+        thread.start()
+        return {"ok": True, "result": "following", "target": first.get("target"),
+                "dist": first.get("dist")}
+
+    # follow_node's end results, as the sentence the [SYSTEM] report carries
+    _FOLLOW_ENDS = {
+        "lost": (False, "I lost sight of the person I was following, so I stopped"),
+        "blocked": (False, "something was in the way, so I stopped following"),
+        "timeout": (True, "I followed for 10 minutes and then stopped, as I always do"),
+        "pose unsure": (False, "I stopped following because I was not sure where I was"),
+        "no people": (False, "I stopped following because my camera stopped seeing people"),
+        "taken over": (False, "another drive took over, so I stopped following"),
+    }
+
+    def _follow_worker(self, key: str, come: bool, cancel_event: threading.Event) -> None:
+        """Background thread: one follow, until its final status line."""
+        what = "Coming to you" if come else "Following you"
+        seen, seen_at = 0, time.monotonic()
+        try:
+            while True:
+                if cancel_event.wait(timeout=0.3):
+                    if getattr(self, "_follow_current_key", None) == key:   # a stop, not a newer follow
+                        self._follow_cancel_pub.publish(self._Empty())
+                    self._fire_nav_done(False, f"{what} -- cancelled")
+                    return
+                with self._status_lock:
+                    lines = list(self._follow_status.get(key, []))
+                if len(lines) != seen:
+                    seen, seen_at = len(lines), time.monotonic()
+                elif time.monotonic() - seen_at > self.FOLLOW_SILENT_S:
+                    # follow_node reports at 2 Hz while following: silence is
+                    # a dead node or a dead link, not a quiet follow
+                    self._follow_cancel_pub.publish(self._Empty())
+                    self._fire_nav_done(False, "I stopped following -- the Jetson's follow "
+                                       "node went silent.")
+                    return
+                done = next((d for d in reversed(lines) if d.get("state") == "done"), None)
+                if done is None:
+                    continue
+                result, why = done.get("result", ""), done.get("why", "")
+                if result == "reached":
+                    self._fire_nav_done(True, f"I've come to you ({why}).")
+                elif result == "cancelled":
+                    self._fire_nav_done(False, f"{what} -- cancelled")
+                else:
+                    ok, sentence = self._FOLLOW_ENDS.get(
+                        result, (False, f"I stopped following ({result})"))
+                    self._fire_nav_done(ok, f"{sentence}{f' -- {why}' if why else ''}.")
+                return
+        except Exception as e:
+            self._fire_nav_done(False, f"Follow error: {e}")
+        finally:
+            with self._status_lock:
+                self._follow_status.pop(key, None)
 
     def _fire_nav_done(self, success: bool, message: str) -> None:
         # Logged unconditionally, and says whether a listener existed. A silent

@@ -42,7 +42,7 @@ from typing import Callable, Optional
 
 from . import prompts
 from .agent_ids import AGENT_IDS, ROUTABLE
-from .tools import CHAT_TOOLS, LOCAL_AGENT_TOOLS, NAVIGATE_TOOLS
+from .tools import CHAT_TOOLS, FOLLOW_ENABLED, LOCAL_AGENT_TOOLS, NAVIGATE_TOOLS
 
 
 # ── Dynamic prompt tails ─────────────────────────────────────────────────────
@@ -147,9 +147,14 @@ _SPECS: tuple[AgentSpec, ...] = (
     ),
     AgentSpec(
         name="navigate",
-        description="moving the robot — driving somewhere, going to a saved place, approaching a described object, turning, scanning the surroundings, saving a location, stopping",
+        # "following a person" only with LANGROBO_FOLLOW=1 (tools/follow.py):
+        # off, chat's routing table is byte-identical to before.
+        description=("moving the robot — driving somewhere, going to a saved place, approaching a described object, "
+                     + ("following a person, " if FOLLOW_ENABLED else "")
+                     + "turning, scanning the surroundings, saving a location, stopping"),
         examples=["go to the kitchen", "come closer", "go to the red bottle",
-                  "turn left 90 degrees", "save this spot as dining area", "stop"],
+                  "turn left 90 degrees", "save this spot as dining area", "stop"]
+                 + (["follow me"] if FOLLOW_ENABLED else []),
         prompt=prompts.NAVIGATE_PROMPT,
         tools=NAVIGATE_TOOLS,
         slot=2,
@@ -174,7 +179,9 @@ _SPECS: tuple[AgentSpec, ...] = (
             "back up", "go 10 centimetres ahead", "please go near it",
             "go near the red bag", "go to the backpack", "go near the umbrella",
             "approach the table", "find the bottle and go there",
-            "go near the black bag and send me a pic", "go to the person"),
+            "go near the black bag and send me a pic", "go to the person")
+            + (("follow me", "come with me", "follow me please", "keep following me",
+                "come to me", "walk with me") if FOLLOW_ENABLED else ()),
     ),
 )
 

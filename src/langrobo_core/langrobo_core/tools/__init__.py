@@ -25,6 +25,7 @@ from .memory import MEMORY_TOOLS
 from .handover import handover
 from .telegram import TELEGRAM_TOOLS, send_telegram_photo
 from .web import WEB_TOOLS
+from .follow import FOLLOW_ENABLED, follow_person
 
 # Bound only when there are servos to drive. The ESP32 firmware has three
 # subscriptions and none of them are servos (see movement.PAN_TILT_ENABLED), so
@@ -33,6 +34,11 @@ from .web import WEB_TOOLS
 # calling it. Set LANGROBO_PAN_TILT=1 once a mount exists and it reappears for
 # both agents at once.
 HEAD_TOOLS = [point_camera] if PAN_TILT_ENABLED else []
+
+# "follow me" / "come to me" (tools/follow.py, Jetson follow_node). Off by
+# default (LANGROBO_FOLLOW=1): with it off the schema is not shipped and every
+# prompt stays byte-identical, so nothing changes for the KV cache or the model.
+FOLLOW_TOOLS = [follow_person] if FOLLOW_ENABLED else []
 
 # ── Per-agent tool sets ─────────────────────────────────────────────────────
 
@@ -65,6 +71,7 @@ LOCAL_AGENT_TOOLS = [look, locate_object, ask_photos, handover] + HEAD_TOOLS + T
 # called mid-drive, it holds the photo until arrival (telegram.py). Messages
 # are chat's job: navigate never sent one in 3 weeks of logs, and the schema
 # cost ~150 tokens on every move (2026-10-02).
-NAVIGATE_TOOLS = [move_robot, navigate_to_pose, approach_described_object,
+NAVIGATE_TOOLS = ([move_robot, navigate_to_pose, approach_described_object,
                   scan_surroundings, save_location, list_saved_locations,
-                  get_robot_status, ask_photos, handover] + HEAD_TOOLS + [send_telegram_photo]
+                  get_robot_status, ask_photos, handover] + HEAD_TOOLS + FOLLOW_TOOLS
+                 + [send_telegram_photo])
