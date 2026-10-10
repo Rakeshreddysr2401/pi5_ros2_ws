@@ -243,6 +243,22 @@ Deliberately keyed on `handover` being present, not on `tool_calls` being
 empty: the first version's "any tool call is fine" exemption is what let the
 `scan_surroundings()` case through. Tests: `tests/test_vision_backstop.py`.
 
+### 3.7 Movement-request backstop (`graph/build.py`, added 2026-10-10)
+
+The same failure the other way round. The microphone merged "Small water
+cool. Pizza is ready. I know you like to play. , follow me" into one turn; it
+entered `chat` (no movement tool), which saved a memory and **said** "I am
+following you now". The robot never moved. Same enforcement, same wrapper,
+run after the vision check: the agent cannot move (not one of `_MOVERS`, the
+agents bound to `move_robot` in registry.py), it neither handed over nor let a
+mover run this turn, and the user's own words match `_MOTION_REQUEST`
+("follow me", "come here", "turn left", "go to the …", "go outside / through
+/ near …"; "go to sleep" and "I will come back" do not). Its reply or tool
+call is discarded and a routing note chains to navigate. `[SYSTEM]` turns are
+excluded: they quote errands ("you were asked to go to the kitchen — NOT
+done"), and re-driving a trip that just failed is not a backstop's call.
+Tests: `tests/test_motion_backstop.py`.
+
 ---
 
 ## 4. Latency: where the seconds go, and what buys them back

@@ -7,7 +7,7 @@ Architecture:
                               ↓ (if a handover ran)
                         handle_handover → another agent, or END
                               ↓ (no tool calls left: the agent answered)
-                       vision backstop → local_agent, or END
+                vision / movement backstop → local_agent / navigate, or END
                               ↓ (that agent becomes sticky for the next turn)
 
   turn_entry picks the entry directly — the sticky agent from last turn, or
@@ -153,6 +153,82 @@ def _vision_backstop(agent_name: str, state: AgentState, out: dict) -> Command |
     })
 
 
+# ── Movement-request backstop ────────────────────────────────────────────────
+#
+# The same failure in the other direction (2026-10-10, real transcript): the
+# microphone merged "Small water cool. Pizza is ready. I know you like to
+# play. , follow me" into one turn; it entered `chat`, which has no movement
+# tool, saved a memory and SAID "I am following you now" -- and the robot
+# never moved. A spoken claim of an action nobody took. CHAT_PROMPT already
+# routes movement to navigate; a prompt rule is a thing to measure, not a fix
+# (CLAUDE.md). So, exactly as the vision backstop above: the user's own words
+# ask for movement, the agent that answered cannot move, and it neither handed
+# over nor let navigate run -> its reply or tool call is discarded (never
+# spoken, never executed) and navigate gets the turn.
+#
+# Narrow, on the USER'S words: phrasings that ask THIS robot to move. "go to
+# the kitchen" yes, "go to sleep" no (the article is required); "come here",
+# "follow me", "turn left", "move forward", "go near/out/through ...".
+# [SYSTEM] turns are excluded: their text quotes errands ("you were asked to
+# go to the kitchen ... NOT done"), and forcing navigate there could re-drive
+# a trip that just failed.
+_MOTION_REQUEST = re.compile(
+    r"\b(follow me|come (to me|here|over here|back (here|to me)|closer)"
+    r"|go (to|into|towards?) (the|my|your|that|this)\b"
+    r"|go (near|closer|forward|ahead|back(ward)?|outside|inside|out of|through|around)\b"
+    r"|move (forward|back(ward)?|ahead|closer|left|right|a (little|bit))"
+    r"|turn (left|right|around)"
+    r"|drive (to|forward|back))",
+    re.IGNORECASE,
+)
+
+# the agents that can move the wheels, from their tool sets (registry.py): any
+# agent bound to move_robot. Not a hand-kept name list.
+_MOVERS = tuple(name for name, spec in SPECS.items()
+                if any(getattr(t, "name", "") == "move_robot" for t in spec.tools))
+
+
+def _motion_backstop(agent_name: str, state: AgentState, out: dict) -> Command | None:
+    """None if nothing is wrong; a Command chaining to navigate if an agent
+    without a movement tool answered a movement request itself -- by speaking
+    or by calling any tool other than handover. Fires only when ALL of: the
+    agent is not a mover; its step does not call handover; it did something;
+    no mover has run this turn; the turn is the user's (not [SYSTEM]); and the
+    user's own last message matches _MOTION_REQUEST. Same discard-and-chain
+    as _vision_backstop: nothing wrong is ever said or done."""
+    if not _MOVERS or agent_name in _MOVERS:
+        return None
+    msgs = out.get("messages") or []
+    last = msgs[-1] if msgs else None
+    if not isinstance(last, AIMessage):
+        return None
+    tool_calls = last.tool_calls or []
+    if any(tc.get("name") == "handover" for tc in tool_calls):
+        return None
+    if not tool_calls and not last.content:
+        return None
+    if any((state.get("agent_run_counts") or {}).get(m, 0) > 0 for m in _MOVERS):
+        return None
+    query = last_user_query(state)
+    if "[SYSTEM]" in query or not _MOTION_REQUEST.search(query):
+        return None
+
+    attempted = ", ".join(tc.get("name", "?") for tc in tool_calls) or "answered directly"
+    logger.warning(
+        "Movement backstop: '%s' %s instead of handing over -- forcing "
+        "%s (query: %r)", agent_name, attempted, _MOVERS[0], query[:80])
+    note = SystemMessage(content=(
+        f"[Routing note] Control passed to the '{_MOVERS[0]}' agent because: "
+        f"the '{agent_name}' agent tried to handle a movement request itself "
+        f"({attempted}) instead of handing it over. The user said: "
+        f"{query!r}. Do the movement with your tools, or say why you cannot."
+    ))
+    return Command(goto=_MOVERS[0], update={
+        "active_agent": _MOVERS[0],
+        "messages": [note],
+    })
+
+
 # ── Fresh view first ─────────────────────────────────────────────────────────
 #
 # The second half of "a vision question must be answered from a real image":
@@ -239,7 +315,8 @@ def _loop_guarded(agent_name: str, node_fn):
             out["messages"] = pre + list(out.get("messages") or [])
         out["agent_run_counts"] = counts
 
-        redirect = _vision_backstop(agent_name, state, out)
+        redirect = _vision_backstop(agent_name, state, out) or \
+            _motion_backstop(agent_name, state, out)
         if redirect is not None:
             redirect.update["agent_run_counts"] = counts
             return redirect
