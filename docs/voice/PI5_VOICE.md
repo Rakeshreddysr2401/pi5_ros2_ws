@@ -326,6 +326,14 @@ different model has a different score distribution.
 
 ---
 
+## Since 2026-10-10 — AM-C28 conference mic, cleaned input, Sarvam
+
+The mic is now the USB **AM-C28** array (gain pinned to 1.0, 100 Hz high-pass,
+Silero VAD, no loudness gate) and the boAt Stone is the A2DP speaker; Sarvam does
+both legs. Every measurement behind that — the 400% gain, the 2-7 Hz rumble, its
+echo cancelling, the English STT bench (Parakeet best), local Telugu on the Jetson —
+is in **docs/voice/VOICE_LAB_2026-10.md**. The section below is the older Stone-era tuning.
+
 ## Local voice tuning (2026-10-03) — what runs now, and why
 
 The owner switched voice to **fully local** and asked for it to work without

@@ -81,6 +81,12 @@ class AudioDeviceNode(Node):
         # Substring of a wired sink/source name to use when no Bluetooth
         # device is up ('' = none: stay not-ready until Bluetooth appears).
         self.declare_parameter('wired_fallback', '')
+        # Gain on the wired mic, set every time it is routed. Nothing set it
+        # before, so whatever PipeWire remembered stuck: the USB AM-C28 array
+        # was found at 400% (+36 dB) on 2026-10-10, an empty room at rms 0.35
+        # and clipping, and every sound looked like speech. 1.0 = as the
+        # device delivers it.
+        self.declare_parameter('wired_mic_gain', 1.0)
         self.declare_parameter('poll_period_s', 3.0)
         # A device that is off takes several seconds to fail a connect; don't
         # hammer it every poll.
@@ -92,6 +98,7 @@ class AudioDeviceNode(Node):
         self._mic_gain = float(self.get_parameter('bt_mic_gain').value)
         self._mic_gains = bt_audio.parse_gain_overrides(self.get_parameter('bt_mic_gains').value)
         self._wired = (self.get_parameter('wired_fallback').value or '').strip()
+        self._wired_gain = float(self.get_parameter('wired_mic_gain').value)
         self._poll_s = float(self.get_parameter('poll_period_s').value)
         self._retry_s = float(self.get_parameter('connect_retry_s').value)
 
@@ -295,6 +302,13 @@ class AudioDeviceNode(Node):
     def _activate(self, routed: dict) -> None:
         self._active = routed
         self._ready = True
+        if routed.get('source_id') is not None and (
+                routed['kind'] == 'wired' or routed.get('mic') == 'wired'):
+            ok, msg = bt_audio.set_volume(routed['source_id'], self._wired_gain)
+            if ok:
+                routed['mic_gain'] = self._wired_gain
+            else:
+                self.get_logger().warning(f'wired mic gain {self._wired_gain:.2f} failed: {msg}')
         key = (routed.get('mac') or routed.get('name') or '').upper()
         if key in self._volumes and routed.get('sink_id') is not None:
             bt_audio.set_volume(routed['sink_id'], self._volumes[key] / 100)

@@ -10,7 +10,9 @@ pi5_audio_device:
     bt_devices: ["D6:AA:BB:59:EF:B6"]   # boAt Stone 650 — preferred, not required
     # Use the Bluetooth device's own mic (HFP, 8-16kHz call audio). false =
     # A2DP playback only; the mic then comes from wired_fallback.
-    bt_prefer_mic: true
+    # false since 2026-10-10 (owner): the Stone is the SPEAKER only, at full
+    # A2DP quality, and the USB AM-C28 array is the mic (48 kHz, not 8 kHz).
+    bt_prefer_mic: false
     # Software gain on the HFP mic, re-applied every time PipeWire re-creates
     # it. PER DEVICE — one number does not fit all mics:
     #   Stone (2026-09-11): at 1.0 speech arrived at rms ~0.024, under the 0.05
@@ -21,8 +23,12 @@ pi5_audio_device:
     # Unlisted devices get bt_mic_gain.
     bt_mic_gain: 1.0
     bt_mic_gains: ["D6:AA:BB:59:EF:B6=4.0"]   # boAt Stone 650
-    # Substring of a wired sink/source to use when no Bluetooth device is up.
-    wired_fallback: "Blackwire"
+    # Substring of the wired device: the mic while the Stone plays (A2DP), and
+    # mic + speaker when no Bluetooth device is up. Was "Blackwire" (gone).
+    wired_fallback: "AM-C28"
+    # Its gain, set every time it is routed. Found at 400% (+36 dB) 2026-10-10:
+    # an empty room clipped and every sound looked like speech.
+    wired_mic_gain: 1.0
     poll_period_s: 3.0
     connect_retry_s: 10.0
 
@@ -91,7 +97,19 @@ pi5_stt_node:
     stt_hotwords: "Mitra"
     model_dir: /home/rakhi24/ros2_ws/src/langrobo_ros/models/whisper
     threads: 2              # was 4: Whisper on room noise took ~3 of 4 cores and starved Kokoro (RTF 3-5)
-    vad_aggressiveness: 2
+    vad_aggressiveness: 2    # webrtc only
+    # AM-C28 conference array (2026-10-10): it already does voice pickup and
+    # echo cancelling, so the input path only removes what it lets through.
+    # 100 Hz high-pass: 98% of the empty-room signal was 2-7 Hz rumble (air or
+    # vibration on the mic); filtered, room rms 0.093 -> 0.018 (mic_filter.py).
+    highpass_hz: 100.0
+    # silero: a neural voice detector -- 0% of the room counted as speech where
+    # webrtc said 30-63%, so a sentence now ends ~0.6 s after you stop instead
+    # of running to the cap (vad_silero.py). Model: models/README.md. Missing -> webrtc.
+    vad_engine: silero
+    vad_model_path: /home/rakhi24/ros2_ws/src/langrobo_ros/models/vad/silero_vad.onnx
+    vad_threshold: 0.5
+    vad_end_threshold: 0.35
     max_utterance_s: 12.0   # was the 20 s default: long TV stretches clogged the queue
     # Acoustic wake word (openWakeWord). While asleep the node transcribes NOTHING
     # until it hears the wake word, then listens for follow_up_window_s. Set
@@ -125,7 +143,11 @@ pi5_stt_node:
     # measured Bluetooth-mic noise floor (~0.029) with margin; the old 0.012
     # shipped below that floor, so idle-room noise passed this check and only
     # voiced_ratio stood between it and a hallucinated cloud transcript.
-    min_utterance_rms: 0.05
+    # 0 = off since 2026-10-10. 0.05 was tuned to the boAt Stone's 4x-gained
+    # Bluetooth mic noise; on the AM-C28 (gain 1.0, its own level control) it is
+    # the wrong yardstick and would drop quiet speech. Silero + the voiced
+    # ratio below now decide what is speech. Back to ~0.05 if the Stone is the mic.
+    min_utterance_rms: 0.0
     min_voiced_ratio: 0.35
     # local | sarvam | soniox — see docs/voice/PI5_VOICE.md for the cost/latency comparison.
     # sarvam/soniox need SARVAM_API_KEY / SONIOX_API_KEY in ~/ros2_ws/.env (example.env

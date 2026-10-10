@@ -58,7 +58,9 @@ from std_msgs.msg import Bool, String
 
 from .addressing import strip_alias, strip_leading_alias
 from . import relevance
+from .mic_filter import HighPass
 from .vad_gate import GateConfig, evaluate as gate_utterance
+from .vad_silero import SileroVad, VadUnavailable
 from .wake_cue import DEFAULT_DELAY_S, CueGate
 from .stt_providers import REGISTRY, ProviderUnavailable
 from .stt_providers.local_whisper import LocalWhisperProvider
@@ -105,6 +107,17 @@ class STTNode(Node):
         self.declare_parameter('model_dir', '')
         self.declare_parameter('threads', 4)
         self.declare_parameter('vad_aggressiveness', 2)
+        # Which voice detector cuts the mic into utterances: 'silero' (neural,
+        # tells voices from noise and music -- vad_silero.py) or 'webrtc' (calls
+        # 30-63% of an empty room "speech" on the AM-C28, 2026-10-10). A missing
+        # silero model falls back to webrtc.
+        self.declare_parameter('vad_engine', 'webrtc')
+        self.declare_parameter('vad_model_path', '')
+        self.declare_parameter('vad_threshold', 0.5)       # silero: speech starts above this
+        self.declare_parameter('vad_end_threshold', 0.35)  # ...and ends below this
+        # High-pass the mic before anything else (mic_filter.py): the AM-C28
+        # delivers air/vibration rumble at 2-7 Hz that no recogniser needs. 0 = off.
+        self.declare_parameter('highpass_hz', 0.0)
         # Seconds between [diag] lines. These ran unconditionally at ~1s, which
         # is ~86k INFO lines a day into journald on a robot meant to run 24/7.
         # 0 turns them off.
@@ -132,12 +145,15 @@ class STTNode(Node):
         # faster-whisper's default; hotwords biases it toward the robot's name
         self.declare_parameter('stt_beam_size', 5)
         self.declare_parameter('stt_hotwords', '')
+        # stt_provider sherpa: a sherpa-onnx model directory (Moonshine or
+        # Parakeet, models/README.md). Whisper above stays loaded as its fallback.
+        self.declare_parameter('stt_sherpa_model_dir', '')
         self.declare_parameter('wake_aliases', ['mitra', 'hey mitra'])
         # Names as a TRANSLATING recogniser writes them (Sarvam: mitra -> "friend"):
         # they count only at the start of the sentence. [''] = none.
         self.declare_parameter('wake_leading_aliases', [''])
         self.declare_parameter('stop_words', ['stop'])
-        self.declare_parameter('stt_provider', 'local')       # local | sarvam | soniox
+        self.declare_parameter('stt_provider', 'local')       # local | sherpa | sarvam | soniox
         self.declare_parameter('stt_source_language', 'te')   # Telugu source for cloud translate
         self.declare_parameter('stt_target_language', 'en')
         # Wake word: 'transcript_alias' = legacy (transcribe all, match a name in text);
@@ -179,7 +195,9 @@ class STTNode(Node):
         model_size = self.get_parameter('model_size').value
         model_dir = self.get_parameter('model_dir').value
         threads = int(self.get_parameter('threads').value)
-        self._vad = webrtcvad.Vad(int(self.get_parameter('vad_aggressiveness').value))
+        self._vad = self._build_vad()
+        _hp = float(self.get_parameter('highpass_hz').value)
+        self._highpass = HighPass(_hp, SAMPLE_RATE) if _hp > 0 else None
         self._max_utterance_frames = int(
             float(self.get_parameter('max_utterance_s').value) * 1000 / FRAME_MS)
         self._gate = GateConfig(
@@ -213,6 +231,7 @@ class STTNode(Node):
             'source_language': src_lang, 'target_language': tgt_lang,
             'beam_size': int(self.get_parameter('stt_beam_size').value),
             'hotwords': str(self.get_parameter('stt_hotwords').value or '').strip(),
+            'sherpa_model_dir': str(self.get_parameter('stt_sherpa_model_dir').value or ''),
         }
         # Fallback path when a cloud provider fails: same task/language intent as the primary
         # provider, so "degraded" still means "still tries to answer the same question".
@@ -386,6 +405,22 @@ class STTNode(Node):
             self.get_logger().warning(f'{name} unavailable at startup ({e}); using local')
             return self._fallback
 
+    def _build_vad(self):
+        engine = str(self.get_parameter('vad_engine').value or 'webrtc').strip()
+        if engine == 'silero':
+            try:
+                vad = SileroVad(str(self.get_parameter('vad_model_path').value),
+                                float(self.get_parameter('vad_threshold').value),
+                                float(self.get_parameter('vad_end_threshold').value))
+                self.get_logger().info('vad_engine = silero')
+                return vad
+            except VadUnavailable as e:
+                self.get_logger().warning(f'silero VAD unavailable ({e}); using webrtcvad')
+        elif engine != 'webrtc':
+            self.get_logger().error(f'unknown vad_engine {engine!r}; using webrtcvad')
+        self.get_logger().info('vad_engine = webrtc')
+        return webrtcvad.Vad(int(self.get_parameter('vad_aggressiveness').value))
+
     def _build_wake(self, name: str, params: dict):
         """Return a WakeDetector, or None to run legacy transcript_alias mode."""
         if name in (None, '', 'transcript_alias', 'none'):
@@ -423,6 +458,8 @@ class STTNode(Node):
             # dropped frames show up here and VAD silently sees nothing.
             self.get_logger().warning(f'input status: {status}')
         frame = indata[:, 0].tobytes()
+        if self._highpass is not None:
+            frame = self._highpass(frame)   # runs while muted too: the filter state stays continuous
         self._dbg_frames += 1
 
         # Self-hearing guard: drop audio while TTS speaks (+ tail) so we don't transcribe
@@ -540,6 +577,8 @@ class STTNode(Node):
                 self._awake_until = self._mute_until + self._follow_up_s
 
     def _reset_capture(self):
+        if hasattr(self._vad, 'reset'):
+            self._vad.reset()     # silero carries state; webrtcvad has none
         self._ring.clear()
         self._utterance = []
         self._in_speech = False
