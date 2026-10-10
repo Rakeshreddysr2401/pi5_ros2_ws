@@ -51,10 +51,11 @@ def follow_person(state: Annotated[dict, InjectedState],
     mode="come": "come here", "come to me" -- drive up to about a metre from
     them, face them, and stop.
 
-    It goes to the person nearest the middle of the camera view; it cannot
-    tell people apart by name or follow animals. If the user named someone
-    ("follow him", "follow the man in red"), say you will follow whoever is in
-    front of you. Any new sentence from the user stops it.
+    It goes to the person nearest the middle of the camera view. It follows
+    people only: asked to follow a pet or a thing, say you can only follow
+    people for now. It does not know people by name: if the user named or
+    described someone ("follow him", "follow the man in red"), say you will
+    follow whoever is in front of you. Any new sentence from the user stops it.
 
     then: for mode="come", what to do on arriving ("come here and tell me the
     time" -> then="tell the user the time"). Leave empty otherwise.
