@@ -130,3 +130,23 @@ slow down near people/pets in reach/goal_exec; room-watch alerts as a
   with the owner); the rest of Phase A in progress. Owner allowed floor
   moves overnight (robot parked in a safe place); no person-follow test
   without the owner.
+- 2026-10-10 night, built: `./rover` gentle kill_match + `./rover follow`
+  + `virtual_person.py` (Jetson afbe43d); follow_node `req` echo (8a67202);
+  speed governor (d3777e1); Pi `follow_person` + `start_follow` behind
+  `LANGROBO_FOLLOW` (967843f). Brain suite 522 passed, switch off and on;
+  prompts byte-identical with it off. A clean `./rover up` passed every layer
+  (laptop RViz skipped: laptop off) and cured the shared-memory fault.
+- 2026-10-10 night, floor (virtual person, real wheels, watchdog per test):
+  | test | person | result |
+  |---|---|---|
+  | T1 turn | 1.0 m, 15 deg right | turned 9.1 deg, stopped turning inside the 6 deg band; 0 forward; moved 0.8 cm (scrub) |
+  | T2 approach | 1.5 m ahead | drove 0.38 m straight (heading +0.0), peak 0.21 m/s, stopped at 1.12 m (the 0.12 m band) |
+  | T3 obstacle | 2.6 m ahead | stopped 0.28 m short of a TOY CAR on the floor below the LiDAR plane, seen only by the fused nvblox map (confirmed on a camera frame); "blocked" after 10 s. Watchdog never needed |
+  Backing out by goal_exec: leg 1 (0.41 m reverse) reached to 0.3 cm; leg 2
+  went ~0.19 m PAST its target, then refused the forward correction
+  ("obstacle 0.03 m into the 0.17 m leg"). Safe, but goal_exec normally ends
+  within ~1.5 cm -- open item for the Jetson (reverse leg overshoot?). The
+  rover ended ~0.17 m behind where it was parked, >= 0.50 m clear all round.
+- Open before the owner test: the floor in front is cluttered (tools, a
+  ruler, a toy car) -- flat things may be invisible to depth; the 6 deg turn
+  band and the 0.12 m distance band may want tightening for "come to me".
