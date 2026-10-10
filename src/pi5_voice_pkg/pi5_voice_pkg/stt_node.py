@@ -58,7 +58,6 @@ from std_msgs.msg import Bool, String
 
 from .addressing import strip_alias, strip_leading_alias
 from . import relevance
-from .mic_filter import HighPass
 from .vad_gate import GateConfig, evaluate as gate_utterance
 from .vad_silero import SileroVad, VadUnavailable
 from .wake_cue import DEFAULT_DELAY_S, CueGate
@@ -115,9 +114,6 @@ class STTNode(Node):
         self.declare_parameter('vad_model_path', '')
         self.declare_parameter('vad_threshold', 0.5)       # silero: speech starts above this
         self.declare_parameter('vad_end_threshold', 0.35)  # ...and ends below this
-        # High-pass the mic before anything else (mic_filter.py): the AM-C28
-        # delivers air/vibration rumble at 2-7 Hz that no recogniser needs. 0 = off.
-        self.declare_parameter('highpass_hz', 0.0)
         # Seconds between [diag] lines. These ran unconditionally at ~1s, which
         # is ~86k INFO lines a day into journald on a robot meant to run 24/7.
         # 0 turns them off.
@@ -196,8 +192,6 @@ class STTNode(Node):
         model_dir = self.get_parameter('model_dir').value
         threads = int(self.get_parameter('threads').value)
         self._vad = self._build_vad()
-        _hp = float(self.get_parameter('highpass_hz').value)
-        self._highpass = HighPass(_hp, SAMPLE_RATE) if _hp > 0 else None
         self._max_utterance_frames = int(
             float(self.get_parameter('max_utterance_s').value) * 1000 / FRAME_MS)
         self._gate = GateConfig(
@@ -458,8 +452,6 @@ class STTNode(Node):
             # dropped frames show up here and VAD silently sees nothing.
             self.get_logger().warning(f'input status: {status}')
         frame = indata[:, 0].tobytes()
-        if self._highpass is not None:
-            frame = self._highpass(frame)   # runs while muted too: the filter state stays continuous
         self._dbg_frames += 1
 
         # Self-hearing guard: drop audio while TTS speaks (+ tail) so we don't transcribe

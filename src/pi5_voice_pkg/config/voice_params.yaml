@@ -98,11 +98,9 @@ pi5_stt_node:
     model_dir: /home/rakhi24/ros2_ws/src/langrobo_ros/models/whisper
     threads: 2              # was 4: Whisper on room noise took ~3 of 4 cores and starved Kokoro (RTF 3-5)
     vad_aggressiveness: 2    # webrtc only
-    # AM-C28 conference array (2026-10-10): it already does voice pickup and
-    # echo cancelling, so the input path only removes what it lets through.
-    # 100 Hz high-pass: 98% of the empty-room signal was 2-7 Hz rumble (air or
-    # vibration on the mic); filtered, room rms 0.093 -> 0.018 (mic_filter.py).
-    highpass_hz: 100.0
+    # AM-C28 (2026-10-10, owner): the mic's audio goes to the recogniser UNTOUCHED --
+    # no filter, no noise reduction. Silero only decides where a sentence starts and
+    # ends; it never changes the audio.
     # silero: a neural voice detector -- 0% of the room counted as speech where
     # webrtc said 30-63%, so a sentence now ends ~0.6 s after you stop instead
     # of running to the cap (vad_silero.py). Model: models/README.md. Missing -> webrtc.
