@@ -171,7 +171,7 @@ pi5_stt_node:
     # Sarvam down -> local Parakeet transcribes English (since 2026-10-10; Whisper
     # tiny.en was the fallback and got ~half the owner's words wrong). Fully local:
     # stt_provider: sherpa.
-    stt_provider: sarvam
+    stt_provider: sherpa
     stt_source_language: te   # Telugu
     stt_target_language: en
     # Owner's own voice, 39 sentences, fan on (docs/voice/VOICE_LAB_2026-10.md):
