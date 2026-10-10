@@ -1,14 +1,18 @@
 """sherpa-onnx offline recognisers on CPU — Moonshine and NeMo Parakeet.
 
-Measured on the Pi 5 (2 threads, 2026-10-10), 96 clips of Mitra commands in
-four voices mixed with real room noise from the USB AM-C28 array:
+The robot's offline fallback is Parakeet 0.6B (`stt_fallback: sherpa`). Measured
+on the OWNER'S OWN VOICE (39 sentences through the AM-C28, fan on, Pi 5, 2 threads,
+2026-10-10):
 
-  whisper tiny.en (the old local)   WER 3.6 %   "Mitra" 24/24   1.2 s a clip
-  Moonshine base int8               WER 3.6 %   "Mitra" 24/24   0.2 s a clip
+  Sarvam (cloud, the primary)   6-11 % word errors   0.35 s a sentence
+  Parakeet 0.6B int8            10-15 %              0.55 s
+  whisper small.en              14-15 %              7-9 s
+  Moonshine base int8           ~50 %                0.25 s
+  whisper tiny.en (old fallback) 45-54 %             2.3 s
 
-Same accuracy, about six times sooner: Moonshine encodes only as much audio as
-was spoken, where Whisper always pays for a 30 s window. docs/voice/PI5_VOICE.md
-has the full table.
+Moonshine looked as good as Parakeet on synthetic voices and fell apart on the
+real one -- score changes on real recordings (scripts/voice_lab/score_set.py).
+Full tables: docs/voice/VOICE_LAB_2026-10.md.
 
 The model directory is one of the sherpa-onnx release tarballs
 (models/README.md); its files say which kind it is. Anything that fails to

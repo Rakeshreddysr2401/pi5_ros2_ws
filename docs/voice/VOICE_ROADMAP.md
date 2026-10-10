@@ -490,3 +490,7 @@ it → the robot is listening again.
 | 2026-09-20 | **No software AEC** — measured: Stone mutes its mic during playback, Buds cancel echo themselves; nothing inserted into the audio path | measured |
 | 2026-09-20 | **Full-duplex barge-in dropped.** Owner: "on wake word, or after it responds, it listens" — the robot need not hear anyone while it talks | owner |
 | — | HFP codec: mSBC available on the Stone? (Buds: yes, negotiated) | pending |
+| 2026-10-10 | **Mic = USB AM-C28 array; the Stone is the speaker only** (A2DP). Supersedes the 09-20 "Stone stays as mic". The mic hears the Stone (+18 dB), so the mic stays muted while the robot talks | owner + measured |
+| 2026-10-10 | **The voice signal is not processed** — no filters, no noise reduction; only timing (end silence, lead-in) is tuned. Silero VAD marks start/end | owner |
+| 2026-10-10 | **STT = Sarvam** (Telugu or English → English); **offline fallback = Parakeet 0.6B on the Pi** (owner's voice: Sarvam 6-11 %, Parakeet 10-15 %, tiny.en ~50 % word errors). TTS unchanged | owner + measured |
+| 2026-10-10 | Wake word: undecided (Mitra or another name) — later | owner |

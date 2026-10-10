@@ -214,6 +214,13 @@ rover TODO 40, and until it runs, treat the Spin recovery as unproven.
 
 ## 4. Voice ✅ / ⬜
 
+**Since 2026-10-10** (docs/voice/VOICE_LAB_2026-10.md): the mic is the USB AM-C28
+array (wired, gain pinned to 1.0 by `audio_device_node`), the boAt Stone is the A2DP
+speaker only. The mic's audio reaches the recogniser **untouched** — Silero VAD marks
+start/end; `min_utterance_rms` and `min_voiced_ratio` are 0 (the Stone-era gates
+dropped short commands). STT = Sarvam (Telugu or English → English); if it fails,
+**Parakeet** on the Pi (`stt_fallback: sherpa`), no longer Whisper tiny.en. TTS unchanged.
+
 Fixed:
 
 - **The wake word ate the start of your command.** On detection the node

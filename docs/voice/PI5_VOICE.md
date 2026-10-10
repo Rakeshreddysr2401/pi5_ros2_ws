@@ -338,6 +338,11 @@ owner's-voice table (Sarvam 6-11 %, Parakeet 10-15 %, tiny.en ~50 % word errors)
 Telugu on the Jetson — is in **docs/voice/VOICE_LAB_2026-10.md**. The section below is
 the older Stone-era tuning.
 
+Setup for the Parakeet fallback (once per Pi): `pip3 install --user
+--break-system-packages sherpa-onnx==1.13.8`, then fetch the model and the Silero VAD
+as in `src/langrobo_ros/models/README.md`. Missing either one degrades, never crashes:
+no sherpa → Whisper is the fallback; no Silero model → webrtcvad.
+
 ## Local voice tuning (2026-10-03) — what runs now, and why
 
 The owner switched voice to **fully local** and asked for it to work without

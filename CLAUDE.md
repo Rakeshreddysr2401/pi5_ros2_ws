@@ -199,7 +199,12 @@ that moves wheels).
 - `langrobo_ros/` — agent_node (params, queues, worker loop, cache warmer),
   ros2_bridge (all topics/services/actions; `NAV_FRAME` defined once here),
   launch, systemd units
-- `pi5_voice_pkg/` — the Pi5 voice trio: `audio_device_node` is the ONE
+- `pi5_voice_pkg/` — the Pi5 voice trio. **Since 2026-10-10:** mic = USB
+  AM-C28 array (audio passed to the recogniser untouched — owner's rule; Silero
+  VAD only marks start/end), speaker = boAt Stone (A2DP); STT = Sarvam, offline
+  fallback = **Parakeet** on the Pi (`stt_fallback: sherpa`). Measurements and
+  the owner's-voice scoreboard: docs/voice/VOICE_LAB_2026-10.md (re-score any
+  change with `scripts/voice_lab/score_set.py`, not by ear). `audio_device_node` is the ONE
   owner of the speaker + mic (any paired Bluetooth device, or a wired
   fallback; publishes latched `/voice/audio_ready`), `stt_node` and
   `tts_node` follow it and never touch Bluetooth. `bt_audio.py` is the
@@ -207,7 +212,10 @@ that moves wheels).
   checklist. Robot name / wake word: **Mitra**. The acoustic gate is
   **OFF since 2026-09-26** (owner wants a better-trained model first):
   `wake_detector: transcript_alias` + `require_wake: true`, so everything is
-  transcribed but only text containing "mitra" / "hey mitra" becomes a turn.
+  transcribed; text containing "mitra" / "hey mitra" becomes a turn at once and,
+  with `addressing_mode: llm` (2026-10-04), any other sentence is put to the
+  brain's LLM as "is this for me?". The wake word itself is undecided (owner,
+  2026-10-10: Mitra or another name).
   The trained `models/wake/mitra.onnx` (and Telugu `rakhi.onnx`) are in git,
   one `./scripts/wake_switch.py mitra` away. It answers "చెప్పండి బాస్" when
   you pause after the name (`wake_cue.py`).
