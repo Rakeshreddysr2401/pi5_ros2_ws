@@ -70,3 +70,22 @@ def test_translated_name_at_the_start(text, expected):
 ])
 def test_friend_inside_a_sentence_is_not_the_name(text):
     assert strip_leading_alias(text, LEADING) is None
+
+
+# ── earlier sentences in the same audio are not the request (2026-10-10) ──
+
+def test_room_talk_before_the_name_is_dropped():
+    from pi5_voice_pkg.addressing import strip_alias
+    heard = "Small water cool. Pizza is ready. I know you like to play. Mitra, follow me"
+    assert strip_alias(heard, ["mitra"]) == "follow me"
+    assert strip_alias("Okay. Mitra, stop.", ["mitra"]) == "stop"
+    assert strip_alias("Is it ready? Hey Mitra, come here", ["hey mitra", "mitra"]) == "come here"
+
+
+def test_a_name_inside_the_sentence_keeps_it():
+    from pi5_voice_pkg.addressing import strip_alias
+    assert strip_alias("Go to the kitchen, Mitra.", ["mitra"]) == "Go to the kitchen"
+    assert strip_alias("What time is it Mitra?", ["mitra"]) == "What time is it"
+    assert strip_alias("Mitra, what time is it?", ["mitra"]) == "what time is it"
+    assert strip_alias("Mitra", ["mitra"]) == ""
+    assert strip_alias("no name here", ["mitra"]) is None

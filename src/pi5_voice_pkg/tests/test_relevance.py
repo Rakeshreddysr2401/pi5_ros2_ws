@@ -68,3 +68,24 @@ def test_not_bare_music_controls(text):
 def test_context_goes_first():
     user = R.request_body("Next song.", "", "[music playing: Kesariya]")["messages"][1]["content"]
     assert user.startswith("[music playing: Kesariya]")
+
+
+# ── the filter's own KV slot (2026-10-10: unpinned, it evicted the photo cache) ──
+
+def test_body_pins_only_when_given_a_slot():
+    assert "id_slot" not in R.request_body("turn left")
+    assert R.request_body("turn left", slot=4)["id_slot"] == 4
+
+
+def test_the_filter_slot_is_past_the_brains_four():
+    # slots 0-3 are the brain's (registry.py): chat, local_agent, navigate, vision tools
+    assert R.ADDRESSING_SLOT == 4
+
+
+def test_props_url():
+    assert R.props_url("http://mac.local:8080/v1/chat/completions") == "http://mac.local:8080/props"
+    assert R.props_url("http://mac.local:8080/v1/chat/completions/") == "http://mac.local:8080/props"
+
+
+def test_server_slots_unreachable_is_none():
+    assert R.server_slots("http://127.0.0.1:9/v1/chat/completions", timeout=0.5) is None

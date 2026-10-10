@@ -35,7 +35,17 @@ def strip_alias(text: str, aliases) -> str | None:
             continue
         m = re.search(rf"\b{re.escape(alias)}\b", text, flags=re.IGNORECASE)
         if m:
-            rest = text[:m.start()] + text[m.end():]
+            # Whole sentences BEFORE the name are not addressed to the robot:
+            # one stretch of audio held the room's talk and then the command
+            # ("Small water cool. Pizza is ready. I know you like to play.
+            # Mitra, follow me" -- 2026-10-10; chat answered all of it). The
+            # name starts the request; earlier sentences go. A name inside a
+            # sentence keeps it ("Go to the kitchen, Mitra").
+            before = text[:m.start()]
+            cut = max(before.rfind(c) for c in ".!?")
+            if cut >= 0:
+                before = before[cut + 1:]
+            rest = before + text[m.end():]
             # Cutting a name out of the middle leaves a double space behind.
             return re.sub(r"\s+", " ", rest).strip(" ,.!?;:-")
     return None

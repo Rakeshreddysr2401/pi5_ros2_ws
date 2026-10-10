@@ -186,6 +186,9 @@ class STTNode(Node):
         self.declare_parameter('addressing_mode', 'name')
         self.declare_parameter('relevance_url', 'http://singireddys-mac-mini.local:8080/v1/chat/completions')
         self.declare_parameter('relevance_timeout_s', 3.0)
+        # The filter's own llama.cpp KV slot (relevance.ADDRESSING_SLOT): pinned
+        # only when the server has it (--parallel 5); -1 never pins.
+        self.declare_parameter('relevance_slot', relevance.ADDRESSING_SLOT)
         # Play the 'heard' chime the moment a sentence is accepted.
         self.declare_parameter('heard_cue', True)
         # transcript_alias mode only: if False, forward EVERY transcript to the brain
@@ -265,6 +268,13 @@ class STTNode(Node):
         self._addressing = str(self.get_parameter('addressing_mode').value or 'name')
         self._relevance_url = str(self.get_parameter('relevance_url').value)
         self._relevance_timeout = float(self.get_parameter('relevance_timeout_s').value)
+        self._relevance_want_slot = int(self.get_parameter('relevance_slot').value)
+        self._relevance_slot = None          # pinned slot once /props says it exists
+        self._relevance_slot_said = 'unset'  # last slot state logged (log on change only)
+        if self._addressing == 'llm' and self._relevance_want_slot >= 0:
+            threading.Thread(target=self._probe_relevance_slot, daemon=True).start()
+            self.create_timer(300.0, lambda: threading.Thread(
+                target=self._probe_relevance_slot, daemon=True).start())
         self._heard_cue = bool(self.get_parameter('heard_cue').value)
         # The robot's last words, for the relevance check ("Five minutes." after
         # "For how long?"). Assembled from /voice/robot_speech chunks.
@@ -762,7 +772,8 @@ class STTNode(Node):
             last = self._robot_last if time.monotonic() - self._robot_last_at < 30.0 else ''
             ctx = f'[music playing: {self._music_title}]' if self._music_title else ''
             verdict = relevance.is_for_robot(text, last, self._relevance_url,
-                                             self._relevance_timeout, context=ctx)
+                                             self._relevance_timeout, context=ctx,
+                                             slot=self._relevance_slot)
             ms = int((time.monotonic() - t0) * 1000)
             if verdict:
                 self._accept(text, f'llm {ms} ms')
@@ -788,6 +799,26 @@ class STTNode(Node):
             return
 
         self.get_logger().info(f'not addressed to me — ignored: {text!r}')
+
+    def _probe_relevance_slot(self) -> None:
+        """Pin the filter to its own slot when the server has it (relevance.py,
+        THE FILTER'S OWN KV SLOT); every 5 min, so a Mac restarted with
+        --parallel 5 is used without restarting this node."""
+        n = relevance.server_slots(self._relevance_url)
+        if n is None:
+            return                            # server down: keep what we had
+        slot = self._relevance_want_slot if n > self._relevance_want_slot else None
+        self._relevance_slot = slot
+        if slot != self._relevance_slot_said:
+            self._relevance_slot_said = slot
+            if slot is None:
+                self.get_logger().warning(
+                    f'relevance filter UNPINNED: the LLM server has {n} slots, it needs '
+                    f'{self._relevance_want_slot + 1} -- each check can evict an agent\'s or '
+                    f'the photos\' cache. Start llama-server with --parallel '
+                    f'{self._relevance_want_slot + 1}.')
+            else:
+                self.get_logger().info(f'relevance filter pinned to KV slot {slot} ({n} slots)')
 
     def _accept(self, text: str, why: str) -> None:
         """Addressed: chime at once (the owner hears it was heard), then send it on."""

@@ -97,7 +97,7 @@ pip3 install --break-system-packages -r requirements.txt
    (photo questions -- `ask_photos`, search views, locate, the arrival check --
    kept OFF local_agent's slot 1, which holds the vision conversation and its
    earlier photos; `tools/survey.py` VISION_TOOL_SLOT, asserted in
-   registry.py). On a smaller server locate falls back to slot 1. Each
+   registry.py). On a smaller server locate falls back to slot 1. **Slot 4 is the voice addressing filter's** ("is this for me?", `pi5_voice_pkg/relevance.py`): unpinned it landed in slot 3 and threw the photo cache out on every TV sentence (2026-10-10), so run the Mac with `--parallel 5`; stt_node pins slot 4 only when /props shows it, and warns otherwise. Each
    agent's prompt prefix then stays resident in its own cache. Two agents on
    one slot evict each other every turn (~18-50s of re-prefill). agent_node
    probes the server's real slot count at boot, wraps with modulo, and warns
