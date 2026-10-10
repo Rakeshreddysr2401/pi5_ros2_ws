@@ -9,6 +9,12 @@ and prints what came back. Ctrl+C to quit.
 
     python3 te_live.py            # local: Jetson GPU (Indic-Transcribe + IndicTrans2)
     python3 te_live.py --sarvam   # cloud: Sarvam saaras:v3 (SARVAM_API_KEY from ~/ros2_ws/.env)
+    python3 te_live.py --sarvam --speak   # ...and SAY the English out loud (Sarvam bulbul:v3,
+                                          # en-IN, through the default speaker = the Stone)
+
+"రేపు మనం మూవీకి వెళ్దాం" -> prints the Telugu and "Let's go to a movie tomorrow",
+then speaks that English. The mic is ignored while it speaks (and for the
+Bluetooth delay after), so it never hears its own voice as a new sentence.
 """
 import collections
 import io
@@ -40,6 +46,9 @@ class Silero:
         self.s = ort.InferenceSession(path, o, providers=['CPUExecutionProvider'])
         self.state = np.zeros((2, 1, 128), np.float32); self.ctx = np.zeros(64, np.float32)
         self.sr = np.array(SR, dtype=np.int64)
+
+    def reset(self):
+        self.state = np.zeros((2, 1, 128), np.float32); self.ctx = np.zeros(64, np.float32)
 
     def prob(self, f):
         out, self.state = self.s.run(None, {'input': np.concatenate([self.ctx, f])[None, :],
@@ -101,9 +110,35 @@ def send_sarvam(pcm: np.ndarray) -> dict:
             'audio_s': round(len(pcm) / SR, 1), 'sarvam': True}
 
 
+BT_DELAY_S = 0.8                    # Bluetooth plays this much behind the write
+VOICE = 'ritu'                      # bulbul:v3 speaker, as the robot uses
+_tts = None
+
+
+def speak_english(text: str) -> int:
+    """Say `text` in English through the default speaker; returns synthesis ms."""
+    global _tts
+    import os
+    from dotenv import load_dotenv
+    sys.path.insert(0, os.path.expanduser('~/ros2_ws/src/pi5_voice_pkg'))
+    from pi5_voice_pkg.tts_providers.sarvam import SarvamTTSProvider
+    if _tts is None:
+        load_dotenv(os.path.expanduser('~/ros2_ws/.env'))
+        _tts = SarvamTTSProvider(os.environ.get('SARVAM_API_KEY', ''), 'en-IN', VOICE)
+    t = time.time()
+    samples, sr = _tts.synthesize(text)
+    ms = int((time.time() - t) * 1000)
+    sd.play(samples, sr)
+    sd.wait()
+    time.sleep(BT_DELAY_S)
+    return ms
+
+
 def main():
     cloud = '--sarvam' in sys.argv
-    print(f"Listening ({'Sarvam cloud' if cloud else 'Jetson local'})... speak Telugu (Ctrl+C to quit)\n", flush=True)
+    speak = '--speak' in sys.argv
+    print(f"Listening ({'Sarvam cloud' if cloud else 'Jetson local'}"
+          f"{', speaking the English' if speak else ''})... speak Telugu (Ctrl+C to quit)\n", flush=True)
     ring = collections.deque(maxlen=PRE_PAD)
     speech, silence, active = [], 0, False
     with sd.InputStream(samplerate=SR, channels=1, dtype='float32', blocksize=FRAME, callback=on_audio):
@@ -141,8 +176,18 @@ def main():
                 timing = f"Telugu call {r['asr_ms']} ms | English call {r['mt_ms']} ms (in parallel)"
             else:
                 timing = f"speech->Telugu {r['asr_ms']} ms | Telugu->English {r['mt_ms']} ms"
-            print(f"         {r['audio_s']} s of speech | {timing} | total {total:.1f} s | mic rms {rms:.3f}\n",
+            print(f"         {r['audio_s']} s of speech | {timing} | total {total:.1f} s | mic rms {rms:.3f}",
                   flush=True)
+            if speak and r['en'].strip():
+                try:
+                    ms = speak_english(r['en'])
+                    print(f"         spoke the English (voice ready in {ms} ms)", flush=True)
+                except Exception as e:
+                    print(f"  !! could not speak: {e}", flush=True)
+                while not frames.empty():         # drop what the mic heard while it spoke
+                    frames.get_nowait()
+                vad.reset()
+            print(flush=True)
 
 
 if __name__ == '__main__':
