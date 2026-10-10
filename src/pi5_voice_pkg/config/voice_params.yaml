@@ -105,6 +105,11 @@ pi5_stt_node:
     # webrtc said 30-63%, so a sentence now ends ~0.6 s after you stop instead
     # of running to the cap (vad_silero.py). Model: models/README.md. Missing -> webrtc.
     vad_engine: silero
+    # Audio kept from before the voice is detected, so a soft first word is not
+    # cut. Replaying the owner's 39 recorded sentences into this node: 0.3 s ->
+    # 14.3 % word errors ("Pay some music", "Palmi" for "Follow me"), 0.5 s -> 9.7 %,
+    # 0.8 s -> 10.1 %. Timing only -- the audio itself is untouched.
+    lead_in_s: 0.5
     vad_model_path: /home/rakhi24/ros2_ws/src/langrobo_ros/models/vad/silero_vad.onnx
     vad_threshold: 0.5
     vad_end_threshold: 0.35

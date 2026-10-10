@@ -18,6 +18,12 @@ Hysteresis: speech STARTS above `threshold` and only ENDS below
 `end_threshold`, so a soft syllable mid-sentence does not count as the pause
 that ends the utterance.
 
+Fresh between sentences: the model is recurrent, and fed forever its state drifts.
+Measured 2026-10-10 replaying the owner's 39 recorded sentences into stt_node: a
+few minutes in, the same "Follow me." that scores 1.00 on a fresh model peaked at
+0.46 -- under the 0.5 start -- and was never heard. So after `idle_reset_s` of no
+voice the state is cleared (only the detector's memory; the audio is untouched).
+
 Pure: no rclpy. The model file is fetched like every other voice weight
 (models/README.md); missing model / onnxruntime raises VadUnavailable and the
 node keeps webrtcvad (CLAUDE.md #5: degrade, never crash).
@@ -54,7 +60,8 @@ class Hysteresis:
 
 
 class SileroVad:
-    def __init__(self, model_path: str, threshold: float = 0.5, end_threshold: float = 0.35):
+    def __init__(self, model_path: str, threshold: float = 0.5, end_threshold: float = 0.35,
+                 idle_reset_s: float = 2.0):
         try:
             import onnxruntime as ort
         except ImportError as e:
@@ -71,6 +78,7 @@ class SileroVad:
             raise VadUnavailable(f'{model_path!r} is not a Silero v5 model (inputs {sorted(names)})')
         self._sr = np.array(SAMPLE_RATE, dtype=np.int64)
         self._gate = Hysteresis(threshold, end_threshold)
+        self._idle_reset = max(1, round(idle_reset_s * SAMPLE_RATE / WINDOW))   # in windows
         self.prob = 0.0
         self.reset()
 
@@ -80,6 +88,7 @@ class SileroVad:
         self._context = np.zeros(CONTEXT, np.float32)
         self._pending = np.zeros(0, np.float32)
         self._gate.reset()
+        self._idle = 0
         self.prob = 0.0
 
     def is_speech(self, frame: bytes, sample_rate: int = SAMPLE_RATE) -> bool:
@@ -95,4 +104,9 @@ class SileroVad:
             self._context = window[-CONTEXT:]
             self.prob = float(out[0, 0])
             self._gate.update(self.prob)
+            self._idle = 0 if self._gate.active or self.prob >= self._gate.end_threshold else self._idle + 1
+            if self._idle >= self._idle_reset:            # a quiet gap: start the next sentence fresh
+                self._state = np.zeros((2, 1, 128), np.float32)
+                self._context = np.zeros(CONTEXT, np.float32)
+                self._idle = 0
         return self._gate.active

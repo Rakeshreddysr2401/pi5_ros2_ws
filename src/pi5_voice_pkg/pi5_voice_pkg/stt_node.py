@@ -68,7 +68,7 @@ from .wake import REGISTRY as WAKE_REGISTRY, WakeUnavailable
 SAMPLE_RATE = 16000
 FRAME_MS = 30
 FRAME_SAMPLES = SAMPLE_RATE * FRAME_MS // 1000  # 480
-PRE_PAD_FRAMES = 10       # ~300ms of audio kept before speech is confirmed
+PRE_PAD_FRAMES = 10       # default lead-in (~300 ms); the lead_in_s param sets it
 END_SILENCE_FRAMES = 20   # ~600ms of silence ends the utterance
 MIN_UTTERANCE_FRAMES = 10  # ~300ms — drop blips shorter than this
 # Utterances waiting to be transcribed, and how old one may get before
@@ -106,6 +106,11 @@ class STTNode(Node):
         self.declare_parameter('model_dir', '')
         self.declare_parameter('threads', 4)
         self.declare_parameter('vad_aggressiveness', 2)
+        # Audio kept from BEFORE the voice detector fires. A soft first word ("Come
+        # here", "Follow me") scores under the start threshold until it is half
+        # said, so a short lead-in cuts it: owner's 39 recorded sentences replayed
+        # into this node (2026-10-10): 0.3 s 14.3 % word errors, 0.5 s 9.7 %, 0.8 s 10.1 %.
+        self.declare_parameter('lead_in_s', PRE_PAD_FRAMES * FRAME_MS / 1000)
         # Which voice detector cuts the mic into utterances: 'silero' (neural,
         # tells voices from noise and music -- vad_silero.py) or 'webrtc' (calls
         # 30-63% of an empty room "speech" on the AM-C28, 2026-10-10). A missing
@@ -293,7 +298,8 @@ class STTNode(Node):
         self.create_timer(5.0, self._check_stuck_mute)
 
         self._voiced_frames = 0
-        self._ring: collections.deque = collections.deque(maxlen=PRE_PAD_FRAMES)
+        self._ring: collections.deque = collections.deque(
+            maxlen=max(1, round(float(self.get_parameter('lead_in_s').value) * 1000 / FRAME_MS)))
         self._utterance: list[bytes] = []
         self._in_speech = False
         self._silence_run = 0

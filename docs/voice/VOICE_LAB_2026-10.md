@@ -84,6 +84,30 @@ option on the same clips (results + every mistake: `~/voice_lab/recordings/resul
 fallback; Whisper is now built only as a last resort. Verified: with no Sarvam key the
 node logs "sarvam unavailable … using local" and runs `stt_provider = sherpa`.
 
+### End to end through the real stt_node (2026-10-10)
+`scripts/voice_lab/replay_test.py` plays the 39 recordings, in real time, into the
+robot's own stt_node and settings (only the mic is replaced; ROS domain 77, no brain).
+It found two real faults, both fixed:
+
+1. **Soft first words were cut.** Silero scores "Come…", "Follow…" under the 0.5 start
+   until the word is half said; 0.3 s of lead-in lost it ("Pay some music", "Palmi").
+   Now a setting, `lead_in_s` — 0.3 s 14.3 % word errors, **0.5 s 9.7 %**, 0.8 s 10.1 %.
+2. **Silero went dull with long listening.** Its recurrent state was never cleared; a
+   few minutes in, the same "Follow me." that scores 1.00 fresh peaked at 0.46 and was
+   never heard (3 of 3 full runs). Now cleared after 2 s without a voice
+   (`vad_silero.py`; test: fresh 0.76, two minutes in 0.21 without the reset, 0.95 with).
+
+Final, as configured: **39/39 sentences cut as exactly one**, none dropped or split.
+
+| | perfect | word errors | recogniser |
+|---|---|---|---|
+| Sarvam (primary) | 28 / 39 | **7.8 %** | 0.56 s median |
+| Sarvam down → Parakeet fallback | 21 / 39 | 11.1 % | 0.40 s median |
+
+Sarvam's real misses: "Remaining 10 minutes" (remind me in), "what is our name" (on it),
+"What do you say" (see), "Vajna" (volume up), "Tech mobile" (move back); the rest keep
+the meaning ("Come near to me", "Friend, go…" = Mitra translated).
+
 ## 2. English → English, local, on the Pi 5 CPU (2 threads)
 
 96 clips: 24 Mitra commands (`scripts/voice_lab/phrases.py`) × 4 Kokoro voices (two
