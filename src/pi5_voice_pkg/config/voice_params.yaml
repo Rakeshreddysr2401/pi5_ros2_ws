@@ -160,7 +160,13 @@ pi5_stt_node:
     # sends EVERY ambient utterance to Sarvam. Re-enable the wake word to gate it,
     # or set stt_provider: local for free offline transcription.
     # DEFAULT (owner, 2026-10-04): Telugu speech -> English text for the brain.
-    # Sarvam down -> local Whisper (tiny.en) transcribes English. Fully local: local.
+    # Sarvam down -> local Parakeet transcribes English (since 2026-10-10; Whisper
+    # tiny.en was the fallback and got ~half the owner's words wrong). Fully local:
+    # stt_provider: sherpa.
     stt_provider: sarvam
     stt_source_language: te   # Telugu
     stt_target_language: en
+    # Owner's own voice, 39 sentences, fan on (docs/voice/VOICE_LAB_2026-10.md):
+    # Sarvam 6-11 % word errors 0.35 s | Parakeet 10-15 % 0.55 s | tiny.en 45-54 %.
+    stt_fallback: sherpa
+    stt_sherpa_model_dir: /home/rakhi24/ros2_ws/src/langrobo_ros/models/sherpa/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8

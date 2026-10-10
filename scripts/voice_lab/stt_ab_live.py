@@ -11,6 +11,7 @@ and ends; it never changes the audio.
 
   --end S    seconds of silence that end a sentence (default 0.6, as the robot)
   --lead S   seconds of audio kept from just before you started (default 0.3)
+  --models   which to run, e.g. --models parakeet (default: all three)
   --save     keep each sentence as ~/voice_lab/sentences/NN.wav -- exactly what
              the models received (aplay plays it on the Stone)
 
@@ -50,7 +51,7 @@ def free_gb() -> float:
     return 0.0
 
 
-def load():
+def load(only):
     if free_gb() < MIN_FREE_GB:
         sys.exit(f'only {free_gb():.1f} GB free, need {MIN_FREE_GB} GB -- close something and retry')
     models = []
@@ -62,6 +63,8 @@ def load():
         ('whisper tiny.en', lambda: LocalWhisperProvider(
             'tiny.en', f'{MODELS}/whisper', THREADS, beam_size=1)),
     ):
+        if only and not any(o in name.lower() for o in only):
+            continue
         t = time.time()
         m = make()
         m.transcribe(np.zeros(SR, np.float32), SR)        # warm
@@ -81,13 +84,16 @@ def main():
     ap.add_argument('--end', type=float, default=0.6, help='silence that ends a sentence, s')
     ap.add_argument('--lead', type=float, default=0.3, help='audio kept before speech starts, s')
     ap.add_argument('--save', action='store_true', help='save each sentence as a WAV')
+    ap.add_argument('--models', nargs='*', default=[], help='parakeet / moonshine / whisper')
     a = ap.parse_args()
     end_frames, lead_frames = round(a.end / FRAME_S), round(a.lead / FRAME_S)
     if a.save:
         os.makedirs(SAVE_DIR, exist_ok=True)
 
     print('Loading models...', flush=True)
-    models = load()
+    models = load([m.lower() for m in a.models])
+    if not models:
+        sys.exit('no model matched --models')
     vad = SileroVad(f'{MODELS}/vad/silero_vad.onnx')
     frames: queue.Queue = queue.Queue()
     work: queue.Queue = queue.Queue()

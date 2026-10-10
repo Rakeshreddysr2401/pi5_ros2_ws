@@ -56,6 +56,34 @@ take it."), 0.25–0.54 s a sentence; all three failed together on the same few
 sentences (the audio, not the model). Wake word: undecided ("Mitra" or another) —
 later.
 
+### The decision table — the owner's own voice (2026-10-10)
+`scripts/voice_lab/record_set.py` recorded 20 everyday sentences twice, raw (fan on):
+`normal` = where the owner usually stands (19 clips: one mistaken 111 s take skipped),
+`close` = ~half a metre, facing the mic. `scripts/voice_lab/score_set.py` ran every
+option on the same clips (results + every mistake: `~/voice_lab/recordings/results.md`).
+
+| model | where | normal: word errors | close: word errors | time / sentence |
+|---|---|---|---|---|
+| Sarvam saaras:v3, English (en-IN) | cloud | **5.7 %** (15/19 perfect) | **9.0 %** (12/20) | 0.35 s |
+| Sarvam, as the robot calls it (te-IN, translate) | cloud | 6.6 % (16/19) | 10.8 % (11/20) | 0.35 s |
+| **Parakeet 0.6B** | Pi 5 | 10.4 % (10/19) | 15.3 % (10/20) | 0.55 s |
+| whisper small.en | Pi 5 | 14.2 % (9/19) | 15.3 % (11/20) | 7–9 s |
+| Moonshine base | Pi 5 | 49 % | 51 % | 0.25 s |
+| whisper tiny.en (the old fallback) | Pi 5 | 54 % | 45 % | 2.3 s |
+
+- Sarvam is the most accurate (trained on Indian English). Its Telugu-translate mode is
+  within ~1 % of plain English and also takes Telugu, so the robot keeps it as is.
+- Parakeet is the best local model: small.en's accuracy at 14x the speed. Its slips are
+  accent words ("Add me" for "add milk", "child" for "chair", "storm" for "stove").
+- Moonshine and tiny.en, fine on synthetic voices (§2), collapse on the real voice.
+- Close to the mic was **not** better: mic position is not the limit.
+- Several "errors" are what was actually said — every model agrees on "Come **near**
+  to me", "Go **next** to the box", "Send **me** a message".
+
+**Done:** `stt_fallback: sherpa` (Parakeet) replaces Whisper tiny.en as the offline
+fallback; Whisper is now built only as a last resort. Verified: with no Sarvam key the
+node logs "sarvam unavailable … using local" and runs `stt_provider = sherpa`.
+
 ## 2. English → English, local, on the Pi 5 CPU (2 threads)
 
 96 clips: 24 Mitra commands (`scripts/voice_lab/phrases.py`) × 4 Kokoro voices (two

@@ -141,9 +141,15 @@ class STTNode(Node):
         # faster-whisper's default; hotwords biases it toward the robot's name
         self.declare_parameter('stt_beam_size', 5)
         self.declare_parameter('stt_hotwords', '')
-        # stt_provider sherpa: a sherpa-onnx model directory (Moonshine or
-        # Parakeet, models/README.md). Whisper above stays loaded as its fallback.
+        # stt_provider / stt_fallback sherpa: a sherpa-onnx model directory
+        # (Moonshine or Parakeet, models/README.md).
         self.declare_parameter('stt_sherpa_model_dir', '')
+        # The local recogniser used when the cloud provider fails: 'local' (Whisper,
+        # model_size above) or 'sherpa' (stt_sherpa_model_dir). Measured on the
+        # owner's own voice, 2026-10-10 (docs/voice/VOICE_LAB_2026-10.md): Parakeet
+        # 10-15 % word errors in 0.55 s, Whisper tiny.en 45-54 %. Whisper stays the
+        # last resort: built only if the sherpa fallback cannot load or fails.
+        self.declare_parameter('stt_fallback', 'local')
         self.declare_parameter('wake_aliases', ['mitra', 'hey mitra'])
         # Names as a TRANSLATING recogniser writes them (Sarvam: mitra -> "friend"):
         # they count only at the start of the sentence. [''] = none.
@@ -217,7 +223,6 @@ class STTNode(Node):
             f'  [{i}] in={d["max_input_channels"]:>2} {d["name"]!r}'
             for i, d in enumerate(sd.query_devices())))
 
-        self.get_logger().info(f'loading local whisper {model_size} (int8, {threads} threads)...')
         # One params dict handed to every provider's from_config(); each picks the keys it
         # needs. Adding a provider touches only stt_providers/ — never this node.
         base_params = {
@@ -227,23 +232,28 @@ class STTNode(Node):
             'hotwords': str(self.get_parameter('stt_hotwords').value or '').strip(),
             'sherpa_model_dir': str(self.get_parameter('stt_sherpa_model_dir').value or ''),
         }
-        # Fallback path when a cloud provider fails: same task/language intent as the primary
-        # provider, so "degraded" still means "still tries to answer the same question".
-        # ...unless the local model is English-only (tiny.en, base.en): it cannot
-        # translate, so a failed Telugu cloud call degrades to English (owner, 2026-10-04:
-        # "if Sarvam fails, English is fine").
-        english_only = str(model_size).endswith('.en')
-        fallback_task = ('translate' if provider_name != 'local' and tgt_lang == 'en'
-                         and src_lang != 'en' and not english_only else 'transcribe')
-        self._fallback = LocalWhisperProvider.from_config(
-            {**base_params, 'task': fallback_task,
-             'language': src_lang if fallback_task == 'translate' else 'en'},
-            os.environ,
-        )
-        self.get_logger().info('local whisper loaded (fallback path)')
+        self._base_params, self._whisper_model = base_params, None
+        self._whisper_spec = (provider_name, src_lang, tgt_lang, model_size, threads)
+        fallback_name = str(self.get_parameter('stt_fallback').value or 'local').strip()
+        self._fallback = None
+        if fallback_name == 'sherpa':
+            try:
+                self._fallback = REGISTRY['sherpa'].from_config(base_params, os.environ)
+                self.get_logger().info(
+                    f"sherpa loaded (fallback path): {base_params['sherpa_model_dir']}")
+            except ProviderUnavailable as e:
+                self.get_logger().warning(f'sherpa fallback unavailable ({e}); using whisper')
+        elif fallback_name != 'local':
+            self.get_logger().error(f'unknown stt_fallback {fallback_name!r}; using whisper')
+        if self._fallback is None:
+            self._fallback = self._whisper()
 
-        self._provider = self._fallback if provider_name == 'local' else self._build_provider(
-            provider_name, base_params)
+        if provider_name == self._fallback.name:
+            self._provider = self._fallback
+        elif provider_name == 'local':
+            self._provider = self._whisper()
+        else:
+            self._provider = self._build_provider(provider_name, base_params)
         self.get_logger().info(f'stt_provider = {self._provider.name}')
 
         self._input_pub = self.create_publisher(String, '/voice/user_input', 10)
@@ -387,6 +397,24 @@ class STTNode(Node):
                 stream.close()
             except Exception:
                 self.get_logger().debug('closing the mic stream failed')
+
+    def _whisper(self):
+        """Local Whisper, built once on first use -- the recogniser that must never fail."""
+        if self._whisper_model is None:
+            provider_name, src_lang, tgt_lang, model_size, threads = self._whisper_spec
+            self.get_logger().info(f'loading local whisper {model_size} (int8, {threads} threads)...')
+            # Same task/language intent as the primary provider, so "degraded" still means
+            # "still tries to answer the same question" -- unless the model is English-only
+            # (tiny.en, base.en): it cannot translate, so a failed Telugu cloud call
+            # degrades to English (owner, 2026-10-04: "if Sarvam fails, English is fine").
+            english_only = str(model_size).endswith('.en')
+            task = ('translate' if provider_name != 'local' and tgt_lang == 'en'
+                    and src_lang != 'en' and not english_only else 'transcribe')
+            self._whisper_model = LocalWhisperProvider.from_config(
+                {**self._base_params, 'task': task,
+                 'language': src_lang if task == 'translate' else 'en'}, os.environ)
+            self.get_logger().info('local whisper loaded')
+        return self._whisper_model
 
     def _build_provider(self, name: str, params: dict):
         cls = REGISTRY.get(name)
@@ -681,8 +709,13 @@ class STTNode(Node):
             self.get_logger().warning(f'{self._provider.name} failed ({e}); falling back to local')
             self._fallback_reason = str(e)[:200]     # on stt_meta: agent_node says why, once
             fell_back = True
-            text = self._fallback.transcribe(pcm, SAMPLE_RATE)
             provider = self._fallback.name
+            try:
+                text = self._fallback.transcribe(pcm, SAMPLE_RATE)
+            except ProviderUnavailable as e2:          # a sherpa fallback failed too
+                self.get_logger().warning(f'{provider} fallback failed ({e2}); using whisper')
+                text = self._whisper().transcribe(pcm, SAMPLE_RATE)
+                provider = 'local'
         latency_ms = int((time.monotonic() - t0) * 1000)
         text = text.strip()
         self._debug_transcript_pub.publish(String(data=text if text else '(empty — filtered as noise/silence)'))
