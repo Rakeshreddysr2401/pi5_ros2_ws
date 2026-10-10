@@ -156,7 +156,10 @@ pi5_stt_node:
     # + 0.6 s tail made short commands ("ఆగు", 0.4 s) score 0.22-0.31 and get
     # DROPPED in the owner's live test. min duration (300 ms) still applies.
     min_voiced_ratio: 0.0
-    # local | sarvam | soniox — see docs/voice/PI5_VOICE.md for the cost/latency comparison.
+    # local | sherpa | sarvam | soniox | apple — see docs/voice/PI5_VOICE.md for the cost/latency comparison.
+    # apple = the Mac Mini's on-device Apple recogniser (mitra-stt, docs/voice/MAC_STT.md):
+    # ENGLISH ONLY (Apple has no Telugu), free, audio stays in the house, ~0.1 s on the Mac.
+    # Settings via env (MAC_STT_URL / MAC_STT_LANG); Mac down -> stt_fallback as usual.
     # sarvam/soniox need SARVAM_API_KEY / SONIOX_API_KEY in ~/ros2_ws/.env (example.env
     # has placeholders); missing key or any request failure falls back to local
     # automatically (never goes silent — CLAUDE.md #4).

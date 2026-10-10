@@ -8,8 +8,9 @@ read (word error rate: lower is better). Clips over 30 s are skipped (a mistaken
 take). Writes ~/voice_lab/recordings/results.md and prints the same.
 
 Models: Parakeet 0.6B, Moonshine base, whisper tiny.en, whisper small.en (local, Pi
-CPU, 2 threads) and Sarvam saaras:v3 (cloud) twice -- as the robot calls it today
-(te-IN, translate) and as plain English (en-IN, transcribe).
+CPU, 2 threads), Sarvam saaras:v3 (cloud) twice -- as the robot calls it today
+(te-IN, translate) and as plain English (en-IN, transcribe) -- and Apple's on-device
+recogniser on the Mac Mini (mitra-stt, docs/voice/MAC_STT.md; skipped if not running).
 """
 import gc
 import os
@@ -27,11 +28,12 @@ ROOT = os.path.expanduser('~/voice_lab/recordings')
 MODELS = os.path.expanduser('~/ros2_ws/src/langrobo_ros/models')
 SR, THREADS, MAX_S = 16000, 2, 30.0
 WORDS = {'90': 'ninety', '10': 'ten', '1': 'one', 'metre': 'meter', 'metres': 'meters',
-         "what's": 'what is', "it's": 'it is', 'ok': 'okay'}
+         "what's": 'what is', "it's": 'it is', 'ok': 'okay',
+         'm': 'meter'}   # Apple formats "one meter" as "1 m" (and "ninety degrees" as "90°")
 
 
 def norm(t: str) -> list[str]:
-    t = re.sub(r"[^\w' ]", ' ', t.lower().replace('-', ' '))
+    t = re.sub(r"[^\w' ]", ' ', t.lower().replace('-', ' ').replace('°', ' degrees'))
     return ' '.join(WORDS.get(w, w) for w in t.split()).split()
 
 
@@ -64,6 +66,7 @@ def load_session(name):
 
 def models():
     """(name, factory) -- built one at a time so only one model is in memory."""
+    from pi5_voice_pkg.stt_providers.apple import AppleProvider
     from pi5_voice_pkg.stt_providers.local_sherpa import LocalSherpaProvider
     from pi5_voice_pkg.stt_providers.local_whisper import LocalWhisperProvider
     from pi5_voice_pkg.stt_providers.sarvam import SarvamProvider
@@ -89,6 +92,7 @@ def models():
         ('whisper small.en (Pi)', lambda: LocalWhisperProvider('small.en', f'{MODELS}/whisper', THREADS, beam_size=1)),
         ('Sarvam, as robot (te->en)', lambda: SarvamProvider(key, 'te-IN')),
         ('Sarvam, English (en-IN)', lambda: SarvamEnglish(key, 'en-IN')),
+        ('Apple on-device (Mac Mini)', lambda: AppleProvider.from_config({'hotwords': 'Mitra'}, os.environ)),
     ]
 
 

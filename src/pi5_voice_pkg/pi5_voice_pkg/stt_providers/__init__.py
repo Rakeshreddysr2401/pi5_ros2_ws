@@ -2,6 +2,7 @@
 entry in REGISTRY. Nothing else needs to change to add a fourth one.
 """
 
+from .apple import AppleProvider
 from .base import ProviderUnavailable, STTProvider
 from .local_sherpa import LocalSherpaProvider
 from .local_whisper import LocalWhisperProvider
@@ -13,6 +14,7 @@ REGISTRY = {
     'sherpa': LocalSherpaProvider,    # Moonshine / Parakeet, on the Pi (local_sherpa.py)
     'sarvam': SarvamProvider,
     'soniox': SonioxProvider,
+    'apple': AppleProvider,           # Mac Mini's on-device Apple recogniser (apple.py)
 }
 
 __all__ = ['ProviderUnavailable', 'STTProvider', 'REGISTRY']

@@ -3,7 +3,7 @@ the Jetson's stt_node. Transcription itself is delegated to a swappable
 provider (stt_providers/) — local faster-whisper, or a cloud STT with
 built-in Telugu->English translation (Sarvam, Soniox). See docs/voice/PI5_VOICE.md.
 
-Switching: set `stt_provider` in voice_params.yaml (local | sarvam | soniox)
+Switching: set `stt_provider` in voice_params.yaml (local | sherpa | sarvam | soniox | apple)
 and restart the node. If the selected cloud provider fails for any reason —
 missing API key, network down, bad response — this transparently falls back
 to local_whisper for that utterance and logs a warning; it never goes
@@ -160,7 +160,7 @@ class STTNode(Node):
         # they count only at the start of the sentence. [''] = none.
         self.declare_parameter('wake_leading_aliases', [''])
         self.declare_parameter('stop_words', ['stop'])
-        self.declare_parameter('stt_provider', 'local')       # local | sherpa | sarvam | soniox
+        self.declare_parameter('stt_provider', 'local')       # local | sherpa | sarvam | soniox | apple
         self.declare_parameter('stt_source_language', 'te')   # Telugu source for cloud translate
         self.declare_parameter('stt_target_language', 'en')
         # Wake word: 'transcript_alias' = legacy (transcribe all, match a name in text);

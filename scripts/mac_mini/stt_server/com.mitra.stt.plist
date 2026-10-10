@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Keeps mitra-stt running in the logged-in user's session (Speech Recognition
+     needs a GUI login, so a LaunchAgent, never a LaunchDaemon). install.sh fills
+     in __APP__ and loads it. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mitra.stt</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__APP__/Contents/MacOS/mitra-stt</string>
+        <string>8091</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/mitra-stt.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/mitra-stt.log</string>
+</dict>
+</plist>

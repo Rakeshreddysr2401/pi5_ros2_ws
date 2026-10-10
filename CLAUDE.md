@@ -25,7 +25,8 @@ INTEGRATION_GAPS.md before building anything that touches the world;
 OPERATIONS.md for run/deploy/troubleshooting; docs/voice/PI5_VOICE.md for the Pi5 voice trio
 (speaker/mic owner + STT + TTS); **docs/voice/VOICE_ROADMAP.md** for the phased voice plan
 (what is done, what is next); docs/voice/WAKE_WORD_INTEGRATION.md to train and plug in the
-"Mitra" wake word.
+"Mitra" wake word; docs/voice/MAC_STT.md for `stt_provider: apple` (Apple's on-device
+recogniser served from the Mac Mini, `scripts/mac_mini/stt_server`, :8091 -- English only).
 
 ## Fleet start — one command brings up the whole robot
 

@@ -42,3 +42,6 @@ src/langrobo_ros/models/sherpa/
 !src/langrobo_ros/models/wake/*.onnx
 !src/langrobo_ros/models/wake/*.pkl
 test_data/
+
+# Built by scripts/mac_mini/stt_server/build.sh
+scripts/mac_mini/stt_server/mitra-stt.app/
