@@ -328,11 +328,15 @@ different model has a different score distribution.
 
 ## Since 2026-10-10 — AM-C28 conference mic, cleaned input, Sarvam
 
-The mic is now the USB **AM-C28** array (gain pinned to 1.0, 100 Hz high-pass,
-Silero VAD, no loudness gate) and the boAt Stone is the A2DP speaker; Sarvam does
-both legs. Every measurement behind that — the 400% gain, the 2-7 Hz rumble, its
-echo cancelling, the English STT bench (Parakeet best), local Telugu on the Jetson —
-is in **docs/voice/VOICE_LAB_2026-10.md**. The section below is the older Stone-era tuning.
+The mic is now the USB **AM-C28** array (mic only — no speaker), gain pinned to 1.0,
+and its audio reaches the recogniser **untouched**: Silero VAD only marks where a
+sentence starts and ends, with no loudness or voiced-ratio gate. The boAt Stone is the
+A2DP speaker (the mic hears it, so the mic stays muted while the robot talks). Sarvam
+does both legs; if it fails, **Parakeet** (`stt_fallback: sherpa`) transcribes English
+on the Pi. Every measurement behind that — the 400% gain, the 2-7 Hz fan rumble, the
+owner's-voice table (Sarvam 6-11 %, Parakeet 10-15 %, tiny.en ~50 % word errors), local
+Telugu on the Jetson — is in **docs/voice/VOICE_LAB_2026-10.md**. The section below is
+the older Stone-era tuning.
 
 ## Local voice tuning (2026-10-03) — what runs now, and why
 
