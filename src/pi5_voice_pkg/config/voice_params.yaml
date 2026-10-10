@@ -148,7 +148,11 @@ pi5_stt_node:
     # the wrong yardstick and would drop quiet speech. Silero + the voiced
     # ratio below now decide what is speech. Back to ~0.05 if the Stone is the mic.
     min_utterance_rms: 0.0
-    min_voiced_ratio: 0.35
+    # 0 = off since 2026-10-10. It guarded against noise that tripped webrtcvad
+    # once; with Silero only a real voice starts a sentence, and the 0.3 s lead-in
+    # + 0.6 s tail made short commands ("ఆగు", 0.4 s) score 0.22-0.31 and get
+    # DROPPED in the owner's live test. min duration (300 ms) still applies.
+    min_voiced_ratio: 0.0
     # local | sarvam | soniox — see docs/voice/PI5_VOICE.md for the cost/latency comparison.
     # sarvam/soniox need SARVAM_API_KEY / SONIOX_API_KEY in ~/ros2_ws/.env (example.env
     # has placeholders); missing key or any request failure falls back to local
