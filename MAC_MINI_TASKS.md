@@ -8,10 +8,91 @@ after a full test on the real robot.
 
 Work through the tasks **in order**, then fill in the report at the end.
 
-> **Status 2026-10-11 (Mac agent):** Task 3 DONE differently -- the cause was a llama.cpp bug,
-> fixed with a one-line patch; `--swa-full` can't fit (docs/mac/LLAMA_CACHE_ISSUE.md §8).
-> Task 4 changed by the owner: **no autostart** -- after a power-on run `e12b5` in a Mac terminal.
-> Task 1 (ssh keys) and Task 5 (draft model) not done yet. Report at the end.
+## READ FIRST, Pi 5: what the Mac did on 2026-10-11, and what you do now
+
+Written by the Mac's agent for the Pi's agent. Everything below was measured on the Mac.
+
+### Task status
+
+| task | status |
+|---|---|
+| 1 ssh keys for the Pi + MacBook | **NOT DONE**: waiting for the owner's OK. You still can't ssh in; ask the owner. |
+| 2 report how the server runs | DONE (report at the end of this file) |
+| 3 fix the cache + 5 slots | **DONE, differently**: a llama.cpp bug, fixed with a 1-line patch. No `--swa-full` (can't fit). |
+| 4 survive sleep / crashes | DONE, with the owner's change: **no autostart**, the owner starts it with `e12b5` |
+| 5 draft model (faster writing) | NOT STARTED |
+
+### What the Mac runs now
+
+- **A patched llama.cpp b9830** (`~/llama.cpp-mitra/build/bin/llama-server`). Upstream llama.cpp
+  re-read every prompt shorter than 1024 tokens from scratch (Gemma's sliding window). The bug and
+  the fix are in docs/mac/LLAMA_CACHE_ISSUE.md §8, and the patch is `scripts/mac_mini/llama_swa_cache.patch`.
+  It is still unfixed upstream, so **a Homebrew upgrade on the Mac brings the bug back.**
+- **5 slots × 16384 tokens**: 0 chat, 1 local_agent, 2 navigate, 3 photo questions, 4 the voice
+  "is this for me?" check. `-ub 512`, `--jinja`, `--metrics`, vision (mmproj) on.
+- **The GPU may use 13 GB** of the Mac's 16. The server holds 10.8 GB, reserved at start, and it doesn't grow.
+- **Started by hand:** after every power-on the owner opens Terminal on the Mac and types `e12b5`
+  (it asks the Mac password once). Nothing starts at login. Ollama is gone.
+- **Keeps running** with the display off (tested: 0.9 s answer with the screen dark), with the screen
+  locked, and with the Terminal window closed (launchd owns it, and `caffeinate` blocks system sleep).
+  If it crashes, launchd restarts it by itself.
+- **Stops only on** a power cut / reboot, or the owner logging out of the Mac. Then it needs `e12b5` again.
+
+### Measured on the Mac after the fix
+
+| | before | after |
+|---|---|---|
+| prompt < 1024 tokens, sent again with a new question | 2–7.6 s (re-read) | **0.6 s** (reused) |
+| same photo, new question | ≈ 9 s | **1.6 s** |
+| rewind limit (how far back a request may branch and keep the cache) | ≈ 450 tokens | **≥ 482 tokens** |
+| slots | 4 × 16384 | **5 × 16384** |
+| all 5 slots busy at once + a photo | n/a | all answered, no out-of-memory |
+
+### Pi 5: do this now, in order
+
+1. `cd ~/ros2_ws && git pull` (branch `dev-1.6.8`, commit "Mac Mini: short prompts cached ...").
+2. Check the Mac is up with 5 slots:
+   `curl -s http://singireddys-mac-mini.local:8080/props | python3 -c 'import json,sys; print(json.load(sys.stdin)["total_slots"])'`
+   must print `5`. If the Mac doesn't answer: ask the owner to type `e12b5` in a Terminal on the Mac.
+3. **Restart the brain and the voice.** Both read the slot count only when they start:
+   `sudo systemctl restart langrobo-brain` and `systemctl --user restart langrobo-voice`.
+4. Check their logs:
+   - brain: `journalctl -u langrobo-brain -o cat | grep -i 'parallel slots'` → `LLM server reports 5 parallel slots`,
+     and no slot-sharing warning in the `KV slot map` line.
+   - voice: stt_node must pin the "is this for me?" check to slot 4, with no "server has fewer slots" warning.
+5. `python3 scripts/llm_cache_check.py`: it must print **PASS twice** and report 5 slots.
+6. Run the short-prompt check from the Pi (docs/mac/LLAMA_CACHE_ISSUE.md §6, save it as
+   `cache_cutoff_check.py`): `python3 cache_cutoff_check.py http://singireddys-mac-mini.local:8080`.
+   Every line must say OK.
+7. On the robot: "go near the box". The photo questions before it moves should take about 1–2 s each,
+   not 9–15 s. Report the real numbers to the owner.
+8. Tell the owner the results. If anything FAILS, the Mac's agent needs the exact output.
+
+### Rules for the Pi's code from now on
+
+- **The rewind limit is still there:** about 480 tokens. Anything that branches off a cached prefix
+  (photo_recall's question + answer + box prompt) must stay under it. Short prompts no longer need
+  padding: under 1024 tokens they are cached now.
+- **5 slots, numbered 0–4.** A 6th caller needs a Mac change first: memory is tight, so ask the owner.
+- **Each prompt ≤ 16384 tokens** per slot (the largest seen is about 6–8k).
+- `--swa-full` will **never** be on this Mac (it needs about 20 GB of cache). Don't plan on it.
+- Mac down = every LLM call fails with `APIConnectionError`. The fix is always the owner typing
+  `e12b5` on the Mac. The brain recovers by itself when the server returns.
+
+### Still to do on the Mac (owner decides)
+
+- **Task 1:** add the Pi's and the MacBook's ssh keys, so the Pi can check `e12b5 status` itself.
+- **Task 5:** the draft model. Memory note: 13 GB limit − 10.8 GB in use leaves about 2 GB, so the
+  drafter's size must be checked first. Lowering slots or context to make room needs the owner's OK.
+
+### How to undo (on the Mac)
+
+`e12b5 stop`, then the old way: `/opt/homebrew/bin/llama-server` with the OLD command line in the
+report below. The old LaunchAgent is `~/Library/LaunchAgents/com.mitra.llama-server.plist.bak`.
+
+---
+
+*(Below: the Pi's original task list, kept for reference.)*
 
 ## Ground rules
 

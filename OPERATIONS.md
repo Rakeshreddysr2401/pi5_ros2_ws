@@ -224,6 +224,9 @@ crashes); `e12b5 stop | status | log`. Source: `scripts/mac_mini/e12b5` (symlink
 - **GPU limit 13 GB** of the 16: 5 slots at `-ub 512` don't fit macOS's default ~10.7 GB. The
   server holds 10.8 GB (7.4 model + 3.4 cache, all reserved at start -- it doesn't grow).
   Without the raise `e12b5` falls back to 5 x 12288 at `-ub 256` (smaller rewind margin, ~160).
+- **Screen off / locked / Terminal closed: still serving** (tested 2026-10-11, 0.9 s answer with the
+  display asleep): launchd owns the process and its `caffeinate -is` blocks system sleep. It stops
+  only on a power cut/reboot or a logout of the Mac user -- then `e12b5` again.
 - **No `--swa-full`**: on Gemma 4 it costs ~320 KB/token/slot -- ~20 GB for 5 x 12288. Not needed.
 - `--parallel 5` — one KV slot per agent, pinned by the brain: 0 chat,
   1 local_agent, 2 navigate, 4 the voice "is this for me?" check, and 3 = the vision-tool slot: photo questions, search views, locate, the arrival check (with fewer,

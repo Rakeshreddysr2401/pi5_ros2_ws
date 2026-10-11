@@ -8,6 +8,8 @@
 #
 # Nothing starts at login: after a power-on, run `e12b5` in a terminal (owner, 2026-10-11).
 # While it runs, launchd restarts it if it crashes (KeepAlive); `e12b5 stop` ends that.
+# Screen off, screen locked, Terminal closed: it keeps serving (launchd owns it; caffeinate -is
+# blocks system sleep). Only a power cut/reboot or logging out stops it.
 #
 # Why each choice (measured 2026-10-11, docs/mac/LLAMA_CACHE_ISSUE.md):
 #  - PATCHED llama.cpp b9830 (~/llama.cpp-mitra, scripts/mac_mini/llama_swa_cache.patch):
