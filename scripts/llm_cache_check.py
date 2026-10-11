@@ -28,8 +28,10 @@ Then the PHOTOS (step 5-6): every photo question (ask_photos, locate, the
 arrival check) sends images on the vision-tool slot and counts on the earlier
 photos staying cached. 2026-10-11: the text steps PASSED while every image
 prompt reused 1 token, even sent twice in a row -- three photo calls took 34 s
-before a "go near" started to move. So step 6 asks about one photo twice and
-FAILs unless the second reuses it.
+before a "go near" started to move. The cause turned out to be LENGTH, not
+images: any prompt under ~1024 tokens is never reused on that server
+(docs/mac/LLAMA_CACHE_ISSUE.md). Step 6's prompt is short on purpose, so it
+FAILs until that is fixed.
 
 Takes ~1-2 minutes (it pays the cold prefills on purpose). Safe to run while
 the robot is up: it uses slots 2 and 3, so navigate's slot is cold after it
@@ -108,10 +110,10 @@ def main() -> int:
     if photo_ok:
         print("PASS: photos stay cached -- photo questions are ~4 s warm.")
     else:
-        print("FAIL: an image prompt is never reused: every photo question re-reads every")
-        print("      photo (~10 s each, ~30 s before 'go near' moves). Text caching is not")
-        print("      the problem. Try llama-server with --swa-full; check the server log for")
-        print("      'forcing full prompt re-processing' and its reason; compare builds.")
+        print("FAIL: a SHORT prompt (this one is ~170 tokens) is never reused. On the Mac,")
+        print("      every prompt under ~1024 tokens -- Gemma's sliding window -- is re-read")
+        print("      from scratch, photos or text: photo questions with few photos take 9-15 s.")
+        print("      Fix on the server: docs/mac/LLAMA_CACHE_ISSUE.md (--swa-full).")
     return 0 if text_ok and photo_ok else 1
 
 
