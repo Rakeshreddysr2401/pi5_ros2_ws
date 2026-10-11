@@ -30,7 +30,10 @@ recogniser served from the Mac Mini, `scripts/mac_mini/stt_server`, :8091 -- Eng
 
 ## Fleet start — one command brings up the whole robot
 
-`scripts/fleet.sh {sim|rover|stop|down|status}` (run here on the Pi5). Picks the robot **body**:
+`scripts/fleet.sh [rover|stop|down|status|check|sim|twin]` (run here on the Pi5). Picks the robot **body**.
+**The real rover is the default** (owner, 2026-10-11: it is the goal; the sims are used rarely):
+`./scripts/fleet.sh` with no argument (or `up` / `start`) is `rover`. Start `sim` or `twin` ONLY
+when the owner explicitly asks for the virtual rover, and take it down after (`fleet.sh twin down`).
 
 - **`rover`** — the REAL body: starts this Pi5's micro-ROS agent (ESP32 wheels)
   and, if the Jetson stack is not already up, runs `./rover up` there (every
@@ -61,6 +64,7 @@ passwordless ssh; DDS is plain multicast on domain 0 everywhere (NETWORKING.md).
 
 ```bash
 # Whole robot (see "Fleet start" above)
+./scripts/fleet.sh            # = rover, the default: real body (pi5 microros + jetson ./rover up; pi5 voice)
 ./scripts/fleet.sh rover      # real body (pi5 microros + jetson ./rover up; pi5 voice)
 ./scripts/fleet.sh sim        # simulation body (laptop sim; pi5 voice)
 ./scripts/fleet.sh stop       # park robot body (brain stays up)

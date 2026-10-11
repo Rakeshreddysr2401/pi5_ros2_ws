@@ -8,6 +8,8 @@ what is not, and the one thing the user has to do (if anything).
 
 ## Rules
 
+- **The real rover is always the target.** Never start the simulators (`fleet.sh sim`,
+  `fleet.sh twin`) unless the owner explicitly asks for the virtual rover.
 - **One command does it:** `./scripts/fleet.sh rover` (run in `~/ros2_ws` on the
   Pi5). It starts micro-ROS, and runs `./rover up` on the Jetson only when the
   Jetson stack is not already up — `./rover up` restarts the container, so never

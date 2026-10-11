@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# LangRobo fleet launcher — run on the Pi5. One command to bring up the robot
-# in either body:
+# LangRobo fleet launcher — run on the Pi5. One command to bring up the robot.
+# The REAL rover is the default: `./scripts/fleet.sh` with no argument (or `up`,
+# `start`) is `rover`. The simulators run only when named (`sim`, `twin`).
 #
-#   ./scripts/fleet.sh rover    # REAL body: Pi5 micro-ROS agent (ESP32 wheels)
+#   ./scripts/fleet.sh rover    # REAL body (the default): Pi5 micro-ROS agent (ESP32 wheels)
 #                               #   + the Jetson's ~/rover stack, via `./rover up`
 #                               #   (D555 + lidar + fused pose + slam + nvblox +
 #                               #   nav2 + the VLM bridge + Studio + laptop RViz).
@@ -38,7 +39,7 @@
 # Machines are reached by mDNS name (NETWORKING.md) with passwordless ssh.
 
 set -eo pipefail
-CMD="${1:-status}"
+CMD="${1:-rover}"     # no argument = start the REAL rover; sims only when named
 
 # mDNS names by default; override when mDNS flakes (it does, transiently):
 #   LANGROBO_LAPTOP_HOST=192.168.1.12 ./scripts/fleet.sh sim
@@ -198,7 +199,7 @@ sim)
     echo "fleet: SIM mode up (rover_sim, the older sim). Nav2 needs ~1 min in the house world; check: $0 status"
     echo "       To test the real Jetson stack instead: the Mitra twin (CLAUDE.md, mitra_sim)."
     ;;
-rover)
+rover|up|start)
     set_body rover
     ensure_local_units
     sudo -n systemctl start langrobo-microros 2>/dev/null \
@@ -350,14 +351,14 @@ print("%s object(s) remembered; survey: %s" % (r.get("objects_remembered", "?"),
     else echo "check: $fails FAIL(s) — each line says what to run."; exit 1; fi
     ;;
 *)
-    echo "usage: $0 {twin|sim|rover|stop|down|status|check}"
-    echo "  twin   the Mitra twin [up|down|status] [world] [mirror|pose]: simulated hardware on the laptop,"
-    echo "         the rover's whole Jetson stack on it (TWIN=1 ./rover up) + a 2nd brain, domain 42"
-    echo "  rover  start real body (Pi5 micro-ROS wheels + Jetson ./rover up; Pi5 voice)"
+    echo "usage: $0 [rover|stop|down|status|check|sim|twin]   (no argument = rover)"
+    echo "  rover  start the REAL body -- the default (also: up, start): Pi5 micro-ROS wheels + Jetson ./rover up; Pi5 voice"
     echo "  sim    start simulation body (laptop Gazebo+Nav2; Pi5 voice)"
     echo "  stop   stop the robot body; keep brain + discovery (Telegram) alive"
     echo "  down   full shutdown incl. Pi5 brain/discovery/microros (asks sudo)"
     echo "  status show what's up everywhere"
+    echo "  twin   (rarely; only when asked) the Mitra twin [up|down|status] [world] [mirror|pose]: simulated hardware on the laptop,"
+    echo "         the rover's whole Jetson stack on it (TWIN=1 ./rover up) + a 2nd brain, domain 42"
     echo "  check  prove every link works, with data (read-only)"
     exit 2
     ;;
