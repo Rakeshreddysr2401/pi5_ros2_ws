@@ -8,7 +8,9 @@ Home robot "Mitra" (renamed from "Rakhi" 2026-09-20; the `rakhi24` username and 
   cuVSLAM + lidar odometry fused into `/odom`, slam_toolbox, nvblox, Nav2,
   `goal_exec` (exact turns/drives) + `reach` (nav2 + exact finish), and the
   phase-4 VLM bridge (`image_bridge` publishes the colour frame as JPEG for
-  `look()`; `pixel_to_goal` turns a VLM-picked pixel into an odom-frame goal).
+  `look()`; `pixel_to_goal` turns a VLM-picked pixel into an odom-frame goal),
+  and "follow me" (`./rover follow`: YOLO person tracker -> `/vision/people`,
+  `follow_node` on `/follow/*`; in `./rover up` since 2026-10-11, INTEGRATION_GAPS.md §8).
   Repo: **`~/rover`** on the Jetson (container `rover`), brought up with
   `./rover up`. (`~/langrobo_perception` and `~/robot` are the old stacks.)
 - **Mac Mini** — the LLM and VLM (llama.cpp, `singireddys-mac-mini.local:8080`).

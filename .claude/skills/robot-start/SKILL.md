@@ -40,7 +40,7 @@ Jetson shows `rover container stopped`. That is normal.
 ```
 
 Takes ~10 min from cold: each Jetson layer prints a `GATE` with OK/FAIL
-(camera → lidar → pose → fused → slam → map → nav → vlm → wheels → Pi5 →
+(camera → lidar → pose → fused → slam → map → nav → vlm → follow → wheels → Pi5 →
 Studio → laptop RViz). **A FAIL stops the run and names its layer** — fix that
 one layer (the Jetson's `~/rover/STARTUP.md` has the physical fix for each),
 then re-run just it: `ssh rakhi24@rakhi-jetson.local 'cd ~/rover && ./rover <layer>'`.

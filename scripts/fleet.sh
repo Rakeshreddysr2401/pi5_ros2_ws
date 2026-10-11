@@ -345,7 +345,8 @@ print("%s object(s) remembered; survey: %s" % (r.get("objects_remembered", "?"),
     r=$(hz /camera/color/image_raw/compressed); at_least "$r" 1 && ok "camera for look()" "${r} Hz" || bad "camera for look()" "${r:-none} -- ./rover vlm"
     for t in /vision/pixel_query:"depth grounding (pixel_to_goal)":"./rover vlm" \
              /goal_exec/goal:"exact moves (goal_exec)":"./rover nav" \
-             /reach/goal:"navigation (reach + nav2)":"./rover nav"; do
+             /reach/goal:"navigation (reach + nav2)":"./rover nav" \
+             /follow/start:"follow me (follow_node + YOLO)":"./rover follow"; do
         IFS=: read -r topic name fix <<<"$t"
         c=$(subs "$topic"); at_least "$c" 1 && ok "$name" "" || bad "$name" "no listener on $topic -- $fix"
     done

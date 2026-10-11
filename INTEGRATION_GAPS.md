@@ -383,6 +383,26 @@ Superseding a drive: take the new goal's key **before** cancelling the old
 worker (`start_nav_to_pose` and `reach_and_wait` both do), or the old worker's
 `/reach/cancel` can land after the new goal and kill it.
 
+## 8. The follow-me wire contract ✅
+
+"Mitra, follow me" / "come to me": `tools/follow.py` `follow_person` (navigate
+agent, behind `LANGROBO_FOLLOW=1`) -> `ROS2Bridge.start_follow`. The Jetson half
+is `~/rover/phase3/nodes/follow_node.py` (driving) + `phase4/nodes/person_tracker.py`
+inside `detections_3d.py` (YOLO people with ids) -- started by `./rover follow`,
+part of `./rover up` since 2026-10-11. **Change both or neither.**
+
+| topic | type | brain sends / reads |
+|---|---|---|
+| `/follow/start` | String (JSON) | sent: `{"req": "<key>", "stop_at_gap": false}` = follow; `true` = come to me (stop at the 1.0 m gap). No subscriber = "the Jetson's follow node is not running" |
+| `/follow/status` | String (JSON) | read, ~2 Hz while following: `req`, `state` (`following`, `done` ends it), `result` (`reached`, `nobody`, `lost`, `blocked`, `timeout` (10 min), `pose unsure`, `no people`, `taken over`, `cancelled`; the sentences are `ROS2Bridge._FOLLOW_ENDS`), `target`, `why` |
+| `/follow/cancel` | Empty | sent on any other drive, a stop word, or a new follow |
+| `/vision/people` | String (JSON) | not read by the brain: follow_node's input, 5 Hz while subscribed: `people[]` with `id`, odom `x/y`, `vx/vy`, `dist`, `bearing`, `lost_s`, `box` |
+
+follow_node drives `/cmd_vel` itself (1.0 m gap, <= 0.3 m/s, stops on the fused
+obstacle map) and only after `/follow/start`; YOLO idles until something
+subscribes to `/vision/people`. The camera sits low: a seated person at the
+frame edge is not detected (2026-10-11), so the person must stand in view.
+
 ---
 
 ## What I could not check
