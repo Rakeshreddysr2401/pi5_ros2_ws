@@ -108,12 +108,13 @@ def main() -> int:
     show("6. slot 3, the same photo again", res)
     photo_ok = (res[2] or 0) > 100
     if photo_ok:
-        print("PASS: photos stay cached -- photo questions are ~4 s warm.")
+        print("PASS: photos stay cached -- a photo question is ~1-2 s warm.")
     else:
         print("FAIL: a SHORT prompt (this one is ~170 tokens) is never reused. On the Mac,")
         print("      every prompt under ~1024 tokens -- Gemma's sliding window -- is re-read")
         print("      from scratch, photos or text: photo questions with few photos take 9-15 s.")
-        print("      Fix on the server: docs/mac/LLAMA_CACHE_ISSUE.md (--swa-full).")
+        print("      The Mac's patched llama.cpp fixes this (docs/mac/LLAMA_CACHE_ISSUE.md §8): is it")
+        print("      running the patched build (e12b5), not a Homebrew one? --swa-full can't fit.")
     return 0 if text_ok and photo_ok else 1
 
 
