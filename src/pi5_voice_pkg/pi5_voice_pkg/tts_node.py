@@ -180,6 +180,9 @@ class TTSNode(Node):
         # robot change voice mid-reply and then change back, which sounds like
         # a fault even though both halves worked.
         self._forced_fallback = False
+        # Out of credits is not a blip: retrying it opened every reply with a
+        # failed round trip (Sarvam HTTP 402, 2026-10-11). Hold the fallback a while.
+        self._provider_hold_until = 0.0
         # Speaker availability, owned by audio_device_node. While it is down a
         # sentence is dropped (with the EOU protocol kept intact, so the mic
         # is never left muted) rather than played into a missing sink. If no
@@ -359,7 +362,7 @@ class TTSNode(Node):
             # A sentence arriving now belongs to a NEW utterance.
             self._interrupt.clear()
             gen = self._generation
-            if hasattr(self._provider, 'stream') and not self._forced_fallback:
+            if hasattr(self._provider, 'stream') and not self._on_fallback():
                 try:
                     if self._stream_sentence(text, gen):
                         continue          # played chunk by chunk
@@ -405,6 +408,7 @@ class TTSNode(Node):
             self.get_logger().warning(f'{self._provider.name} failed ({e}); falling back to local')
             self._fallback_reason = str(e)[:200]
             self._forced_fallback = True
+            self._hold_if_out_of_credits(e)
             return False
         total_ms = int((time.monotonic() - t0) * 1000)
         audio_ms = int(frames / sr * 1000) if sr else 0
@@ -450,11 +454,24 @@ class TTSNode(Node):
             except Exception:
                 self.get_logger().error(f'unhandled playback error\n{traceback.format_exc()}')
 
+    QUOTA_HOLD_S = 600.0
+
+    def _on_fallback(self) -> bool:
+        return self._forced_fallback or time.monotonic() < self._provider_hold_until
+
+    def _hold_if_out_of_credits(self, e: Exception):
+        msg = str(e)
+        if 'HTTP 402' in msg or 'insufficient_quota' in msg or 'No credits' in msg:
+            self._provider_hold_until = time.monotonic() + self.QUOTA_HOLD_S
+            self.get_logger().warning(
+                f'{self._provider.name} is out of credits: speaking with '
+                f'{self._fallback.name} for {int(self.QUOTA_HOLD_S / 60)} min before trying it again')
+
     def _synthesize(self, text: str):
         """Text -> (samples, sr), or None if every provider failed."""
         provider, fell_back = self._provider.name, False
         t0 = time.monotonic()
-        if self._forced_fallback and self._provider is not self._fallback:
+        if self._on_fallback() and self._provider is not self._fallback:
             samples, sr = self._fallback.synthesize(text)
             self._publish_tts_meta(self._fallback.name, True, t0, text, samples, sr, ok=True)
             return samples, sr
@@ -465,6 +482,7 @@ class TTSNode(Node):
             self._fallback_reason = str(e)[:200]     # on tts_meta: agent_node says why, once
             fell_back = True
             self._forced_fallback = True
+            self._hold_if_out_of_credits(e)
             provider = self._fallback.name
             try:
                 samples, sr = self._fallback.synthesize(text)

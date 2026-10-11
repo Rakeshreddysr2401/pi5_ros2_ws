@@ -287,7 +287,17 @@ check)
     # Thresholds are "alive", not "nominal": the probe under-counts by up to a
     # third on this Pi5 while measuring four topics (wheels 13-20 Hz of a
     # true 20). Nominal: /odom 20, /scan 10, /wheel_state 20, camera ~5.
-    subs() { { timeout 15 ros2 topic info "$1" 2>/dev/null || true; } | awk '/Subscription count/{print $3}'; }
+    # Asked a few times: right after `./rover up` the ros2 daemon's graph lags the
+    # newest nodes, and a first answer of 0 reported two live nodes as FAIL (2026-10-11).
+    subs() {
+        local c i
+        for i in 1 2 3; do
+            c=$({ timeout 15 ros2 topic info "$1" 2>/dev/null || true; } | awk '/Subscription count/{print $3}')
+            [ "${c:-0}" -ge 1 ] 2>/dev/null && break
+            [ "$i" -lt 3 ] && sleep 4
+        done
+        echo "$c"
+    }
     at_least() { awk -v a="${1:-0}" -v b="$2" 'BEGIN{exit !(a+0 >= b+0)}'; }
 
     echo "Pi5"
