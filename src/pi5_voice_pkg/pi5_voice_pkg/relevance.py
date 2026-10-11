@@ -106,3 +106,43 @@ def is_for_robot(heard: str, robot_last: str, url: str, timeout: float = 3.0,
             return parse(json.load(r))
     except Exception:
         return None
+
+
+class HoldWhileBusy:
+    """An overheard sentence (no name; only this filter said "for me") waits
+    while the brain is busy with a turn, and goes on when the turn ends.
+
+    2026-10-11, twice in one evening: "Do you have an audio?" (room talk) came
+    3 s after "Mitra, follow me", barged in and cancelled the follow before its
+    tool ran; earlier "How do you mean?" replaced "move back 40 cm". A sentence
+    WITH the name, and a stop word, still cut in at once -- the caller only
+    offers the llm-judged ones. Held one at a time (the newest wins, like the
+    brain's own queue) and dropped when older than max_age_s. Pure: no clock
+    or ROS of its own.
+    """
+
+    def __init__(self, max_age_s: float = 20.0, max_busy_s: float = 300.0):
+        self.max_age_s = max_age_s
+        self.max_busy_s = max_busy_s     # a brain that died mid-turn never says "idle"
+        self.busy = False
+        self._busy_since = 0.0
+        self._held: tuple[str, float] | None = None
+
+    def offer(self, text: str, now: float) -> bool:
+        """True = held (the brain is busy); False = send it now."""
+        if not self.busy or now - self._busy_since > self.max_busy_s:
+            return False
+        self._held = (text, now)
+        return True
+
+    def set_busy(self, busy: bool, now: float) -> str | None:
+        """The brain's /brain/thinking. On busy -> idle: the held sentence to
+        send now, or None (nothing held, or it went stale)."""
+        if busy and not self.busy:
+            self._busy_since = now
+        self.busy = busy
+        if busy or self._held is None:
+            return None
+        text, at = self._held
+        self._held = None
+        return text if now - at <= self.max_age_s else None

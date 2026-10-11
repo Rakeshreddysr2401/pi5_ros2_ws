@@ -237,17 +237,20 @@ def build_agent_list(exclude: str = "") -> str:
 
 
 def warm_order(entry: str, all_agents: bool = True) -> list[str]:
-    """The agents the idle cache warmer prefills, in order: the others first,
-    `entry` (where the next turn will land) LAST.
+    """The agents the idle cache warmer prefills, in order: `entry` (where the
+    next turn will land) FIRST, then the others.
 
     All of them, because a handover lands on the target agent with a prompt
     that has not been read since the history last changed: the first "go to
     the kitchen" or "what do you see" after boot paid a full ~2.5k-token
-    read. Entry last, because a server whose slots evict each other (the
-    Mac's, until --swa-full; scripts/llm_cache_check.py) then still keeps the
-    one the next turn needs."""
+    read. Entry FIRST since 2026-10-11: the Mac's slots keep separate caches
+    (scripts/llm_cache_check.py PASSES), so the old reason for entry last --
+    slots evicting each other -- is gone, and last cost a turn: after a
+    history trim the warmer re-read chat (52 s) while the next turn, entering
+    navigate, re-read beside it -- 56 s, where queueing behind its own slot's
+    warm reuses that work instead of competing with it."""
     if entry not in SPECS:
         entry = "chat"
     others = [name for name in SPECS if name != entry] if all_agents else []
-    return others + [entry]
+    return [entry] + others
 

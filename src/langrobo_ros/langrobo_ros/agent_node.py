@@ -1164,7 +1164,7 @@ class AgentNode(Node):
         # warming the right one is what keeps that prefix resident.
         agent = (self._sticky_agent
                  if self._sticky_agent in registry.STICKY_ELIGIBLE else "chat")
-        # LANGROBO_WARM_ALL=1: every agent, entry last (registry.warm_order),
+        # LANGROBO_WARM_ALL=1: every agent, entry FIRST (registry.warm_order),
         # so a handover target is warm too. OFF by default: on a server whose
         # slots wipe each other (the Mac's until --swa-full) it costs ~3 full
         # prompt reads per idle spell for nothing. Turn it on once

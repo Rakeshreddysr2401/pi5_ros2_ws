@@ -351,7 +351,7 @@ pending.
 It warms the agent the next turn will ENTER. A handover lands on another
 agent, whose prompt has not been read since the history changed — the first
 move or vision question after boot pays a full prefix read there.
-`LANGROBO_WARM_ALL=1` warms every agent, entry last (`registry.warm_order`),
+`LANGROBO_WARM_ALL=1` warms every agent, entry FIRST (`registry.warm_order`; first since 2026-10-11, the slots no longer evict each other),
 stopping as soon as input arrives. Off by default (on a server whose slots
 wipe each other it is ~3 full reads per idle spell for nothing); ON in this
 robot's `.env` since the check passed on 2026-10-01.

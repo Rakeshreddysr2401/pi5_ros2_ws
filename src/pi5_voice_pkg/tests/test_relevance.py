@@ -89,3 +89,19 @@ def test_props_url():
 
 def test_server_slots_unreachable_is_none():
     assert R.server_slots("http://127.0.0.1:9/v1/chat/completions", timeout=0.5) is None
+
+
+def test_hold_while_busy():
+    h = R.HoldWhileBusy(max_age_s=20)
+    assert h.offer("what time is it?", 0.0) is False          # idle: send at once
+    h.set_busy(True, 1.0)
+    assert h.offer("Do you have an audio?", 2.0) is True      # busy: held
+    assert h.offer("How do you mean?", 3.0) is True           # newest wins
+    assert h.set_busy(False, 10.0) == "How do you mean?"      # turn over: sent
+    assert h.set_busy(False, 11.0) is None                    # sent once only
+    h.set_busy(True, 12.0)
+    h.offer("old news", 12.0)
+    assert h.set_busy(False, 40.0) is None                    # stale: dropped
+    h.set_busy(True, 41.0)
+    assert h.set_busy(True, 42.0) is None                     # still busy: nothing
+    assert h.offer("hello?", 41.0 + 301) is False             # busy for 5 min+: brain died, send

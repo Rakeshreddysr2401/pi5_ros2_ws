@@ -336,6 +336,11 @@ class STTNode(Node):
         self._follow_up_s = float(self.get_parameter('follow_up_window_s').value)
         self._max_follow_ups = int(self.get_parameter('max_follow_ups').value)
         self._follow_ups = 0           # unnamed turns since the last named one
+        # An overheard sentence (llm-judged, no name) waits while the brain is
+        # busy with a turn -- it cancelled "Mitra, follow me" (relevance.HoldWhileBusy).
+        self._hold = relevance.HoldWhileBusy()
+        self._hold_lock = threading.Lock()
+        self.create_subscription(Bool, '/brain/thinking', self._on_brain_thinking, 10)
         if self._acoustic:
             self.get_logger().info(
                 f'wake_detector = {self._wake.name} ({self._wake_label!r}); '
@@ -776,7 +781,13 @@ class STTNode(Node):
                                              slot=self._relevance_slot)
             ms = int((time.monotonic() - t0) * 1000)
             if verdict:
-                self._accept(text, f'llm {ms} ms')
+                with self._hold_lock:
+                    held = self._hold.offer(text, time.monotonic())
+                if held:
+                    self.get_logger().info(
+                        f'for me (llm {ms} ms), but a turn is running -- held until it ends: {text!r}')
+                else:
+                    self._accept(text, f'llm {ms} ms')
             else:
                 self.get_logger().info(
                     f"not for me ({'llm' if verdict is False else 'llm unreachable'} {ms} ms): {text!r}")
@@ -819,6 +830,12 @@ class STTNode(Node):
                     f'{self._relevance_want_slot + 1}.')
             else:
                 self.get_logger().info(f'relevance filter pinned to KV slot {slot} ({n} slots)')
+
+    def _on_brain_thinking(self, msg: Bool) -> None:
+        with self._hold_lock:
+            text = self._hold.set_busy(bool(msg.data), time.monotonic())
+        if text:
+            self._accept(text, 'held until the turn ended')
 
     def _accept(self, text: str, why: str) -> None:
         """Addressed: chime at once (the owner hears it was heard), then send it on."""
