@@ -10,13 +10,17 @@
 #   ./scripts/fleet.sh sim      # SIMULATION body: the OLDER laptop sim, rover_sim
 #                               #   (mecanum, its own nav2) + Pi5 voice. The Jetson
 #                               #   is not used. To test the REAL Jetson stack in a
-#                               #   simulated home use the Mitra twin instead:
-#                               #   laptop /workspace/mitra_sim (./mitra up) + Jetson
-#                               #   ~/mitra_sim/jetson/sim_stack.sh up (CLAUDE.md).
-#   ./scripts/fleet.sh twin [up|down|status] [world]
-#                               # the MITRA TWIN (default up home_real): the laptop's Gazebo
-#                               #   world + the Jetson's own nav stack + a SECOND brain here,
-#                               #   all on ROS domain 42. The real robot (domain 0) is untouched.
+#                               #   simulated home use the Mitra twin instead (below).
+#   ./scripts/fleet.sh twin [up|down|status] [world] [mirror|pose]
+#                               # the MITRA TWIN (default up home_real mirror), all on ROS
+#                               #   domain 42; the real robot (domain 0) is untouched.
+#                               #   mirror: the laptop is ONLY the hardware (simulated D555,
+#                               #   C1, ESP32 + encoders, the measured body) and the Jetson
+#                               #   runs the rover's WHOLE stack on it, `TWIN=1 ./rover up`:
+#                               #   cuVSLAM, fusion2, slam_toolbox, nvblox, nav2, reach, VLM
+#                               #   bridge -- plus a SECOND brain here (twin_brain.sh).
+#                               #   pose: the older shortcut (the laptop hands out /odom;
+#                               #   ~/mitra_sim/jetson/sim_stack.sh: nav only).
 #   ./scripts/fleet.sh stop     # park the robot: stop the body, keep brain up
 #   ./scripts/fleet.sh down     # full shutdown incl. this Pi5's services (sudo)
 #   ./scripts/fleet.sh status   # who's up, everywhere
@@ -135,25 +139,32 @@ jetson_status() {
 }
 
 twin_up() {
-    local world="${1:-home_real}"
-    echo "twin: world '$world' on domain 42 (the real robot, domain 0, is not touched)"
+    local world="${1:-home_real}" level="${2:-mirror}"
+    echo "twin: world '$world', level $level, on domain 42 (the real robot, domain 0, is not touched)"
     if reachable "$LAPTOP_HOST"; then
-        $SSH $LAPTOP "cd $TWIN_LAPTOP_DIR && git pull -q --ff-only 2>/dev/null; ./mitra up $world" 2>&1 | sed 's/^/laptop: /'
+        $SSH $LAPTOP "cd $TWIN_LAPTOP_DIR && git pull -q --ff-only 2>/dev/null; ./mitra up $world level=$level" 2>&1 | sed 's/^/laptop: /'
     else
         echo "laptop: UNREACHABLE ($LAPTOP_HOST) -- is it on and awake? (LANGROBO_LAPTOP_HOST=<ip>)"; return 1
     fi
     if reachable "$JETSON_HOST"; then
-        $SSH $JETSON "git -C ~/mitra_sim pull -q --ff-only 2>/dev/null; ~/mitra_sim/jetson/sim_stack.sh up" 2>&1 | sed 's/^/jetson: /'
+        if [ "$level" = mirror ]; then
+            # the real layers, one by one, each with its gate (~10 min with nvblox + nav2)
+            # an address, not a .local name: the twin's sensor cables are opened from inside the container
+            local lip; lip=$(getent hosts "$LAPTOP_HOST" | awk '{print $1; exit}')
+            $SSH $JETSON "git -C ~/mitra_sim pull -q --ff-only 2>/dev/null; cd ~/rover && LAPTOP_IP=${lip:-$LAPTOP_HOST} TWIN=1 ./rover up" 2>&1 | sed 's/^/jetson: /'
+        else
+            $SSH $JETSON "git -C ~/mitra_sim pull -q --ff-only 2>/dev/null; ~/mitra_sim/jetson/sim_stack.sh up" 2>&1 | sed 's/^/jetson: /'
+        fi
     else
         echo "jetson: UNREACHABLE ($JETSON_HOST)"; return 1
     fi
     "$(dirname "$0")/twin_brain.sh" up | sed 's/^/pi5:    /'
     echo "twin: talk to it -- $(dirname "$0")/twin_brain.sh say \"Mitra, what do you see?\""
-    echo "      watch it    -- on the laptop: cd $TWIN_LAPTOP_DIR && ./mitra rviz"
+    echo "      watch it    -- the laptop's RViz window 'rover_twin' (TWIN=1 ./rover view on the Jetson)"
 }
 twin_down() {
     "$(dirname "$0")/twin_brain.sh" down | sed 's/^/pi5:    /'
-    reachable "$JETSON_HOST" && $SSH $JETSON "~/mitra_sim/jetson/sim_stack.sh down" 2>&1 | sed 's/^/jetson: /'
+    reachable "$JETSON_HOST" && $SSH $JETSON "cd ~/rover && TWIN=1 ./rover stop; ~/mitra_sim/jetson/sim_stack.sh down" 2>&1 | sed 's/^/jetson: /'
     reachable "$LAPTOP_HOST" && $SSH $LAPTOP "cd $TWIN_LAPTOP_DIR && ./mitra down" 2>&1 | sed 's/^/laptop: /'
     return 0
 }
@@ -161,13 +172,13 @@ twin_down() {
 case "$CMD" in
 twin)
     case "${2:-up}" in
-        up)     twin_up "${3:-home_real}" ;;
+        up)     twin_up "${3:-home_real}" "${4:-mirror}" ;;
         down)   twin_down ;;
         status)
             "$(dirname "$0")/twin_brain.sh" status | sed 's/^/pi5:    /'
-            reachable "$JETSON_HOST" && $SSH $JETSON "~/mitra_sim/jetson/sim_stack.sh status" 2>&1 | sed 's/^/jetson: /'
+            reachable "$JETSON_HOST" && $SSH $JETSON "if docker ps --format '{{.Names}}' | grep -qx rover_twin; then cd ~/rover && TWIN=1 ./rover status; else ~/mitra_sim/jetson/sim_stack.sh status; fi" 2>&1 | sed 's/^/jetson: /'
             reachable "$LAPTOP_HOST" && $SSH $LAPTOP "cd $TWIN_LAPTOP_DIR && ./mitra status" 2>&1 | sed 's/^/laptop: /' ;;
-        *)      echo "usage: $0 twin [up|down|status] [world]"; exit 2 ;;
+        *)      echo "usage: $0 twin [up|down|status] [world] [mirror|pose]"; exit 2 ;;
     esac
     ;;
 sim)
@@ -340,7 +351,8 @@ print("%s object(s) remembered; survey: %s" % (r.get("objects_remembered", "?"),
     ;;
 *)
     echo "usage: $0 {twin|sim|rover|stop|down|status|check}"
-    echo "  twin   the Mitra twin [up|down|status] [world]: laptop world + Jetson stack + a 2nd brain, domain 42"
+    echo "  twin   the Mitra twin [up|down|status] [world] [mirror|pose]: simulated hardware on the laptop,"
+    echo "         the rover's whole Jetson stack on it (TWIN=1 ./rover up) + a 2nd brain, domain 42"
     echo "  rover  start real body (Pi5 micro-ROS wheels + Jetson ./rover up; Pi5 voice)"
     echo "  sim    start simulation body (laptop Gazebo+Nav2; Pi5 voice)"
     echo "  stop   stop the robot body; keep brain + discovery (Telegram) alive"
