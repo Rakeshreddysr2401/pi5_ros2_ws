@@ -8,6 +8,11 @@ after a full test on the real robot.
 
 Work through the tasks **in order**, then fill in the report at the end.
 
+> **Status 2026-10-11 (Mac agent):** Task 3 DONE differently -- the cause was a llama.cpp bug,
+> fixed with a one-line patch; `--swa-full` can't fit (docs/mac/LLAMA_CACHE_ISSUE.md §8).
+> Task 4 changed by the owner: **no autostart** -- after a power-on run `e12b5` in a Mac terminal.
+> Task 1 (ssh keys) and Task 5 (draft model) not done yet. Report at the end.
+
 ## Ground rules
 
 - **Don't change the model files** (`.gguf`, mmproj) or the port (8080).
@@ -180,4 +185,32 @@ TASK 3  log line for a short-prompt miss (before): <..>
 TASK 4  pmset sleep 0: done/owner-pending   LaunchAgent/Daemon: <path>   survives kickstart: yes/no
 TASK 5  drafter: <file>   tok/s before/after: <..>/<..>   accepted/drafted: <..>
         photos OK: yes/no   cache_cutoff_check after: all OK / <..>
+```
+
+### Report (filled in on the Mac, 2026-10-11)
+
+```
+TASK 1  not done yet (waiting for the owner's OK)
+TASK 2  started by: typed by hand in a terminal (ttys002), log in that terminal only
+        OLD command line: llama-server -m .../gemma-4-12B-it-Q4_K_M.gguf --mmproj .../mmproj-gemma-4-12B-it-Q8_0.gguf
+            --host 0.0.0.0 --port 8080 -ngl 99 --parallel 4 --ctx-size 65536 --jinja --flash-attn on
+            --reasoning off --cache-ram 0
+        chip / RAM: M4 (Mac16,10) / 16 GB, ~0.1 GB free   sleep setting: sleep 0, disksleep 0
+        also running: Ollama (+ its own llama-server) -- quit, autostart removed
+TASK 3  log line for a short-prompt miss: none of the 'forcing full prompt re-processing' kind;
+            verbose log: "restored context checkpoint (pos_min = 0, pos_max = 0, n_tokens = 1, n_past = 1)"
+            = llama.cpp bug (pos_min >= pos_min_thold with both 0), patched -- LLAMA_CACHE_ISSUE.md §8
+        KV estimate for 5 slots + --swa-full: ~20 GB at 12288/slot -> not possible; not used
+        NEW command line: ~/llama.cpp-mitra/build/bin/llama-server (b9830 + MITRA PATCH) ... --parallel 5
+            --ctx-size 81920 -ub 512 --jinja --flash-attn on --reasoning off --cache-ram 0 --metrics
+            (GPU limit 13312 MB) -- scripts/mac_mini/e12b5
+        total_slots: 5 (16384 each)   memory after load: server 10.8 GB
+        cache_cutoff_check.py: 230/710/1010/1320/1987 tokens all OK, 0.6 s -- PASS
+        rewind: ~482 tokens dropped still reused (was ~450)
+TASK 4  owner: NO autostart. After a power-on: `e12b5` in a Mac terminal (asks the password for
+            the GPU limit). Runs under launchd while up (restarts on crash); `e12b5 stop|status|log`.
+            pmset sleep 0: already set
+TASK 5  not started
+PI SIDE restart langrobo-brain + langrobo-voice (they read the slot count at start), then
+            python3 scripts/llm_cache_check.py -> must PASS twice and report 5 slots
 ```

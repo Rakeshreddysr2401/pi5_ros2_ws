@@ -178,3 +178,63 @@ start.
 3. The output of `cache_cutoff_check.py` after the fix.
 4. Memory use after the restart (Activity Monitor or `vm_stat`), so we know the
    headroom.
+
+---
+
+## 8. Resolution (Mac Mini, 2026-10-11)
+
+**Cause: a llama.cpp bug, not missing `--swa-full`.** The inference in §3 was close but not
+quite it. The verbose server log showed what happens on the 2nd short request:
+
+```
+slot operator(): id 3 | checking checkpoint with [0, 0] against 0...
+slot operator(): id 3 | restored context checkpoint (pos_min = 0, pos_max = 0, n_tokens = 1, n_past = 1)
+```
+
+No "forcing full prompt re-processing" line: the server *restored* a 1-token checkpoint, which
+re-reads the rest. In `tools/server/server-context.cpp` (b9830, and still on upstream master on
+2026-10-11):
+
+```cpp
+const auto pos_min_thold = std::max(0, pos_next - n_swa - ...);  // 0 for any prompt < n_swa (1024)
+if (pos_min >= pos_min_thold) {                                  // 0 >= 0: searches checkpoints
+```
+
+When the slot still holds every position from 0 (`pos_min == 0`), nothing has left the sliding
+window and the cache is valid as it is, but `>=` sends it to the checkpoint search anyway, and
+the only checkpoint is the one made after token 1. The fix is one condition:
+`if (pos_min > 0 && pos_min >= pos_min_thold)`. Prompts longer than 1024 never hit it, which is
+the cut-off in §1.
+
+**Why not `--swa-full`:** Gemma 4 12B's 40 sliding-window layers are 8 KV heads x (256+256) x
+f16 = **320 KB per token**, the 8 global layers 16 KB. Full-size SWA for 5 x 12288 tokens is
+~20 GB of cache (3 slots: ~12 GB) on a 16 GB Mac whose GPU may use ~10.7 GB by default. It
+can't fit, and with the patch it isn't needed.
+
+**What runs now** (`scripts/mac_mini/e12b5`, started by hand after each power-on):
+
+- llama.cpp **b9830 + `scripts/mac_mini/llama_swa_cache.patch`**, built in `~/llama.cpp-mitra`
+  by `scripts/mac_mini/build_llama_mitra.sh` (Homebrew's unpatched build stays as fallback).
+- `--parallel 5 --ctx-size 81920` (5 x 16384), `-ub 512`, `--metrics`, the other flags as before.
+- GPU memory limit raised to 13312 MB (`sudo sysctl iogpu.wired_limit_mb=13312`, asked by
+  `e12b5`; resets at reboot). 5 slots at `-ub 512` ran out of GPU memory at the default limit.
+- Server memory 10.8 GB (7.4 model + 3.4 KV), reserved at start.
+- Ollama quit and its autostart removed (it also launched its own llama-server).
+
+**Measured after the fix:**
+
+```
+cache_cutoff_check.py                      rewind (3.2k-token prompt, slot 3)
+  230 tokens: 0.6 s reused=223   OK         dropped ~152: 0.5 s OK
+  710 tokens: 0.6 s reused=703   OK         dropped ~262: 0.5 s OK
+ 1010 tokens: 0.6 s reused=1003  OK         dropped ~372: 0.5 s OK
+ 1320 tokens: 0.6 s reused=1313  OK         dropped ~427: 0.5 s OK
+ 1987 tokens: 0.6 s reused=1980  OK         dropped ~482: 0.5 s OK
+PASS: short prompts are cached too.
+```
+
+- photo question, same photo again: 9 s -> **1.6 s**.
+- all 5 slots at once (4 x 1.8k text + 1 photo): all answered, no GPU out-of-memory.
+- **The rewind margin is the micro-batch:** the SWA cache keeps 1024 + `-ub` tokens, so `-ub 256`
+  cut it to ~160 tokens (measured: a 267-token rewind re-read 3.2k tokens, 26 s). Keep `-ub 512`.
+- Not yet run: the Pi's `scripts/llm_cache_check.py` (needs a brain restart to see 5 slots).

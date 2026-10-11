@@ -32,7 +32,7 @@ cache, server without --swa-full): a rewind of <= ~450 tokens keeps the cache,
 >= ~600 throws it all away (17 s to re-read 8 photos). Hence the instructions
 BEFORE the photos, only "Question: ..." after them, a short box prompt and a
 capped answer: question + answer + photo + box prompt stay under ~420 tokens.
-`--swa-full` on the server removes the limit.
+`--swa-full` on the server would remove the limit, but can't fit the 16 GB Mac.
 
 The VLM is never asked for a distance or a position: it cannot know one. It
 picks a photo and a box; depth and pose come from the sensors.

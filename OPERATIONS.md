@@ -17,8 +17,9 @@ Deploy, run, observe, and troubleshoot the Pi5 brain.
 
 **Never run two brains at once** — both drive `/cmd_vel` and the micro-ROS agent on the ESP32's serial port.
 
-The llama.cpp server on the Mac Mini must be started with **`--jinja --parallel 4`**:
-one KV-cache slot per agent (chat, local_agent, navigate) plus slot 3 for
+The llama.cpp server on the Mac Mini is started with **`e12b5`** (`--jinja --parallel 5`, see
+"Mac Mini LLM server" below): one KV-cache slot per agent (chat, local_agent, navigate), slot 4
+for the voice "is this for me?" check, plus slot 3 for
 photo questions (`ask_photos`, search views, locate, the arrival check), so they never
 overwrite local_agent's cached conversation and photos. With fewer slots the
 agents share and evict each other's cached prompt prefix, which
@@ -189,7 +190,7 @@ debugging.
 ## Deploy checklist (Pi5 + Jetson protocol change)
 
 1. Pi5: `colcon build --symlink-install` + `pip3 install --break-system-packages -r requirements.txt`
-2. Mac Mini llama.cpp up, **started with `--jinja --parallel 4`** (`--swa-full` wanted too -- it lifts the cache's ~450-token rewind limit; not on the Mac yet):
+2. Mac Mini llama.cpp up: **`e12b5`** in a Mac terminal (`e12b5 status` must say 5 slots x 16384):
    `curl http://singireddys-mac-mini.local:8080/v1/models` must report
    `"multimodal"` in capabilities (mmproj loaded) for look().
 3. `sudo systemctl restart langrobo-brain` → `curl localhost:8090/health`
@@ -204,13 +205,28 @@ debugging.
 
 ## Mac Mini LLM server
 
+**After every power-on, in a terminal on the Mac: `e12b5`** (owner, 2026-10-11: nothing autostarts).
+It asks the Mac password once, then runs a patched llama-server under launchd (restarted if it
+crashes); `e12b5 stop | status | log`. Source: `scripts/mac_mini/e12b5` (symlinked to
+`~/.local/bin/e12b5` on the Mac); every flag's reason is in its header.
+
 ```bash
-./llama-server -m <model>.gguf --mmproj <mmproj>.gguf --port 8080 -ngl 99 \
-               --parallel 4 --jinja --swa-full
+# what e12b5 runs (GPU limit raised to 13312 MB first: sudo sysctl iogpu.wired_limit_mb=13312)
+~/llama.cpp-mitra/build/bin/llama-server -m gemma-4-12B-it-Q4_K_M.gguf --mmproj mmproj-gemma-4-12B-it-Q8_0.gguf \
+    --host 0.0.0.0 --port 8080 -ngl 99 --parallel 5 --ctx-size 81920 -ub 512 \
+    --jinja --flash-attn on --reasoning off --cache-ram 0 --metrics
 ```
 
-- `--parallel 4` — one KV slot per agent, pinned by the brain: 0 chat,
-  1 local_agent, 2 navigate, and 3 = the vision-tool slot: photo questions, search views, locate, the arrival check (with fewer,
+- **Patched llama.cpp** (`~/llama.cpp-mitra`, b9830 + `scripts/mac_mini/llama_swa_cache.patch`,
+  rebuilt by `scripts/mac_mini/build_llama_mitra.sh`): upstream re-reads every prompt shorter than
+  Gemma's 1024-token sliding window from scratch (photo questions 9-15 s instead of ~1 s).
+  docs/mac/LLAMA_CACHE_ISSUE.md §8. Homebrew's `llama-server` is the unpatched fallback.
+- **GPU limit 13 GB** of the 16: 5 slots at `-ub 512` don't fit macOS's default ~10.7 GB. The
+  server holds 10.8 GB (7.4 model + 3.4 cache, all reserved at start -- it doesn't grow).
+  Without the raise `e12b5` falls back to 5 x 12288 at `-ub 256` (smaller rewind margin, ~160).
+- **No `--swa-full`**: on Gemma 4 it costs ~320 KB/token/slot -- ~20 GB for 5 x 12288. Not needed.
+- `--parallel 5` — one KV slot per agent, pinned by the brain: 0 chat,
+  1 local_agent, 2 navigate, 4 the voice "is this for me?" check, and 3 = the vision-tool slot: photo questions, search views, locate, the arrival check (with fewer,
   locate uses slot 1, and the boot log says so). The map is `registry.SLOTS`, declared
   beside the agents; agent_node probes this server's real slot count at boot
   and warns if it is smaller. See ARCHITECTURE_LLD.md §4.1.
@@ -223,16 +239,16 @@ debugging.
   `APIConnectionError` and the journal shows "Primary LLM marked down for 60s",
   while the network itself is fine. Cause = the Mac asleep
   or llama-server not running. Brain self-recovers when the server returns —
-  no restart needed. Durable fix pending on the Mac: `sudo pmset -a sleep 0`
-  + run llama-server as a LaunchAgent.
+  no restart needed. Sleep is off on the Mac (`pmset sleep 0`); after a power cut
+  the server stays down until someone runs `e12b5` there.
 
 ## Troubleshooting
 
 | Symptom | Likely cause → fix |
 |---|---|
 | Spoken "my brain server is offline" | Mac Mini down/unreachable → check server, or arm `LANGROBO_FALLBACK_*` |
-| Every turn slow (~20s before speech) | KV cache cold: the server started without `--parallel 4` (or without `--swa-full`: `scripts/llm_cache_check.py`) (agents share slots and evict each other — the boot log says so), a clock in a prompt, or a mid-history mutation. See ARCHITECTURE_LLD.md §4 |
-| First reply after a change of agent slow (15-27 s; e.g. the turn after a vision question) | A slot's cache was lost. `python3 scripts/llm_cache_check.py` says PASS/FAIL in ~2 min (FAILED 2026-09-27, PASS since 2026-10-01). With PASS, set `LANGROBO_WARM_ALL=1` (on since 2026-10-01). Still slow on photo questions: the server is not `--swa-full` and drops its cache on a rewind > ~450 tokens (CLAUDE.md rule 2) |
+| Every turn slow (~20s before speech) | KV cache cold: the server started without `--parallel 5` (`e12b5 status`; `scripts/llm_cache_check.py`) (agents share slots and evict each other — the boot log says so), a clock in a prompt, or a mid-history mutation. See ARCHITECTURE_LLD.md §4 |
+| First reply after a change of agent slow (15-27 s; e.g. the turn after a vision question) | A slot's cache was lost. `python3 scripts/llm_cache_check.py` says PASS/FAIL in ~2 min (FAILED 2026-09-27, PASS since 2026-10-01). With PASS, set `LANGROBO_WARM_ALL=1` (on since 2026-10-01). Still slow on photo questions: a rewind > ~480 tokens drops the cache (CLAUDE.md rule 2), or the Mac runs unpatched Homebrew llama.cpp (prompts < 1024 tokens never cached: run `docs/mac/LLAMA_CACHE_ISSUE.md` §6's check) |
 | "I cannot see right now" | Frame >10s stale or absent. That topic is published by `phase4/nodes/image_bridge.py` **in the perception repo** — start it with `./rover vlm` on the Jetson. It also skips encoding entirely when nothing is subscribed, so check the brain is up before blaming the Jetson |
 | Vision turn slow (~60s end-to-end) | Measured 2026-07-19: router call ~43s + vision call ~16s on the Mac, sequential. `local_agent` is sticky, so the FOLLOW-UP question about the same scene skips the router; the first one still pays it |
 | Tool calls flaky / early stops | GGUF chat template mislabels control tokens → suspect the quant, and check the server has `--jinja` |
