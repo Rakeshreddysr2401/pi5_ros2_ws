@@ -2,6 +2,8 @@
 
 **For:** the agents working on the Mac Mini (`singireddys-mac-mini.local`).
 **From:** the robot brain on the Pi 5 (repo `~/ros2_ws`), measured 2026-10-11.
+**The full task list for the Mac is `MAC_MINI_TASKS.md` (repo root); this
+file is the evidence for its Task 3.**
 **Ask:** fix the server so short prompts reuse their slot's cache, restart it with
 5 slots, and run the check at the bottom. Report back the server log lines and
 the check output.
@@ -93,13 +95,14 @@ Server facts as reported by its own endpoints:
    layers then keep `n_ctx` positions per slot instead of 1024. Before
    restarting, work out the KV size for 5 slots from the model's metadata, and
    check it fits the Mac's RAM next to the model weights. If it doesn't fit:
-   - quantise the KV cache: `--cache-type-k q8_0 --cache-type-v q8_0` (needs
-     flash attention, `-fa on`); roughly halves it.
-   - and/or lower the per-slot context. The robot's largest prompts are about
+   - lower the per-slot context. The robot's largest prompts are about
      6–8k tokens (an agent's prompt with history, or 24 photos), so **keep at
      least 12288 per slot**. Note that `-c` is usually the TOTAL split across
      slots: 5 slots × 12288 = `-c 61440`. Check how this build splits it (look
      for `n_ctx_slot` in the startup log).
+   - Quantising the KV cache (`--cache-type-k/-v q8_0`) would roughly halve it,
+     but it stops the planned Gemma 4 draft model (MAC_MINI_TASKS.md Task 5)
+     from working, so use it only as a last resort.
 2. **If `--swa-full` can't fit:** look for this build's checkpoint options and
    test whether they lower the cut-off:
    `llama-server --help | grep -i -E 'checkpoint|swa|cache-reuse|cache-ram'`.
