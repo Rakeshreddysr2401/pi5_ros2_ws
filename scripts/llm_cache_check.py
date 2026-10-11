@@ -24,10 +24,19 @@ full-size cache (more memory). Restart the server with `--swa-full`, then run
 this again -- PASS confirms it; a FAIL means look at the server log for
 "forcing full prompt re-processing" and its stated reason.
 
+Then the PHOTOS (step 5-6): every photo question (ask_photos, locate, the
+arrival check) sends images on the vision-tool slot and counts on the earlier
+photos staying cached. 2026-10-11: the text steps PASSED while every image
+prompt reused 1 token, even sent twice in a row -- three photo calls took 34 s
+before a "go near" started to move. So step 6 asks about one photo twice and
+FAILs unless the second reuses it.
+
 Takes ~1-2 minutes (it pays the cold prefills on purpose). Safe to run while
 the robot is up: it uses slots 2 and 3, so navigate's slot is cold after it
 (the next move pays one prefill).
 """
+import base64
+import io
 import json
 import sys
 import time
@@ -52,6 +61,20 @@ def call(slot: int, msgs: list) -> tuple:
     return time.time() - t0, timings.get("prompt_n"), timings.get("cache_n")
 
 
+def photo_msgs(question: str) -> list:
+    """One synthetic photo (no camera needed) and a question about it."""
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (640, 480), (200, 190, 170))
+    d = ImageDraw.Draw(img)
+    d.rectangle((220, 200, 420, 380), fill=(150, 110, 60))      # a "box"
+    d.ellipse((60, 60, 160, 160), fill=(40, 60, 160))
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=85)
+    url = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    return [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}},
+                                         {"type": "text", "text": question}]}]
+
+
 def show(label: str, res: tuple) -> None:
     dt, prompt_n, cache_n = res
     print(f"  {label:34s} {dt:5.1f} s   recomputed={prompt_n}  reused={cache_n}")
@@ -68,14 +91,28 @@ def main() -> int:
     res = call(3, more + [{"role": "assistant", "content": "ok"},
                           {"role": "user", "content": "last"}])
     show("4. slot 3 again, extended", res)
-    reused = res[2] or 0
-    if reused > 1000:
+    text_ok = (res[2] or 0) > 1000
+    if text_ok:
         print("PASS: each slot keeps its own cache -- one slot per agent works.")
-        return 0
-    print("FAIL: using slot 2 wiped slot 3's cache. Every agent change re-reads the")
-    print("      whole prompt. Restart llama-server with --swa-full (Gemma's")
-    print("      sliding-window cache), keep --jinja --parallel 4, and re-run.")
-    return 1
+    else:
+        print("FAIL: using slot 2 wiped slot 3's cache. Every agent change re-reads the")
+        print("      whole prompt. Restart llama-server with --swa-full (Gemma's")
+        print("      sliding-window cache), keep --jinja --parallel 5, and re-run.")
+
+    q = photo_msgs("What is in this photo? One line.")
+    show("5. slot 3, a photo", call(3, q))
+    res = call(3, q + [{"role": "assistant", "content": "A box."},
+                       {"role": "user", "content": "What colour is it?"}])
+    show("6. slot 3, the same photo again", res)
+    photo_ok = (res[2] or 0) > 100
+    if photo_ok:
+        print("PASS: photos stay cached -- photo questions are ~4 s warm.")
+    else:
+        print("FAIL: an image prompt is never reused: every photo question re-reads every")
+        print("      photo (~10 s each, ~30 s before 'go near' moves). Text caching is not")
+        print("      the problem. Try llama-server with --swa-full; check the server log for")
+        print("      'forcing full prompt re-processing' and its reason; compare builds.")
+    return 0 if text_ok and photo_ok else 1
 
 
 if __name__ == "__main__":
