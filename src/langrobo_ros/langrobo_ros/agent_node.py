@@ -1179,6 +1179,15 @@ class AgentNode(Node):
         for agent in order:
             if self._input_event.is_set():
                 return          # a turn is pending: it goes first
+            if registry.SPECS[agent].keep_images and self._bridge.navigation_active():
+                # A drive ends in the arrival check, a vision question that
+                # needs the Mac. On 2026-10-11 a warm started mid-drive re-read
+                # local_agent's photo history for 43 s and the arrival check,
+                # beside it, took 43 s instead of ~6 -- the "stop" said
+                # meanwhile waited behind both. Text-only agents still warm:
+                # skipping chat too left the arrival report a 37 s cold read.
+                self.get_logger().info(f"KV-cache warm of '{agent}' (photos) skipped: a drive is running")
+                continue
             self._warm_cache(agent)
 
     def _warm_cache(self, agent: str) -> None:
