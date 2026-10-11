@@ -56,6 +56,7 @@ Common first-boot failures:
 | wheels | no `/wheel_state` | ESP32 off or its USB cable out (`ls /dev/serial/by-id/`) — power-cycle it; `systemctl status langrobo-microros` |
 | view | nobody logged in | log in on the laptop desktop, then `ssh rakhi24@rakhi-jetson.local 'cd ~/rover && ./rover view'` |
 | view | laptop not found / "did not answer ssh" | the Jetson checks the laptop's key as `rover-laptop` (any DHCP address); missing → add it once (Jetson OPERATIONS.md "The laptop key"). Slow WiFi → `LAPTOP_IP=<ip> ./rover view` |
+| (check) | `LLM (Mac Mini)` FAIL / brain says "offline" / `LLM KV slots` FAIL | the Mac's llama-server does not autostart: after any Mac power cut someone types **`e12b5`** in a Terminal on the Mac (asks its password once). The brain recovers by itself once it answers. Never a Homebrew `llama-server` -- it is unpatched (short prompts never cached) |
 | (check) | every Jetson line 0 Hz / no listener, yet `./rover` gates passed | the **Jetson's WiFi**, not the nodes: `ssh rakhi24@192.168.1.15 'iw dev wlP1p1s0 link'` — under ~-65 dBm / low bitrate it can't carry the data (2026-10-09: -72 dBm, 6 Mbit/s). Fix the signal; don't restart layers over it |
 
 ## Step 3 — prove it

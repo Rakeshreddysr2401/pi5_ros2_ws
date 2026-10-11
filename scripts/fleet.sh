@@ -323,14 +323,16 @@ check)
         bad "brain health API :8090" "401 -- LANGROBO_API_TOKEN in .env does not match the brain's"
     else
         echo "$st" | grep -q '"primary_available": *true' && ok "LLM (Mac Mini) via brain" "" \
-            || bad "LLM (Mac Mini) via brain" "check llama.cpp on singireddys-mac-mini.local:8080"
+            || bad "LLM (Mac Mini) via brain" "Mac server down? someone types e12b5 in a Terminal on the Mac (nothing autostarts)"
         seen=$(echo "$st" | python3 -c 'import sys,json
 r=json.load(sys.stdin).get("runtime",{}); s=r.get("photo_survey") or {}
-print("%s object(s) remembered; survey: %s" % (r.get("objects_remembered", "?"), ("%s photo(s), %s queued, %s error(s)" % (s.get("photos", 0), s.get("queued", 0), s.get("errors", 0))) if s.get("enabled", True) else ("OFF -- no vision-tool slot 3, restart llama.cpp with --parallel 4" if s.get("slot") is None else "off by design (memory = the photo log; LANGROBO_PHOTO_SURVEY=1 turns it on)")))' 2>/dev/null || true)
+print("%s object(s) remembered; survey: %s" % (r.get("objects_remembered", "?"), ("%s photo(s), %s queued, %s error(s)" % (s.get("photos", 0), s.get("queued", 0), s.get("errors", 0))) if s.get("enabled", True) else ("OFF -- no vision-tool slot 3, the Mac needs --parallel 5: e12b5" if s.get("slot") is None else "off by design (memory = the photo log; LANGROBO_PHOTO_SURVEY=1 turns it on)")))' 2>/dev/null || true)
         [ -n "$seen" ] && printf "  %-34s --    %s\n" "object memory / photo survey" "$seen"
     fi
     n=$(curl -s -m4 http://singireddys-mac-mini.local:8080/slots | python3 -c "import sys,json;print(len(json.load(sys.stdin)))" 2>/dev/null || true)
-    at_least "$n" 4 && ok "LLM KV slots" "$n (need >= 4)" || bad "LLM KV slots" "${n:-none} -- restart llama.cpp with --jinja --parallel 4 --swa-full"
+    # 5 = chat, local_agent, navigate, photo questions, the voice "is this for me?" check
+    # (CLAUDE.md rule 2). The Mac's e12b5 runs the patched llama.cpp with exactly that.
+    at_least "$n" 5 && ok "LLM KV slots" "$n (need 5)" || bad "LLM KV slots" "${n:-none} -- the Mac needs e12b5 (patched llama.cpp, --parallel 5); see OPERATIONS.md"
     m=$(curl -s -m4 localhost:8091/mode || true)
     case "$m" in *'"manual": false'*|*'"manual":false'*) ok "teleop" "AUTO" ;;
                  "") bad "teleop :8091" "not answering (~/langrobo_teleop/teleop_web.py)" ;;
