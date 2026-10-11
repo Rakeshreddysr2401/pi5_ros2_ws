@@ -165,16 +165,6 @@ b9830).
 
 ---
 
-## Task 6 (optional) — Apple speech server on :8091
-
-`mitra-stt` (Apple's on-device speech recogniser, `scripts/mac_mini/stt_server/`) isn't answering
-on port 8091 today. The robot currently uses its own Parakeet recogniser, so this is only needed
-if the owner wants `stt_provider: apple` back. If so: log in on the Mac, run `./ensure.sh` (or
-`./install.sh`) in that folder, and check from the Pi with
-`curl -s -o /dev/null -w '%{http_code}\n' http://singireddys-mac-mini.local:8091/`.
-
----
-
 ## Report back (fill in and paste to the owner)
 
 ```
@@ -190,5 +180,4 @@ TASK 3  log line for a short-prompt miss (before): <..>
 TASK 4  pmset sleep 0: done/owner-pending   LaunchAgent/Daemon: <path>   survives kickstart: yes/no
 TASK 5  drafter: <file>   tok/s before/after: <..>/<..>   accepted/drafted: <..>
         photos OK: yes/no   cache_cutoff_check after: all OK / <..>
-TASK 6  mitra-stt on :8091: skipped / running
 ```
