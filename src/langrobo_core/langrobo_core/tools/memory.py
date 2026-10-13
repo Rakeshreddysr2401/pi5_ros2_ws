@@ -12,6 +12,7 @@ from langgraph.prebuilt import InjectedState
 
 from ..services import memory as store
 from ..services import permissions
+from ..utils import addressing
 
 
 def _when(ts: float) -> str:
@@ -42,6 +43,8 @@ def memory(action: Literal["remember", "recall", "forget"], text: str,
     text = (text or "").strip()
     if not text:
         return f"Ask what to {action}."
+    if action in ("remember", "forget") and addressing.not_addressed(state):
+        return addressing.refusal("remembered" if action == "remember" else "forgotten")
     if action == "remember":
         how, fact = store.remember(text, who=state.get("sender_name"))
         return f"Remembered: {fact}" if how == "added" else f"Already knew that: {fact}"

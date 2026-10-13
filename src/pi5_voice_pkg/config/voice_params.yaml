@@ -130,7 +130,11 @@ pi5_stt_node:
     # Sarvam TRANSLATES the name: "మిత్ర, ..." comes back as "Friend, ..." (mitra = friend).
     # These count only at the start of a sentence ("Friend, play a song" / "Hey friend, ...").
     wake_leading_aliases: ["friend", "friends"]
-    require_wake: true       # (addressing_mode name only)
+    # OFF (owner, 2026-10-12): every sentence goes to the brain -- no name gate,
+    # no "is this for me?" check (it dropped real commands whenever the Mac was
+    # busy: "Can you find the door?"). The agent clarifies when unsure; a trained
+    # wake word replaces this later. true + addressing_mode: llm = the old filter.
+    require_wake: false
     # NO WAKE WORD (owner, 2026-10-04): the name still works instantly; any other
     # sentence is judged by the brain's LLM -- for me, or TV / people talking?
     addressing_mode: llm

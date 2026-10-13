@@ -48,7 +48,8 @@ from langrobo_core.utils import timing
 from langrobo_core.utils import pose_stamp
 from langrobo_core.utils.history import trim_history
 from langrobo_core.utils.utterance import join_utterances, looks_incomplete
-from langrobo_core.utils.speech_stream import SPEECH_ABANDON, SpeechStreamHandler
+from langrobo_core.utils.speech_stream import SPEECH_ABANDON, SpeechStreamHandler, is_silent
+from langrobo_core.utils import addressing, tool_speech
 from langrobo_core.tools import MOTION_TOOL_NAMES
 from langrobo_core.utils.stop_words import keeps_moving
 
@@ -228,6 +229,9 @@ class AgentNode(Node):
         # arriving on the spin thread cannot see it).
         self._trace_for_tts: str | None = None
         self._last_turn_ts: float | None = None
+        # When the robot last SPOKE a reply aloud: a sentence soon after is the
+        # person answering it (utils/addressing.py FOLLOW_UP_S).
+        self._last_spoke_ts: float | None = None
 
         # ── Input queue ───────────────────────────────────────────────────
         # _user_pending:     latest user message (replaced by newer ones)
@@ -478,8 +482,14 @@ class AgentNode(Node):
             f"nav report queued -> channel={req.get('channel') or 'voice'} "
             f"sender={req.get('sender') or '-'} quiet={rep['quiet']} "
             f"photo={rep['photo_note']!r} task={req.get('then')!r}")
+        # A FAILED drive's report goes stale once a newer drive starts: on
+        # 2026-10-12 a follow ended "blocked" while "come near to me" was
+        # already being answered, and the robot said "I had to stop, something
+        # was in my way" and then "I have arrived" two seconds apart. The newer
+        # drive reports for itself; an arrival is still true, so it stays.
         self._enqueue_system(rep["text"], check=rep["check"],
-                             quiet=rep["quiet"], sender=rep["sender"])
+                             quiet=rep["quiet"], sender=rep["sender"],
+                             failed_at=None if success else time.time())
 
     # ── Two-slot queue (spin thread → worker thread) ──────────────────────
 
@@ -592,13 +602,15 @@ class AgentNode(Node):
                                   ("ok", "latency_ms", "audio_ms", "rtf", "fell_back")})
 
     def _enqueue_system(self, text: str, quiet: bool = False, sender=None,
-                        check=None) -> None:
-        """Enqueue a system event — never dropped, fires after current graph run.
+                        check=None, failed_at=None) -> None:
+        """Enqueue a system event — fires after current graph run.
         quiet: the turn's reply goes out by a tool (Telegram), never the speaker.
         check: (object, index) -- run the arrival check for `object` when this
-        turn is taken and insert its sentence at `index` of the text."""
+        turn is taken and insert its sentence at `index` of the text.
+        failed_at: a failed drive's report (wall time) -- the one thing ever
+        dropped: when a newer drive has started by the time it is taken."""
         with self._queue_lock:
-            self._system_pending.append((text, quiet, sender, check))
+            self._system_pending.append((text, quiet, sender, check, failed_at))
         self._input_event.set()
 
     def _on_telegram_inbound(self, inbound) -> None:
@@ -626,9 +638,9 @@ class AgentNode(Node):
             # discarded: whatever stays pending keeps the event armed for the
             # next loop.
             with self._queue_lock:
-                telegram, quiet, sender, check = None, False, None, None
+                telegram, quiet, sender, check, failed_at = None, False, None, None, None
                 if self._system_pending:
-                    (text, quiet, sender, check), is_system = self._system_pending.pop(0), True
+                    (text, quiet, sender, check, failed_at), is_system = self._system_pending.pop(0), True
                 elif self._user_pending is not None:
                     text, is_system = self._user_pending, False
                     self._user_pending = None
@@ -641,6 +653,12 @@ class AgentNode(Node):
                         or self._telegram_pending):
                     self._input_event.clear()
 
+            if text and failed_at is not None:
+                since = ((self._bridge.navigation_state() or {}).get("goal") or {}).get("since") or 0
+                if since > failed_at:
+                    self.get_logger().info(f"nav report dropped -- a newer drive started "
+                                           f"{since - failed_at:.1f} s after it: {text[:120]!r}")
+                    text = None
             if text:
                 if not is_system and telegram is None:
                     text = self._await_continuation(text)
@@ -994,7 +1012,10 @@ class AgentNode(Node):
                  "channel": "system" if is_system else self._turn_channel,
                  "sender_name": telegram.name if telegram else (sender[0] if sender else None),
                  "sender_role": telegram.role if telegram else (sender[1] if sender else None),
-                 "jev_vision": jev_read.vision if jev_read is not None else None},
+                 "jev_vision": jev_read.vision if jev_read is not None else None,
+                 "addressed": addressing.addressed(
+                     text, "system" if is_system else self._turn_channel,
+                     self._last_spoke_ts, time.time())},
                 config=run_config,
                 stream_mode="values"):
                 if self._turn_interrupt.is_set():
@@ -1009,6 +1030,8 @@ class AgentNode(Node):
                     self._turn_moving = any(tc.get("name") in MOTION_TOOL_NAMES
                                             for tc in (getattr(msg, "tool_calls", None) or []))
                     self.get_logger().info(f"Step message [{type(msg).__name__}]: {str(msg.content)[:200]} (tool_calls: {getattr(msg, 'tool_calls', None)})")
+                    if speech_stream is not None:
+                        self._speak_around_tools(speech_stream, msg)
                 result = event
 
             if slow_cue is not None:
@@ -1027,6 +1050,20 @@ class AgentNode(Node):
                 return
 
             response = self._extract_response(result)
+
+            if is_silent(response):
+                if not telegram and not is_system and not addressing.name_said(text):
+                    # The agent judged it was not said to it (SPEECH_STYLE): no
+                    # reply, and like an empty turn nothing is kept -- room talk
+                    # in the history would only cost cache and confuse routing.
+                    self.get_logger().info(f"→ (silent: not for me) {text[:120]!r}")
+                    metrics.inc("turns_silent_total")
+                    return
+                # Called by name (any misspelling: Emitra, Imitra) or a
+                # [SYSTEM]/Telegram turn: silence is never the answer there.
+                self.get_logger().warning("silent reply to a turn that needs one -- asking again")
+                response = "Sorry, could you say that again?"
+                result["messages"][-1] = result["messages"][-1].model_copy(update={"content": response})
 
             if not response:
                 if speech_stream and speech_stream.chunks_sent:
@@ -1076,6 +1113,7 @@ class AgentNode(Node):
                 if err:
                     self.get_logger().warning(f"Telegram reply not delivered — {err}")
             elif speech_stream and speech_stream.chunks_sent:
+                self._last_spoke_ts = time.time()
                 self.get_logger().info(f"→ TTS: {response[:120]}")
                 # Sentences already went out while the model was generating.
                 # Speak only what the listener has NOT heard: a streaming
@@ -1092,6 +1130,7 @@ class AgentNode(Node):
                 else:
                     self._bridge.publish_speech_end()
             else:
+                self._last_spoke_ts = time.time()
                 self.get_logger().info(f"→ TTS: {response[:120]}")
                 # Streaming off, or nothing streamed at all — speak it whole.
                 self._bridge.publish_speech(response)
@@ -1227,6 +1266,24 @@ class AgentNode(Node):
                 f"KV-cache warmed for '{agent}' ({len(history)} history messages)")
         except Exception as e:
             self.get_logger().warning(f"KV-cache warm failed (non-fatal): {e}")
+
+    def _speak_around_tools(self, speech_stream, msg) -> None:
+        """Say what is happening as it happens (utils/tool_speech.py): a line
+        when a slow tool is called, and its plain success when it returns --
+        then the model's restatement is not spoken. Graph events arrive after
+        each step, so a call's line is out before its tool runs."""
+        from langchain_core.messages import ToolMessage
+        if isinstance(msg, ToolMessage):
+            line = tool_speech.on_result(msg.name, msg.content)
+            if line:
+                self.get_logger().info(f"→ TTS (from {msg.name}): {line}")
+                speech_stream.say(line, mute_next_run=True)
+            return
+        for tc in getattr(msg, "tool_calls", None) or []:
+            line = tool_speech.on_call(tc.get("name", ""), tc.get("args") or {})
+            if line:
+                self.get_logger().info(f"→ TTS (calling {tc.get('name')}): {line}")
+                speech_stream.say(line)
 
     def _extract_response(self, result: dict) -> str | None:
         """Return the last non-empty AI text from THIS turn of the graph output.

@@ -21,4 +21,7 @@ class AgentState(MessagesState):
     # services/jev.py (LANGROBO_JEV=on only): P(the user's words ask about
     # what the camera sees), read once at turn start. None = not asked.
     jev_vision: Optional[float]
+    # utils/addressing.py: False = a voice turn NOT said to the robot (no name,
+    # robot not just spoken). Side-effect tools refuse then. None = addressed.
+    addressed: Optional[bool]
 

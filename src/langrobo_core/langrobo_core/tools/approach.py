@@ -388,7 +388,8 @@ def _approach(description: str, state: dict, then: str = "") -> str:
     description = description.strip()
     # for the replies: "the orange bottle" -> "orange bottle", so the text does
     # not read "the the orange bottle" (floor test, 2026-09-26)
-    name = re.sub(r"^(the|a|an)\s+", "", description, flags=re.IGNORECASE)
+    # ...and "my bag" -> "bag": "the my bag" was said aloud on 2026-10-12
+    name = re.sub(r"^(?:(?:the|a|an|my|your|our)\s+)+", "", description, flags=re.IGNORECASE)
     if _names_a_person_only(description):
         return (f"I can't recognise who people are -- I only see what they look "
                 f"like, so I could go to the wrong person. Ask the user what "
@@ -614,7 +615,7 @@ def arrival_check(description: str) -> str:
     Why: arrival meant "reach got to the goal", not "the thing is here". A
     goal placed from a wrong pixel, or a thing moved while driving, still
     arrived -- and the robot said so (FIND_AND_GO.md, Known limits)."""
-    name = re.sub(r"^(the|a|an)\s+", "", (description or "").strip(), flags=re.IGNORECASE)
+    name = re.sub(r"^(?:(?:the|a|an|my|your|our)\s+)+", "", (description or "").strip(), flags=re.IGNORECASE)
     if not name:
         return ""
     bridge = _bridge.get()

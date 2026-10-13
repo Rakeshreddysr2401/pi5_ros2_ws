@@ -35,6 +35,7 @@ from .turn_entry import turn_entry_node
 from .handover_resolver import handle_handover, last_user_query
 from ..utils import pose_stamp
 from ..utils.history import is_camera_frame
+from ..utils.speech_stream import is_silent
 
 logger = logging.getLogger(__name__)
 
@@ -129,8 +130,8 @@ def _vision_backstop(agent_name: str, state: AgentState, out: dict) -> Command |
     tool_calls = last.tool_calls or []
     if any(tc.get("name") == "handover" for tc in tool_calls):
         return None
-    if not tool_calls and not last.content:
-        return None
+    if not tool_calls and (not last.content or is_silent(last.content)):
+        return None     # nothing done -- or deliberately nothing: not addressed
     if (state.get("agent_run_counts") or {}).get("local_agent", 0) > 0:
         return None
     query = last_user_query(state)
@@ -205,8 +206,8 @@ def _motion_backstop(agent_name: str, state: AgentState, out: dict) -> Command |
     tool_calls = last.tool_calls or []
     if any(tc.get("name") == "handover" for tc in tool_calls):
         return None
-    if not tool_calls and not last.content:
-        return None
+    if not tool_calls and (not last.content or is_silent(last.content)):
+        return None     # nothing done -- or deliberately nothing: not addressed
     if any((state.get("agent_run_counts") or {}).get(m, 0) > 0 for m in _MOVERS):
         return None
     query = last_user_query(state)

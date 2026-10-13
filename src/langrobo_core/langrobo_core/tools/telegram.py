@@ -23,6 +23,7 @@ from langgraph.prebuilt import InjectedState
 
 from ..services import permissions
 from ..services import telegram as telegram_service
+from ..utils import addressing
 from ._bridge import get as get_bridge
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,9 @@ def _audit(sender: str, capability: str, recipient: str, outcome: str) -> None:
 def _gate(state: dict, capability: str, recipient: str):
     """Resolve (service, member) or an honest refusal string for the model."""
     sender, role = _sender(state)
+    if addressing.not_addressed(state):
+        _audit(sender, capability, recipient, "not_addressed")
+        return None, None, addressing.refusal("sent")
     svc = telegram_service.get()
     if svc is None or not svc.configured():
         return None, None, ("Telegram messaging is not set up on this robot. "

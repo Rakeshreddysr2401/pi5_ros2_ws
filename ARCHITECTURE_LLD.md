@@ -393,6 +393,33 @@ Sentence boundaries are punctuation *or* a bare newline, because the output is
 spoken: a markdown list is read aloud bullet characters and all. That is why
 `SPEECH_STYLE` bans markup outright rather than discouraging it.
 
+**Code speaks around tools** (2026-10-12, `utils/tool_speech.py`). The stream
+also carries lines written by code: `on_call` as a slow tool is called
+("Looking for the bag.", published from the graph event, so before the tool
+runs) and `on_result` on a plain success ("I see the bag, about 0.4 metres
+away. On my way."). After a result line, `SpeechStreamHandler.say(...,
+mute_next_run=True)` mutes exactly the next LLM run -- it only restated the
+result (measured: first word 13.5 s -> ~2.5 s for "find the helmet"); a run
+after that (a handover's answer) is spoken. Failures return None: the model
+explains them.
+
+**`[silent]`** (2026-10-12). The voice pre-filter is off; every sentence
+reaches the graph. SPEECH_STYLE lets an agent answer exactly `[silent]` when
+it was not addressed. `_send` never speaks it, both backstops treat it as "did
+nothing", and agent_node ends the turn without history or sticky -- unless the
+text has the name ("mitra", which also matches Emitra/Imitra) or the turn is
+[SYSTEM]/Telegram: then it asks "Sorry, could you say that again?". Tests:
+`test_silent_reply.py`, `test_tool_speech.py`.
+
+The rule sits at the top of PERSONA ("FIRST: WAS IT SAID TO YOU?", 2026-10-13):
+as the last SPEECH_STYLE bullet the 12B model was silent for 1 of 6 room
+sentences, at the top 3 of 6, and it answered all 6 real requests either way.
+Because that is still a coin toss, code guards the side effects:
+`utils/addressing.py` sets the turn's `addressed` (False = voice, no name, robot
+not spoken in the last 20 s), and `send_telegram_*` and `memory`
+remember/forget refuse on it, telling the model to ask or answer `[silent]`.
+Driving is not gated. Test: `test_addressing.py`.
+
 ---
 
 ## 5. File map

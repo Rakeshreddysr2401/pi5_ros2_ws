@@ -394,12 +394,14 @@ part of `./rover up` since 2026-10-11. **Change both or neither.**
 | topic | type | brain sends / reads |
 |---|---|---|
 | `/follow/start` | String (JSON) | sent: `{"req": "<key>", "stop_at_gap": false}` = follow; `true` = come to me (stop at the 1.0 m gap). No subscriber = "the Jetson's follow node is not running" |
-| `/follow/status` | String (JSON) | read, ~2 Hz while following: `req`, `state` (`following`, `done` ends it), `result` (`reached`, `nobody`, `lost`, `blocked`, `timeout` (10 min), `pose unsure`, `no people`, `taken over`, `cancelled`; the sentences are `ROS2Bridge._FOLLOW_ENDS`), `target`, `why` |
+| `/follow/status` | String (JSON) | read, ~2 Hz while following: `req`, `state` (`following`, `done` ends it), `result` (`reached`, `nobody`, `lost`, `blocked`, `timeout` (10 min), `pose unsure`, `no people`, `taken over`, `cancelled`; the sentences are `ROS2Bridge._FOLLOW_ENDS`), `target`, `why`; while following, optional `holding` (blocked but within 0.5 m of the gap -- not a failure; "come to me" ends `reached` on it) and `searching` (degrees turned looking for a lost person) -- rover-v1.1.14 |
 | `/follow/cancel` | Empty | sent on any other drive, a stop word, or a new follow |
 | `/vision/people` | String (JSON) | not read by the brain: follow_node's input, 5 Hz while subscribed: `people[]` with `id`, odom `x/y`, `vx/vy`, `dist`, `bearing`, `lost_s`, `box` |
 
 follow_node drives `/cmd_vel` itself (1.0 m gap, <= 0.3 m/s, stops on the fused
-obstacle map) and only after `/follow/start`; YOLO idles until something
+obstacle map) and only after `/follow/start`. A lost person is searched for
+(a turn of up to 120 deg toward the side they left by) for up to 8 s before
+`lost` (was 3 s, 2026-10-12); YOLO idles until something
 subscribes to `/vision/people`. The camera sits low: a seated person at the
 frame edge is not detected (2026-10-11), so the person must stand in view.
 

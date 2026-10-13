@@ -753,7 +753,22 @@ class STTNode(Node):
         # Forward the whole transcript when either the wake word already gated us
         # (acoustic mode) or name-gating is disabled (require_wake: False) — the agent
         # prompt knows its own name and judges relevance.
-        if self._acoustic or not self._require_wake:
+        if self._acoustic:
+            self._forward(text)
+            return
+        if not self._require_wake:
+            # Everything goes to the brain (owner, 2026-10-12) -- but a sentence
+            # WITHOUT the name waits while a turn runs: forwarded, it is a
+            # barge-in that abandons the turn, and room talk would cancel every
+            # answer mid-thought. The name (and a stop word, above) cut in now.
+            named = strip_alias(text, self._aliases) is not None or (
+                self._leading_aliases and strip_leading_alias(text, self._leading_aliases) is not None)
+            if not named:
+                with self._hold_lock:
+                    held = self._hold.offer(text, time.monotonic())
+                if held:
+                    self.get_logger().info(f'a turn is running -- held until it ends: {text!r}')
+                    return
             self._forward(text)
             return
 

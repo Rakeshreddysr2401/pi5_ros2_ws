@@ -33,6 +33,18 @@ SPEECH_EOU = "<|eou|>"
 # which must also halt the WHEELS — agent_node._on_tts_stop relies on this.
 SPEECH_ABANDON = "[abandon]"
 
+# The whole reply when the agent judges what it heard was not said to it (TV,
+# people talking to each other) -- SPEECH_STYLE in prompts.py. Never spoken:
+# _send drops it, and agent_node ends the turn in silence (2026-10-12: the
+# "is this for me?" pre-filter is off; the agent decides).
+SILENT = "[silent]"
+
+
+def is_silent(text) -> bool:
+    """True if a reply is the SILENT marker (case, spaces and a trailing
+    full stop forgiven)."""
+    return isinstance(text, str) and text.strip().rstrip(".!").strip().lower() == SILENT
+
 # Sentence boundary: terminal punctuation (plus closing quotes/brackets)
 # followed by whitespace, or a bare newline (list items, headings).
 _BOUNDARY = re.compile(r"[.!?…]+[\"'')\]]*\s|\n")
@@ -198,17 +210,26 @@ class SpeechStreamHandler(BaseCallbackHandler):
         # re-spoke the whole reply over that partial — see unspoken().
         self._spoken = ""
         self.chunks_sent = 0
+        # say(..., mute_next_run=True): the NEXT LLM run is not spoken -- it
+        # would only rephrase what code already said (utils/tool_speech.py)
+        self._mute_next = False
+        self._muted: set[UUID] = set()
 
     # ── LangChain callbacks ────────────────────────────────────────────────
 
     def on_chat_model_start(self, serialized, messages, *, run_id, **kwargs):
         self._buf[run_id] = ""
         self._full[run_id] = ""
+        if self._mute_next:
+            self._mute_next = False
+            self._muted.add(run_id)
 
     def on_llm_new_token(self, token, *, run_id, **kwargs):
         if not isinstance(token, str) or not token or run_id not in self._buf:
             return
         self._full[run_id] += token
+        if run_id in self._muted:
+            return
         ready, rest = split_sentences(self._buf[run_id] + token)
         for sentence in ready:
             self._send(sentence)
@@ -216,8 +237,9 @@ class SpeechStreamHandler(BaseCallbackHandler):
 
     def on_llm_end(self, response, *, run_id, **kwargs):
         rest = self._buf.pop(run_id, "").strip()
-        if rest:
+        if rest and run_id not in self._muted:
             self._send(rest)
+        self._muted.discard(run_id)
         full = self._full.pop(run_id, "")
         if full.strip():
             self._completed.append(_norm(full))
@@ -226,8 +248,19 @@ class SpeechStreamHandler(BaseCallbackHandler):
         # Drop the partial sentence — agent_node speaks the fallback message.
         self._buf.pop(run_id, None)
         self._full.pop(run_id, None)
+        self._muted.discard(run_id)
 
     # ── Turn-level API (agent_node) ────────────────────────────────────────
+
+    def say(self, text: str, mute_next_run: bool = False) -> None:
+        """Speak a line written by code as part of this turn's utterance
+        (utils/tool_speech.py). mute_next_run: the model's next run only
+        restates it -- its text is kept in history, never spoken. A run that
+        errors or is retried is covered too: unspoken() finds its text in
+        _completed."""
+        if text:
+            self._send(text)
+        self._mute_next = mute_next_run
 
     def spoke(self, text: str | None) -> bool:
         """True if `text` was already fully streamed to TTS this turn."""
@@ -253,6 +286,8 @@ class SpeechStreamHandler(BaseCallbackHandler):
         return text
 
     def _send(self, text: str) -> None:
+        if is_silent(text):
+            return
         try:
             self._publish(text)
             self.chunks_sent += 1

@@ -140,7 +140,17 @@ pip3 install --break-system-packages -r requirements.txt
    neither. The one other spoken path is CODE, not the model: during a long
    search `approach._say` publishes a fixed progress line ("I don't see the X
    from here, so I'm looking around") as a COMPLETE utterance -- never an open
-   one, which would mute the mic for the whole search.
+   one, which would mute the mic for the whole search. And since 2026-10-12
+   `utils/tool_speech.py`: agent_node says a line as a slow tool is CALLED
+   ("Looking for the bag.") and a plain success as it RETURNS ("Turned left 90
+   degrees."), inside the turn's utterance; the model's next run, which would
+   only restate it, is muted (one run only -- a second step is still heard).
+   An agent may also answer exactly `[silent]` (SPEECH_STYLE): not said to it
+   (TV, room talk); never spoken, nothing kept -- unless the name was said.
+   That is a prompt rule, so it is measured (2026-10-13, chat's real prompt: silent
+   for 3/6 room sentences) and backed by code: `utils/addressing.py` marks a voice
+   turn with no name and no robot reply in the last 20 s as NOT addressed, and the
+   side-effect tools (Telegram sends, memory remember/forget) refuse on it.
 5. **Missing keys degrade, never crash**: no Tavily key → no web search and
    chat says it can't look that up; no Telegram allowlist → the channel stays
    off; Mac Mini down → cloud fallback or a spoken offline message. Keep this
@@ -228,7 +238,9 @@ that moves wheels).
   `wake_detector: transcript_alias` + `require_wake: true`, so everything is
   transcribed; text containing "mitra" / "hey mitra" becomes a turn at once and,
   with `addressing_mode: llm` (2026-10-04), any other sentence is put to the
-  brain's LLM as "is this for me?". The wake word itself is undecided (owner,
+  brain's LLM as "is this for me?". **OFF since 2026-10-12** (owner: every sentence
+  is processed, the agent clarifies or answers `[silent]`): `require_wake: false`;
+  sentences without the name wait while a turn runs (`HoldWhileBusy`). The wake word itself is undecided (owner,
   2026-10-10: Mitra or another name).
   The trained `models/wake/mitra.onnx` (and Telugu `rakhi.onnx`) are in git,
   one `./scripts/wake_switch.py mitra` away. It answers "చెప్పండి బాస్" when
