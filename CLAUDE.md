@@ -10,14 +10,16 @@ Home robot "Mitra" (renamed from "Rakhi" 2026-09-20; the `rakhi24` username and 
   phase-4 VLM bridge (`image_bridge` publishes the colour frame as JPEG for
   `look()`; `pixel_to_goal` turns a VLM-picked pixel into an odom-frame goal),
   and "follow me" (`./rover follow`: YOLO person tracker -> `/vision/people`,
-  `follow_node` on `/follow/*`; in `./rover up` since 2026-10-11, INTEGRATION_GAPS.md §8).
+  `follow_node` on `/follow/*`; in `./rover up` since 2026-10-11, INTEGRATION_GAPS.md §8;
+  since 2026-10-13 it turns to FIND the person, remembers their clothes' colours and
+  searches where they went when lost).
   Repo: **`~/rover`** on the Jetson (container `rover`), brought up with
   `./rover up`. (`~/langrobo_perception` and `~/robot` are the old stacks.)
 - **Mac Mini** — the LLM and VLM (llama.cpp, `singireddys-mac-mini.local:8080`).
   **Start it with `e12b5`** in a Mac terminal after every power-on (nothing autostarts; it asks the
   Mac password once to raise the GPU memory limit to 13 GB): a PATCHED llama.cpp b9830 with
   `--jinja --parallel 5`, 5 x 16384 -- one KV slot per agent + photo questions (`ask_photos`) +
-  the voice "is this for me?" check. `scripts/mac_mini/e12b5`, docs/mac/LLAMA_CACHE_ISSUE.md §8.
+  the voice "is this for me?" check (unused since that filter went off, 2026-10-12). `scripts/mac_mini/e12b5`, docs/mac/LLAMA_CACHE_ISSUE.md §8.
 - **ESP32** — 50 Hz closed-loop PID on four wheels, micro-ROS over USB serial to the Pi 5
   (`/dev/ttyUSB0`, since 2026-10-07; firmware `UROS_SERIAL` switch, `run_microros.sh udp` = old WiFi link).
 
@@ -107,7 +109,7 @@ pip3 install --break-system-packages -r requirements.txt
    (photo questions -- `ask_photos`, search views, locate, the arrival check --
    kept OFF local_agent's slot 1, which holds the vision conversation and its
    earlier photos; `tools/survey.py` VISION_TOOL_SLOT, asserted in
-   registry.py). On a smaller server locate falls back to slot 1. **Slot 4 is the voice addressing filter's** ("is this for me?", `pi5_voice_pkg/relevance.py`): unpinned it landed in slot 3 and threw the photo cache out on every TV sentence (2026-10-10), so the Mac runs `--parallel 5`; stt_node pins slot 4 only when /props shows it, and warns otherwise. Each
+   registry.py). On a smaller server locate falls back to slot 1. **Slot 4 is the voice addressing filter's** ("is this for me?", `pi5_voice_pkg/relevance.py`; idle since the filter went off 2026-10-12 -- kept for when it comes back): unpinned it landed in slot 3 and threw the photo cache out on every TV sentence (2026-10-10), so the Mac runs `--parallel 5`; stt_node pins slot 4 only when /props shows it, and warns otherwise. Each
    agent's prompt prefix then stays resident in its own cache. Two agents on
    one slot evict each other every turn (~18-50s of re-prefill). agent_node
    probes the server's real slot count at boot, wraps with modulo, and warns

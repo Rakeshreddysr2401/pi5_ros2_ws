@@ -19,7 +19,7 @@ Deploy, run, observe, and troubleshoot the Pi5 brain.
 
 The llama.cpp server on the Mac Mini is started with **`e12b5`** (`--jinja --parallel 5`, see
 "Mac Mini LLM server" below): one KV-cache slot per agent (chat, local_agent, navigate), slot 4
-for the voice "is this for me?" check, plus slot 3 for
+for the voice "is this for me?" check (idle since that filter went off, 2026-10-12), plus slot 3 for
 photo questions (`ask_photos`, search views, locate, the arrival check), so they never
 overwrite local_agent's cached conversation and photos. With fewer slots the
 agents share and evict each other's cached prompt prefix, which
@@ -229,7 +229,7 @@ crashes); `e12b5 stop | status | log`. Source: `scripts/mac_mini/e12b5` (symlink
   only on a power cut/reboot or a logout of the Mac user -- then `e12b5` again.
 - **No `--swa-full`**: on Gemma 4 it costs ~320 KB/token/slot -- ~20 GB for 5 x 12288. Not needed.
 - `--parallel 5` — one KV slot per agent, pinned by the brain: 0 chat,
-  1 local_agent, 2 navigate, 4 the voice "is this for me?" check, and 3 = the vision-tool slot: photo questions, search views, locate, the arrival check (with fewer,
+  1 local_agent, 2 navigate, 4 the voice "is this for me?" check (idle since 2026-10-12), and 3 = the vision-tool slot: photo questions, search views, locate, the arrival check (with fewer,
   locate uses slot 1, and the boot log says so). The map is `registry.SLOTS`, declared
   beside the agents; agent_node probes this server's real slot count at boot
   and warns if it is smaller. See ARCHITECTURE_LLD.md §4.1.

@@ -66,8 +66,9 @@ cache warmer        → transient; prefills LLM slots while idle
 you speak → Pi 5 Bluetooth mic (audio_device_node owns the speaker + mic)
   → stt_node: webrtcvad endpoints the utterance → noise gate (vad_gate.py)
   → transcribe (stt_provider: sarvam today, local faster-whisper as fallback)
-  → wake gate: only text containing "Mitra" / "hey Mitra" becomes a turn
-    (transcript_alias; the acoustic wake model is off until it is retrained)
+  → no wake gate since 2026-10-12 (require_wake: false; the acoustic wake model
+    is off until it is retrained): every sentence becomes a turn, except that one
+    WITHOUT the name waits while a turn is running (HoldWhileBusy)
   → publishes String on /voice/user_input
 ```
 
@@ -102,6 +103,13 @@ abandons its in-flight turn for the new one.)
    is still writing the second. The utterance ends with the
    `<|eou|>` marker; tts_node holds `/voice/tts_speaking=true` (which mutes
    stt_node's capture) until it has played everything, plus a tail.
+   - **Was it said to the robot?** (2026-10-12/13) The mic hears the whole room.
+     The agent may answer exactly `[silent]` (TV, people talking to each other):
+     nothing is spoken and nothing kept -- unless the name was said, then it asks
+     to repeat. Because the model stays silent only about half the time
+     (measured), code guards the side effects: a voice turn with no name and no
+     robot reply in the last 20 s is "not addressed" (`utils/addressing.py`), and
+     Telegram sends and memory remember/forget refuse on it.
 6. **After the turn**: the full message list (tool calls included) is kept as
    history; the **cache warmer** prefills the next turn's prompt in the
    background so it starts warm; `last_turn_duration_seconds` updates;
@@ -242,12 +250,27 @@ every 5 ms and publishes a zero Twist on abort. So the wheels halt in
 milliseconds no matter what the model later decides the sentence meant — the
 two LLM calls buy the *spoken confirmation*, not the brake.
 
+**Speak first** (2026-10-12, `utils/tool_speech.py`): agent_node says a line the
+moment a slow tool is CALLED ("Looking for the helmet.", ~2.5 s after you speak,
+was 13.5 s) and a plain success the moment it RETURNS ("Turned left 90
+degrees."); the model's next run, which would only restate it, is muted.
+
 `approach_described_object("the red bottle")` is the other shape: the VLM
 looks at the current frame and points at a pixel, the Jetson's `pixel_to_goal`
 deprojects that pixel with real depth into an odom-frame Nav2 goal with the
 standoff already applied, and Nav2 drives there **avoiding obstacles**. It
 returns as soon as the drive starts; arrival comes back later as a `[SYSTEM]`
-turn. `navigate_to_pose("kitchen")` goes to a saved location the same way.
+turn. Not in view: it turns a full circle, 8 views; still not found, it drives
+to an open spot it has not searched (from the LiDAR, `utils/viewpoints.py`) and
+circles again -- 3 spots in all (2026-10-13; FIND_AND_GO.md has the whole flow).
+`navigate_to_pose("kitchen")` goes to a saved location the same way.
+
+`follow_person` ("follow me" / "come to me") runs on the Jetson's follow_node
+(INTEGRATION_GAPS.md §8). Nobody in view: it turns to find someone and says
+"There you are" (2026-10-13). The person is photographed into the photo log,
+and their clothes' colours are remembered: when they leave the view it turns
+after them, drives to where they were last seen and looks all around there,
+taking back only someone who looks like them -- up to 40 s before "lost".
 
 ---
 

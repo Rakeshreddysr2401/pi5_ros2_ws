@@ -32,6 +32,16 @@ around making the Bluetooth path conflict-free, not around replacing it.
 
 ## 1. Where it stands today (2026-09-20)
 
+> **Update 2026-10-12/13.** Wake word still undecided and off; the
+> "is this for me?" filter is OFF too (`require_wake: false`, owner's call):
+> every sentence goes to the brain, sentences without the name wait while a
+> turn runs, the agent answers `[silent]` to room talk (measured: silent for 3
+> of 6 room sentences, all 6 requests answered), and code blocks room talk
+> from sending Telegram messages or changing memory (`utils/addressing.py`).
+> The robot speaks first around slow tools (`utils/tool_speech.py`: "Looking
+> for the helmet." ~2.5 s after you speak). The wake word is the real cure for
+> answering the TV. The section below is the 2026-09-20 snapshot.
+
 Measured from the code on `dev-1.3.3-minimal`, not from memory:
 
 - **Wake word is OFF.** `voice_params.yaml`: `wake_detector: transcript_alias`,
