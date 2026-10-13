@@ -40,6 +40,11 @@ ANY photo            look() / search view / scan view / locate / confirm look
                                measured heading; each view logged and asked
                                "is <it> clearly visible in photo n?"; a refused
                                turn finishes the circle the other way
+    2b. OTHER SPOTS            not found: the LiDAR picks an open spot >= 1.2 m
+                               from every spot searched (utils/viewpoints.py),
+                               reach drives there, a full circle there; 3 spots
+                               in all (LANGROBO_SEARCH_SPOTS), an unreachable
+                               spot is skipped (2026-10-13)
  3. GO                         ground the fresh sighting -> reach (nav2 + exact
                                finish) in the background -> "[SYSTEM] arrived"
                                (Telegram requests: report to the phone, quiet;
@@ -57,7 +62,8 @@ ANY photo            look() / search view / scan view / locate / confirm look
 While it searches, a voice turn hears what it is doing (approach._say, code
 not the model, one complete utterance each): "I don't see the X from here,
 so I'm looking around", "Still looking for the X", "I saw the X over there
-3 min ago. Going to check."
+3 min ago. Going to check.", "The X isn't around here. I'll look from another
+spot."
 
 ## Where each piece lives
 

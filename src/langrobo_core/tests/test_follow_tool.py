@@ -24,8 +24,9 @@ class FollowBridge(StubBridge):
         super().__init__()
         self.answer, self.calls = answer, []
 
-    def start_follow(self, mode="follow"):
+    def start_follow(self, mode="follow", announce=False):
         self.calls.append(mode)
+        self.announce = announce
         return self.answer
 
 
@@ -79,6 +80,17 @@ def test_nobody_in_view_is_said_now():
     _use({"ok": False, "result": "nobody", "why": "no one in view to follow"})
     out = follow_person.invoke({"state": VOICE})
     assert "can't see anyone" in out and "Do not turn or search" in out
+
+
+def test_nobody_in_view_turns_to_find_them():
+    # 2026-10-13: follow_node turns to find someone; the tool says so, and the
+    # bridge is told to announce the find on a voice turn only
+    b = _use({"ok": True, "result": "finding"})
+    out = follow_person.invoke({"state": VOICE})
+    assert "turning around to look for you" in out and "follow you" in out
+    assert b.announce is True
+    out = follow_person.invoke({"state": VOICE, "mode": "come"})
+    assert "come to you" in out
 
 
 def test_jetson_not_running():

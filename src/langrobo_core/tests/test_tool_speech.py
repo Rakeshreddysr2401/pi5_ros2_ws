@@ -22,6 +22,9 @@ def test_lines_for_the_real_results_of_that_evening():
     assert ts.on_result("move_robot", "Movement done: F:60, L:90, F:30. Measured: ...") == "Done."
     assert ts.on_result("follow_person", "Coming to you now: I'll stop about a metre away. "
                         "A system message will say when I'm there.") == "Coming to you now."
+    assert ts.on_result("follow_person", "I can't see anyone yet, so I'm turning around to look "
+                        "for you. When I find you I'll say so and follow you; ...") == \
+        "I can't see you yet. Looking for you."
 
 
 def test_failures_are_left_to_the_model():

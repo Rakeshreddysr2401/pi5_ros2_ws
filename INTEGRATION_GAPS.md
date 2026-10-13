@@ -393,15 +393,18 @@ part of `./rover up` since 2026-10-11. **Change both or neither.**
 
 | topic | type | brain sends / reads |
 |---|---|---|
-| `/follow/start` | String (JSON) | sent: `{"req": "<key>", "stop_at_gap": false}` = follow; `true` = come to me (stop at the 1.0 m gap). No subscriber = "the Jetson's follow node is not running" |
-| `/follow/status` | String (JSON) | read, ~2 Hz while following: `req`, `state` (`following`, `done` ends it), `result` (`reached`, `nobody`, `lost`, `blocked`, `timeout` (10 min), `pose unsure`, `no people`, `taken over`, `cancelled`; the sentences are `ROS2Bridge._FOLLOW_ENDS`), `target`, `why`; while following, optional `holding` (blocked but within 0.5 m of the gap -- not a failure; "come to me" ends `reached` on it) and `searching` (degrees turned looking for a lost person) -- rover-v1.1.14 |
+| `/follow/start` | String (JSON) | sent: `{"req": "<key>", "stop_at_gap": false}` = follow; `true` = come to me (stop at the 1.0 m gap). Nobody in view: follow_node turns to FIND someone (`"find": false` = the old "nobody" at once). No subscriber = "the Jetson's follow node is not running" |
+| `/follow/status` | String (JSON) | read, ~2 Hz while finding / following: `req`, `state` (`finding` -- turning to find someone, rover-v1.1.15; `following`; `done` ends it), `result` (`reached`, `nobody`, `lost`, `blocked`, `timeout` (10 min), `pose unsure`, `no people`, `taken over`, `cancelled`; the sentences are `ROS2Bridge._FOLLOW_ENDS`), `target`, `why`; while following, optional `holding` (blocked but within 0.5 m of the gap -- not a failure; "come to me" ends `reached` on it) and `searching` (`turn` / `go` / `spin`, with `turned` degrees) -- rover-v1.1.14/15; `found: true` once the target was found by turning (the brain says "There you are", and photographs the person as any follow begins: photo log source `follow`) |
 | `/follow/cancel` | Empty | sent on any other drive, a stop word, or a new follow |
-| `/vision/people` | String (JSON) | not read by the brain: follow_node's input, 5 Hz while subscribed: `people[]` with `id`, odom `x/y`, `vx/vy`, `dist`, `bearing`, `lost_s`, `box` |
+| `/vision/people` | String (JSON) | not read by the brain: follow_node's input, 5 Hz while subscribed: `people[]` with `id`, odom `x/y`, `vx/vy`, `dist`, `bearing`, `lost_s`, `box`, `look` (22 numbers: the clothes' colours, `phase4/nodes/person_look.py`) |
 
 follow_node drives `/cmd_vel` itself (1.0 m gap, <= 0.3 m/s, stops on the fused
 obstacle map) and only after `/follow/start`. A lost person is searched for
-(a turn of up to 120 deg toward the side they left by) for up to 8 s before
-`lost` (was 3 s, 2026-10-12); YOLO idles until something
+in three stages before `lost` (2026-10-13; at most 40 s): a turn of up to
+120 deg toward the side they left by, a drive to where they were last seen,
+a full circle there. Someone who looks like them (clothes' colours) is
+re-acquired anywhere in view while searching; someone who clearly does not
+is never taken for them; YOLO idles until something
 subscribes to `/vision/people`. The camera sits low: a seated person at the
 frame edge is not detected (2026-10-11), so the person must stand in view.
 

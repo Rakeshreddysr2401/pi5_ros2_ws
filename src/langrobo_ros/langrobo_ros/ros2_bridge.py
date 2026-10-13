@@ -1157,15 +1157,20 @@ class ROS2Bridge:
     FOLLOW_START_WAIT_S = 7.0   # follow_node waits 3 s for a person, +1 s for no people at all
     FOLLOW_SILENT_S = 10.0      # follow_node reports at 2 Hz while following
 
-    def start_follow(self, mode: str = "follow") -> dict:
+    def start_follow(self, mode: str = "follow", announce: bool = False) -> dict:
         """Start "follow me" (mode "follow") or "come to me" (mode "come":
         drive to ~1 m from the person and stop) on the Jetson, and WAIT for its
         first answer, so the tool can say "I can't see anyone" instead of
         promising. On a start it becomes the background drive: a new utterance
         (cancel_navigation) stops it, and its end -- reached, lost, blocked --
         arrives through the nav-done callback as the [SYSTEM] report, exactly
-        like an arrival. {"ok", "result": following | nobody | unavailable |
-        ..., "why", "target", "dist"}."""
+        like an arrival. {"ok", "result": following | finding | nobody |
+        unavailable | ..., "why", "target", "dist"}.
+
+        finding (2026-10-13): nobody was in view and follow_node is turning to
+        find someone. announce: a voice turn -- the worker says "There you
+        are" when they are found (a COMPLETE utterance, like approach._say).
+        Either way the person is photographed as the follow begins."""
         if self._follow_start_pub.get_subscription_count() == 0:
             return {"ok": False, "result": "unavailable",
                     "why": "the Jetson's follow node is not running (./rover follow)"}
@@ -1183,7 +1188,8 @@ class ROS2Bridge:
         while time.monotonic() - t0 < self.FOLLOW_START_WAIT_S:
             with self._status_lock:
                 lines = list(self._follow_status.get(key, []))
-            first = next((d for d in lines if d.get("state") in ("following", "done")), None)
+            first = next((d for d in lines if d.get("state") in ("following", "finding", "done")),
+                         None)
             if first:
                 break
             time.sleep(0.1)
@@ -1204,12 +1210,12 @@ class ROS2Bridge:
         with self._nav_lock:
             self._nav_cancel_event = cancel_event
         thread = threading.Thread(target=self._follow_worker,
-                                  args=(key, come, cancel_event), daemon=True)
+                                  args=(key, come, cancel_event, announce), daemon=True)
         with self._nav_lock:
             self._nav_thread = thread
             self._nav_goal = {"x": None, "y": None, "label": label, "since": time.time()}
         thread.start()
-        return {"ok": True, "result": "following", "target": first.get("target"),
+        return {"ok": True, "result": first["state"], "target": first.get("target"),
                 "dist": first.get("dist")}
 
     # follow_node's end results, as the sentence the [SYSTEM] report carries
@@ -1220,12 +1226,15 @@ class ROS2Bridge:
         "pose unsure": (False, "I stopped following because I was not sure where I was"),
         "no people": (False, "I stopped following because my camera stopped seeing people"),
         "taken over": (False, "another drive took over, so I stopped following"),
+        "nobody": (False, "I looked for someone to follow, but I couldn't find anyone"),
     }
 
-    def _follow_worker(self, key: str, come: bool, cancel_event: threading.Event) -> None:
+    def _follow_worker(self, key: str, come: bool, cancel_event: threading.Event,
+                       announce: bool = False) -> None:
         """Background thread: one follow, until its final status line."""
         what = "Coming to you" if come else "Following you"
         seen, seen_at = 0, time.monotonic()
+        photographed = said_found = False
         try:
             while True:
                 if cancel_event.wait(timeout=0.3):
@@ -1245,6 +1254,17 @@ class ROS2Bridge:
                                        "node went silent.")
                     return
                 done = next((d for d in reversed(lines) if d.get("state") == "done"), None)
+                cur = lines[-1] if lines else {}
+                if done is None and cur.get("state") == "following":
+                    if not photographed:
+                        photographed = True
+                        self._photograph_follow_target()
+                    if cur.get("found") and not said_found:
+                        said_found = True
+                        if announce:
+                            self.publish_speech("There you are. " + (
+                                "Coming to you." if come else
+                                "Following you now. Say stop if it's not you."))
                 if done is None:
                     continue
                 result, why = done.get("result", ""), done.get("why", "")
@@ -1262,6 +1282,65 @@ class ROS2Bridge:
         finally:
             with self._status_lock:
                 self._follow_status.pop(key, None)
+
+    SCAN_WAIT_S = 2.0
+
+    def get_scan_points(self) -> list | None:
+        """One LiDAR scan as [(x, y)] in NAV_FRAME, or None (no scan / no TF).
+
+        For the room search's next viewpoint (utils/viewpoints.py). Subscribed
+        only for the one scan: /scan at 10 Hz over the WiFi is not worth
+        carrying all the time for a question asked once per search spot."""
+        import rclpy.time
+        from rclpy.qos import qos_profile_sensor_data
+        from sensor_msgs.msg import LaserScan
+        got = threading.Event()
+        box = {}
+
+        def _cb(m):
+            if not got.is_set():
+                box["m"] = m
+                got.set()
+
+        sub = self._node.create_subscription(LaserScan, "/scan", _cb, qos_profile_sensor_data)
+        try:
+            if not got.wait(self.SCAN_WAIT_S):
+                return None
+        finally:
+            self._node.destroy_subscription(sub)
+        m = box["m"]
+        try:
+            tf = self._tf_buffer.lookup_transform(self.NAV_FRAME, m.header.frame_id,
+                                                  rclpy.time.Time())
+        except Exception:
+            return None
+        t, q = tf.transform.translation, tf.transform.rotation
+        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        c, s_ = math.cos(yaw), math.sin(yaw)
+        pts = []
+        for i, r in enumerate(m.ranges):
+            if not (0.05 < r < 8.0):         # also drops inf / nan
+                continue
+            a = m.angle_min + i * m.angle_increment
+            lx, ly = r * math.cos(a), r * math.sin(a)
+            pts.append((t.x + c * lx - s_ * ly, t.y + s_ * lx + c * ly))
+        return pts
+
+    def _photograph_follow_target(self) -> None:
+        """The person a follow begins with, into the photo log (owner,
+        2026-10-13: "save his pic"): the robot's memory is its photos, so
+        ask_photos can answer "who did you follow?". Never fails the follow."""
+        try:
+            frame, stamp = self.get_frame_stamped(max_age_s=1.0)
+            if frame is None:
+                return
+            from langrobo_core.tools import photos
+            if stamp:
+                self.hold_frame(stamp)
+            photos.record(frame, stamp, self.get_current_pose(), time.time(),
+                          self.get_origin_epoch(), "follow")
+        except Exception as e:
+            self._node.get_logger().warning(f"follow: no photo of the person ({e})")
 
     def _fire_nav_done(self, success: bool, message: str) -> None:
         # Logged unconditionally, and says whether a listener existed. A silent

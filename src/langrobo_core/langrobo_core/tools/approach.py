@@ -36,6 +36,7 @@ from . import movement as _mv
 from . import photo_recall as _recall
 from . import photos as _photos
 from . import survey as _survey
+from ..utils import viewpoints as _viewpoints
 
 # How close the robot parks from the object (metres). Floor: D555 depth goes
 # blind under ~0.4 m, and Nav2 can stop up to xy_goal_tolerance (0.10 m) short
@@ -56,6 +57,9 @@ _STANDOFF_M = float(os.environ.get("LANGROBO_STANDOFF_M", "0.45"))
 # the background survey (tools/survey.py) and so into object memory.
 _SEARCH_STEPS = 8
 _SEARCH_STEP_DEG = 45.0
+# Spots searched in all (2026-10-13): after a circle finds nothing, drive to an
+# open, not-yet-searched spot and circle again (utils/viewpoints.py).
+_SEARCH_SPOTS = int(os.environ.get("LANGROBO_SEARCH_SPOTS", "3"))
 
 
 def compute_standoff_goal(rx: float, ry: float, ox: float, oy: float,
@@ -519,57 +523,106 @@ def _approach(description: str, state: dict, then: str = "") -> str:
     # Each turn is aimed from the MEASURED heading, not the planned one: a
     # refused turn may already have swung part-way (goal_exec stops where the
     # obstacle is), and turning on from the plan would skew every later view.
-    seen = {0} if first_view else set()
-    offset, direction = 0, 1
-    start = bridge.get_current_pose()
-    while uv is None and len(seen) < _SEARCH_STEPS:
+    def circle(skip_ahead: bool, first_line: bool) -> tuple:
+        """One full circle from here: (stop_text, uv, capture, views)."""
+        nonlocal note, cut_short
+        seen = {0} if skip_ahead else set()
+        offset, direction = 0, 1
+        start = bridge.get_current_pose()
+        uv = capture = None
+        while uv is None and len(seen) < _SEARCH_STEPS:
+            if bridge.motion_interrupted():
+                return f"Stopped searching for the {name}.", None, None, len(seen)
+            if 0 in seen:
+                if Twist is None:
+                    break
+                k = next(k for k in range(1, _SEARCH_STEPS + 1)
+                         if (offset + direction * k * _SEARCH_STEP_DEG) % 360 not in seen)
+                now = bridge.get_current_pose()
+                drift = 0.0
+                if start and now:
+                    drift = (offset - (now[2] - start[2]) + 180.0) % 360.0 - 180.0
+                if len(seen) == 1 and first_line:
+                    if _say(bridge, state, note.strip() or
+                            f"I don't see the {name} from here, so I'm looking around."):
+                        note = ""                  # said already: not again in the answer
+                elif len(seen) == _SEARCH_STEPS // 2:
+                    _say(bridge, state, f"Still looking for the {name}.")
+                ok, why = _mv.turn_robot(bridge, direction * k * _SEARCH_STEP_DEG + drift)
+                if not ok:
+                    if why == "interrupted":
+                        return f"Stopped searching for the {name}.", None, None, len(seen)
+                    if direction == 1:
+                        direction = -1            # blocked this way: finish the circle the other way
+                        continue
+                    cut_short = (why, len(seen))   # a part circle: another spot may still do
+                    break
+                offset = int(offset + direction * k * _SEARCH_STEP_DEG) % 360
+            frame, capture = _capture(bridge)
+            if frame is None:
+                if bridge.motion_interrupted():
+                    return f"Stopped searching for the {name}.", None, None, len(seen)
+                return ("My camera feed isn't giving me a fresh image right now, "
+                        "so I can't look for it.", None, None, len(seen))
+            try:
+                uv = _vlm_locate(frame, description)
+            except Exception as e:
+                return (f"I couldn't analyse the camera image (vision model error: "
+                        f"{type(e).__name__}). Try again in a moment.", None, None, len(seen))
+            seen.add(offset)
+        return None, uv, capture, len(seen)
+
+    spots = 1
+    cut_short = None                  # (why, views) when turning was blocked both ways
+    if uv is None:
+        stop, uv, found_capture, _ = circle(bool(first_view), True)
+        if stop:
+            return stop
+        if uv is not None:
+            capture = found_capture
+
+    # ── 3. Not around here: look from other spots in the room ──────────────
+    # (owner, 2026-10-13: "go to another place and find it -- whole room
+    # search one by one"). The LiDAR says which way is open and not searched
+    # yet (utils/viewpoints.py); reach drives there; a full circle there.
+    here = bridge.get_current_pose()
+    visited = [here[:2]] if here else []
+    tries = 0
+    while uv is None and Twist is not None and spots < _SEARCH_SPOTS and tries < 2 * _SEARCH_SPOTS:
+        tries += 1
         if bridge.motion_interrupted():
             return f"Stopped searching for the {name}."
-        if 0 in seen:
-            if Twist is None:
-                break
-            k = next(k for k in range(1, _SEARCH_STEPS + 1)
-                     if (offset + direction * k * _SEARCH_STEP_DEG) % 360 not in seen)
-            now = bridge.get_current_pose()
-            drift = 0.0
-            if start and now:
-                drift = (offset - (now[2] - start[2]) + 180.0) % 360.0 - 180.0
-            if len(seen) == 1:
-                if _say(bridge, state, note.strip() or
-                        f"I don't see the {name} from here, so I'm looking around."):
-                    note = ""                  # said already: not again in the answer
-            elif len(seen) == _SEARCH_STEPS // 2:
-                _say(bridge, state, f"Still looking for the {name}.")
-            ok, why = _mv.turn_robot(bridge, direction * k * _SEARCH_STEP_DEG + drift)
-            if not ok:
-                if why == "interrupted":
-                    return f"Stopped searching for the {name}."
-                if direction == 1:
-                    direction = -1            # blocked this way: finish the circle the other way
-                    continue
-                return (note + f"I couldn't turn either way to keep looking for the "
-                        f"{name} ({why}). It isn't in the {len(seen)} view(s) I checked.")
-            offset = int(offset + direction * k * _SEARCH_STEP_DEG) % 360
-        frame, capture = _capture(bridge)
-        if frame is None:
-            if bridge.motion_interrupted():
-                return f"Stopped searching for the {name}."
-            return ("My camera feed isn't giving me a fresh image right now, "
-                    "so I can't look for it.")
-        try:
-            uv = _vlm_locate(frame, description)
-        except Exception as e:
-            return (f"I couldn't analyse the camera image (vision model error: "
-                    f"{type(e).__name__}). Try again in a moment.")
-        seen.add(offset)
+        pose, pts = bridge.get_current_pose(), bridge.get_scan_points()
+        vp = _viewpoints.next_viewpoint(pose, pts, visited)
+        if vp is None:
+            break
+        visited.append(vp[:2])
+        _say(bridge, state, f"The {name} isn't around here. I'll look from another spot."
+             if spots == 1 else f"Not here either. Trying another spot.")
+        leg = bridge.reach_and_wait(round(vp[0], 2), round(vp[1], 2), round(vp[2], 1))
+        if leg.get("result") == "interrupted":
+            return f"Stopped searching for the {name}."
+        if not leg.get("ok"):
+            continue                       # that way failed: the next pick avoids it
+        spots += 1
+        drove_over = "I moved to another spot to look. "
+        stop, uv, found_capture, _ = circle(False, False)
+        if stop:
+            return stop
+        if uv is not None:
+            capture = found_capture
 
+    if uv is None and spots == 1 and cut_short:
+        return (note + f"I couldn't turn either way to keep looking for the {name} "
+                f"({cut_short[0]}). It isn't in the {cut_short[1]} view(s) I checked.")
     if uv is None:
+        where = (f"I searched {spots} spots around the room, looking all around at each"
+                 if spots > 1 else "I turned a full circle and looked carefully")
         if last_seen is not None:
             return (note + f"I saw the {name} {_recall.describe_age(last_seen['age_s'])} "
-                    f"(photo {last_seen['photo']}), but it isn't there now and I couldn't "
-                    f"find it anywhere around me — someone may have moved it.")
-        return (note + f"I turned a full circle and looked carefully, but I couldn't "
-                f"spot the {name} anywhere around me.")
+                    f"(photo {last_seen['photo']}), but it isn't there now. {where}, but "
+                    f"couldn't find it -- someone may have moved it.")
+        return (note + f"{where}, but I couldn't spot the {name} anywhere.")
 
     res, capture = _ground_retrying(bridge, description, uv, capture)
     if not res.get("ok"):

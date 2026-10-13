@@ -54,6 +54,8 @@ def on_result(name: str, content) -> str | None:
             return f"I see the {_thing(m.group(1))}, about {m.group(2)} metres away. On my way."
         return "On my way."
     if name == "follow_person":
+        if text.startswith("I can't see anyone yet, so I'm turning"):
+            return "I can't see you yet. Looking for you."
         if text.startswith("Following you now"):
             return "Following you now. Say stop when you want me to stop."
         if text.startswith("Coming to you now"):

@@ -221,7 +221,11 @@ class StubBridge:
         if self._nav_done_callback:
             self._nav_done_callback(True, f"[STUB] Simulated arrival at {dest}")
 
-    def start_follow(self, mode: str = "follow") -> dict:
+    def get_scan_points(self) -> list | None:
+        """No LiDAR: the room search stays at the one spot it started from."""
+        return None
+
+    def start_follow(self, mode: str = "follow", announce: bool = False) -> dict:
         """No Jetson: "unavailable", the real bridge's answer when follow_node
         is not running."""
         logger.info("[STUB] start_follow(%s) -> unavailable", mode)

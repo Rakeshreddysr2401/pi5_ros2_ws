@@ -10,6 +10,12 @@ blocked. Here: who may ask, and the honest first answer.
 
   - The bridge WAITS for follow_node's first answer, so "nobody in view" is
     said now, not promised away ("Following you!" ... silence).
+  - Nobody in view (2026-10-13, owner: "it needs to find them by rotating"):
+    follow_node turns in place to FIND someone; the first answer is then
+    "finding", the bridge says "There you are" when it finds them (voice), and
+    a full circle with no one comes back as the [SYSTEM] report.
+  - The person is photographed as the follow begins (photo log, source
+    "follow"): ask_photos can say later who it followed.
   - Its end (lost / blocked / reached) comes back as the same [SYSTEM] report
     as an arrival (movement.nav_report), to whoever asked.
   - Stopping is not this tool's job: every utterance already stops the wheels
@@ -51,7 +57,8 @@ def follow_person(state: Annotated[dict, InjectedState],
     mode="come": "come here", "come to me" -- drive up to about a metre from
     them, face them, and stop.
 
-    It goes to the person nearest the middle of the camera view. It follows
+    It goes to the person nearest the middle of the camera view; with nobody
+    in view it first turns around to find someone. It follows
     people only: asked to follow a pet or a thing, say you can only follow
     people for now. It does not know people by name: if the user named or
     described someone ("follow him", "follow the man in red"), say you will
@@ -69,9 +76,13 @@ def follow_person(state: Annotated[dict, InjectedState],
         return _TELEGRAM_REFUSAL
 
     remember_requester(state, then if mode == "come" else "")
-    res = _bridge.get().start_follow(mode)
+    res = _bridge.get().start_follow(mode, announce=(state or {}).get("channel") == "voice")
     logger.info("follow_person(%s) -> %s", mode, res)
     if res.get("ok"):
+        if res.get("result") == "finding":
+            return ("I can't see anyone yet, so I'm turning around to look for you. "
+                    f"When I find you I'll say so and {'come to you' if mode == 'come' else 'follow you'}; "
+                    "a system message will say how it ends.")
         if mode == "come":
             return ("Coming to you now: I'll stop about a metre away. "
                     "A system message will say when I'm there.")
