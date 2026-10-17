@@ -6,6 +6,7 @@ Unlike the large TTS/STT models (Kokoro, Whisper) which are gigabytes and downlo
 
 | File | Size | Wake Word / Script | Description |
 |---|---|---|---|
+| `kino.onnx` | ~414 KB | "Hey Kino" / "Kino" | **Active.** Trained for "Hey Kino" (Knowledge Is Never Out) with Indian English, Telugu, US, and UK voices + conversational negative suppression. |
 | `rakhi.onnx` | ~414 KB | "Rakhi" / "రాఖీ" / "Hey Rakhi" | Trained with native Telugu (`Geeta te_IN`), Indian English, and Telugu household negatives ("రాకీ", "చెప్పు", "ఆగు", etc.). |
 | `mitra.onnx` | ~414 KB | "Mitra" / "Hey Mitra" | Trained with Indian & international voices for "Mitra". |
 | `*_verifier.pkl` | ~50 KB | Personal verifier | *(Optional)* Personal voice verifier trained on the owner's voice clips. |

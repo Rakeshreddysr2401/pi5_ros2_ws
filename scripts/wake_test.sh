@@ -33,5 +33,10 @@ echo "model: $MODEL   threshold: $THRESH   — say \"$WORD\" (Ctrl-C to stop)"
 # before every run; it is noise, and it buried the live bar. Real errors still
 # come through — only these known lines are dropped.
 export PYTHONWARNINGS=ignore
-exec python3 scripts/wake_live_score.py "$MODEL" --threshold "$THRESH" \
+PY_BIN="python3"
+if [ -x "./.venv/bin/python" ]; then
+    PY_BIN="./.venv/bin/python"
+fi
+
+exec "$PY_BIN" scripts/wake_live_score.py "$MODEL" --threshold "$THRESH" \
     2> >(grep -vE 'device_discovery|GetGpuDevices|CUDAExecutionProvider|warnings\.warn' >&2)
