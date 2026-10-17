@@ -5,7 +5,7 @@ is word overlap. What must hold:
   * a clear request enters its agent; anything unsure is None (never a guess);
   * "yes" / "ok" stay with whoever asked (ABSTAIN), never a pick;
   * navigate needs more certainty than the others;
-  * the robot's name ("Mitra", Sarvam's "Friend") is not part of the request;
+  * the robot's name ("Kino", Sarvam's "Friend") is not part of the request;
   * off / not loaded / no fastembed -> None, and routing is today's;
   * intent_examples never reach a prompt (KV caches untouched).
 """
@@ -69,10 +69,10 @@ def test_short_replies_abstain(router):
 
 
 def test_robot_name_is_not_part_of_the_request(router):
-    assert strip_address("Mitra, what do you see?") == "what do you see?"
-    assert strip_address("Hey Friend go to the kitchen") == "go to the kitchen"
+    assert strip_address("Kino, what do you see?") == "what do you see?"
+    assert strip_address("Hey Keeno go to the kitchen") == "go to the kitchen"
     assert strip_address("my friend is here") == "my friend is here"
-    assert router.classify("Mitra, go to the kitchen").agent == "navigate"
+    assert router.classify("Kino, go to the kitchen").agent == "navigate"
 
 
 def test_navigate_needs_more_certainty():

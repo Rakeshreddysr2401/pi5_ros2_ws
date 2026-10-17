@@ -25,7 +25,7 @@ def _server(status=200, body=None, auth='authorized'):
         def do_POST(self):
             seen['path'] = self.path
             seen['body'] = self.rfile.read(int(self.headers['Content-Length']))
-            self._send(status, body if body is not None else {'transcript': ' Mitra, stop. '})
+            self._send(status, body if body is not None else {'transcript': ' Kino, stop. '})
 
         def _send(self, code, obj):
             data = json.dumps(obj).encode()
@@ -45,10 +45,10 @@ def _server(status=200, body=None, auth='authorized'):
 def test_sends_wav_with_locale_and_name_hint():
     srv, url, seen = _server()
     try:
-        p = apple.from_config({'hotwords': 'Mitra'}, {'MAC_STT_URL': url})
-        assert p.transcribe(np.zeros(1600, np.float32), 16000) == 'Mitra, stop.'
+        p = apple.from_config({'hotwords': 'Kino'}, {'MAC_STT_URL': url})
+        assert p.transcribe(np.zeros(1600, np.float32), 16000) == 'Kino, stop.'
         assert seen['body'][:4] == b'RIFF'
-        assert 'lang=en-IN' in seen['path'] and 'Hey+Mitra' in seen['path']
+        assert 'lang=en-IN' in seen['path'] and 'Hey+Kino' in seen['path']
     finally:
         srv.shutdown()
 
@@ -87,5 +87,5 @@ def _live():
 
 @pytest.mark.skipif(not _live(), reason='mitra-stt not running on the Mac Mini')
 def test_live_silence_is_empty_not_an_error():
-    p = apple.from_config({'hotwords': 'Mitra'}, {'MAC_STT_URL': LIVE_URL})
+    p = apple.from_config({'hotwords': 'Kino'}, {'MAC_STT_URL': LIVE_URL})
     assert p.transcribe(np.zeros(16000, np.float32), 16000) == ''

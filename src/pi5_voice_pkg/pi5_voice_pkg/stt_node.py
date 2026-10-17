@@ -155,8 +155,8 @@ class STTNode(Node):
         # 10-15 % word errors in 0.55 s, Whisper tiny.en 45-54 %. Whisper stays the
         # last resort: built only if the sherpa fallback cannot load or fails.
         self.declare_parameter('stt_fallback', 'local')
-        self.declare_parameter('wake_aliases', ['mitra', 'hey mitra'])
-        # Names as a TRANSLATING recogniser writes them (Sarvam: mitra -> "friend"):
+        self.declare_parameter('wake_aliases', ['kino', 'hey kino'])
+        # Names as a TRANSLATING recogniser writes them (Sarvam: kino -> "friend"):
         # they count only at the start of the sentence. [''] = none.
         self.declare_parameter('wake_leading_aliases', [''])
         self.declare_parameter('stop_words', ['stop'])
@@ -167,7 +167,7 @@ class STTNode(Node):
         # 'openwakeword' = acoustic gate (transcribe nothing until the word is heard).
         self.declare_parameter('wake_detector', 'transcript_alias')
         self.declare_parameter('wake_word', 'hey_jarvis')  # bundled stand-in until mitra.onnx
-        self.declare_parameter('wake_model_path', '')      # explicit .onnx (custom Mitra) wins
+        self.declare_parameter('wake_model_path', '')      # explicit .onnx (custom Kino) wins
         self.declare_parameter('wake_threshold', 0.5)
         # Personal verifier trained on the owner's own clips (optional; see
         # docs/voice/WAKE_WORD_INTEGRATION.md). Runs only on frames the base model
@@ -196,7 +196,7 @@ class STTNode(Node):
         # relevance). Ignored in acoustic mode, where the wake word already gates.
         self.declare_parameter('require_wake', True)
         # "Yes boss" after the wake word — so you know it heard you. Spoken
-        # only when you PAUSE after the name; saying "Mitra, go to the
+        # only when you PAUSE after the name; saying "Kino, go to the
         # kitchen" in one breath skips it rather than talking over you.
         self.declare_parameter('wake_cue', True)
         self.declare_parameter('wake_cue_delay_s', DEFAULT_DELAY_S)
@@ -337,7 +337,7 @@ class STTNode(Node):
         self._max_follow_ups = int(self.get_parameter('max_follow_ups').value)
         self._follow_ups = 0           # unnamed turns since the last named one
         # An overheard sentence (llm-judged, no name) waits while the brain is
-        # busy with a turn -- it cancelled "Mitra, follow me" (relevance.HoldWhileBusy).
+        # busy with a turn -- it cancelled "Kino, follow me" (relevance.HoldWhileBusy).
         self._hold = relevance.HoldWhileBusy()
         self._hold_lock = threading.Lock()
         self.create_subscription(Bool, '/brain/thinking', self._on_brain_thinking, 10)
@@ -774,7 +774,7 @@ class STTNode(Node):
 
         # transcript_alias mode with require_wake: the alias opens the door, and
         # a follow-up window holds it open. Nobody says the robot's name in every
-        # sentence of a conversation: "mitra, set a timer" / "for how long?" /
+        # sentence of a conversation: "kino, set a timer" / "for how long?" /
         # "five minutes" — that third utterance has no alias and used to be
         # dropped, which made every exchange a one-shot command.
         stripped = strip_alias(text, self._aliases)
@@ -809,7 +809,7 @@ class STTNode(Node):
             return
         if stripped is not None:
             self._follow_ups = 0
-            # Bare "Mitra?" is a real thing people say to get attention; forward
+            # Bare "Kino?" is a real thing people say to get attention; forward
             # the name itself rather than dropping it as an empty remainder.
             self._forward(stripped or text)
             return

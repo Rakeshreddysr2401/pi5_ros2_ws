@@ -3,7 +3,7 @@ installed for Kokoro TTS). Measured on this Pi5 2026-09-04: RTF ~0.2, model
 loads in ~1s, so running it on every frame while asleep is negligible.
 
 Ships pretrained models (alexa / hey_jarvis / hey_mycroft / hey_marvin /
-timer / weather) — used as a stand-in until the custom "Mitra" model is
+timer / weather) — used as a stand-in until the custom "Kino" model is
 trained (openWakeWord Colab, synthetic TTS data, ~1h -> mitra.onnx). Swapping
 to the custom word is a one-line config change (wake_model_path), no code.
 """

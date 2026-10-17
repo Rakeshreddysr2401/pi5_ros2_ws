@@ -8,7 +8,7 @@ SEND A TELEGRAM MESSAGE. A prompt rule is a thing to measure, not a fix; this is
 the fix for the part that matters -- side effects.
 
 A turn counts as addressed when the name is in it (any misspelling the
-recogniser makes of "Mitra": Emitra, Imitra, Mithra), or the robot spoke within
+recogniser makes of "Kino": Keeno, Keno, Kinno), or the robot spoke within
 FOLLOW_UP_S -- the person is answering it ("yes, send it"). Telegram and
 [SYSTEM] turns always are. This is about WHO, never WHAT: no intent words here.
 
@@ -18,7 +18,7 @@ Driving is not gated here: "turn left" with no name is the normal way to talk
 to it, and stopping must never wait on this.
 """
 
-NAME_FORMS = ("mitra", "mithra", "mittra", "metra")
+NAME_FORMS = ("kino", "keeno", "keno", "kinno", "eeno")
 FOLLOW_UP_S = 20.0
 
 

@@ -2,8 +2,8 @@
 
 People call it two ways, and only one of them wants an answer:
 
-    "Mitra."  ...pause...  "what's the time?"     <- the cue belongs here
-    "Mitra, go to the kitchen"                    <- one breath, no pause
+    "Kino."  ...pause...  "what's the time?"     <- the cue belongs here
+    "Kino, go to the kitchen"                    <- one breath, no pause
 
 Speaking into the second one talks over the command, and the robot then
 hears half a sentence. So the cue waits a moment after the wake word and

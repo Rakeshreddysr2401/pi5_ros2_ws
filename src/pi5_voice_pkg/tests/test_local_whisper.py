@@ -15,7 +15,7 @@ class FakeModel:
 
     def transcribe(self, pcm, **kw):
         FakeModel.calls.append(kw)
-        seg = types.SimpleNamespace(text=" Mitra, what time is it?", no_speech_prob=0.0, avg_logprob=-0.2)
+        seg = types.SimpleNamespace(text=" Kino, what time is it?", no_speech_prob=0.0, avg_logprob=-0.2)
         return iter([seg]), None
 
 
@@ -27,10 +27,10 @@ def _provider(monkeypatch, params):
 
 
 def test_beam_and_hotwords_passed(monkeypatch):
-    p = _provider(monkeypatch, {"beam_size": 1, "hotwords": "Mitra"})
-    assert p.transcribe(np.zeros(16000, dtype=np.float32), 16000) == "Mitra, what time is it?"
+    p = _provider(monkeypatch, {"beam_size": 1, "hotwords": "Kino"})
+    assert p.transcribe(np.zeros(16000, dtype=np.float32), 16000) == "Kino, what time is it?"
     assert FakeModel.calls[-1]["beam_size"] == 1
-    assert FakeModel.calls[-1]["hotwords"] == "Mitra"
+    assert FakeModel.calls[-1]["hotwords"] == "Kino"
 
 
 def test_defaults_unchanged(monkeypatch):

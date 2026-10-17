@@ -57,7 +57,7 @@ def test_local_agent_answering_a_drive_request():
 
 
 def test_movement_phrasings():
-    for q in ("come here", "Mitra, come to me", "follow me please", "turn left",
+    for q in ("come here", "Kino, come to me", "follow me please", "turn left",
               "move forward a bit", "go to the kitchen", "go outside", "go back",
               "go through that door", "come closer", "drive to the table", "come back here"):
         assert _motion_backstop("chat", _state(q), _spoke("Okay.")) is not None, q

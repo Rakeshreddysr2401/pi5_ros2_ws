@@ -37,8 +37,8 @@ class LocalWhisperProvider(STTProvider):
         self._language = language
         # beam_size 1 + hotwords, measured 2026-10-03 on Kokoro-spoken commands
         # degraded like the 8 kHz Bluetooth (HFP) mic: with base the name came
-        # through 13/20 at beam 5 ("Metro", "Metra", "Misha", "Mittra") and
-        # 20/20 with hotwords="Mitra" at beam 1, faster too; tiny.en the same
+        # through 13/20 at beam 5 ("Metro", "Keeno", "Misha", "Keeno") and
+        # 20/20 with hotwords="Kino" at beam 1, faster too; tiny.en the same
         # 20/20 at about half base's time. An initial_prompt instead made it
         # DROP the name (9/20). docs/voice/PI5_VOICE.md, "Local voice tuning".
         self._beam_size = beam_size

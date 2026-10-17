@@ -87,7 +87,7 @@ pi5_stt_node:
     # A2DP buffers 100-250ms on top, so raise to ~1.2 with a Bluetooth speaker
     # or the robot transcribes the tail of its own reply.
     tts_tail_mute_s: 1.2   # raised for A2DP buffering (was 0.5, for the USB headset)
-    # tiny.en, beam 1, hotword "Mitra" (2026-10-03, bench on 8 kHz HFP-degraded speech):
+    # tiny.en, beam 1, hotword "Mitra" (the old name) (2026-10-03, bench on 8 kHz HFP-degraded speech):
     # name 20/20, about half base's time, and "stop" right where base heard "Star".
     # Its slip: "what do you see" -> "think". base: model_size: base.
     # With stt_provider sarvam this is only the fallback: English-only, so a failed
@@ -125,7 +125,9 @@ pi5_stt_node:
     follow_up_window_s: 9.0
     max_follow_ups: 2        # then the name again -- background talk chained forever without it
     wake_aliases: ["hey kino", "kino", "hi kino", "hello kino", "keeno", "hey keeno"]
-    wake_leading_aliases: []
+    # none. Not [] -- an empty list leaves a ROS string-list parameter
+    # uninitialised and stt_node would not start; "" entries are dropped.
+    wake_leading_aliases: [""]
     # OFF (owner, 2026-10-12): every sentence goes to the brain -- no name gate,
     # no "is this for me?" check (it dropped real commands whenever the Mac was
     # busy: "Can you find the door?"). The agent clarifies when unsure; a trained
@@ -136,7 +138,7 @@ pi5_stt_node:
     addressing_mode: llm
     heard_cue: true          # a short chime the moment a sentence is accepted
     # Speak the acknowledgement only if you PAUSE after the name. Saying
-    # "Mitra, go to the kitchen" in one breath skips it rather than talking
+    # "Kino, go to the kitchen" in one breath skips it rather than talking
     # over the command (see wake_cue.py).
     wake_cue: true
     wake_cue_delay_s: 0.4

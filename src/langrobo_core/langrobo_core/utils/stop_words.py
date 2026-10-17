@@ -43,7 +43,7 @@ STOP_PHRASES = ("don't follow", "do not follow", "dont follow", "no more followi
 NEGATIONS = frozenset({"don't", "dont", "not", "never", "without"})
 
 # an utterance made only of these is a "no!" -- urgent, not chatter
-_BARE_NO = frozenset({"no", "nope", "hey", "mitra", "nahi", "nahin", "vaddu", "వద్దు", "नहीं"})
+_BARE_NO = frozenset({"no", "nope", "hey", "kino", "nahi", "nahin", "vaddu", "వద్దు", "नहीं"})
 
 # Split on spaces and punctuation, not on \\w: Telugu vowel signs are not \\w,
 # and a \\w split cuts "ఆగండి" into pieces that match nothing.
@@ -56,7 +56,7 @@ def says_stop(text: str) -> bool:
     if any(p in low for p in STOP_PHRASES):
         return True
     words = [w.strip("'") for w in _SPLIT.split(low) if w.strip("'")]
-    if words and set(words) <= _BARE_NO and set(words) & (_BARE_NO - {"hey", "mitra"}):
+    if words and set(words) <= _BARE_NO and set(words) & (_BARE_NO - {"hey", "kino"}):
         return True
     for i, w in enumerate(words):
         if w in STOP_WORDS and not (NEGATIONS & set(words[max(0, i - 2):i])):

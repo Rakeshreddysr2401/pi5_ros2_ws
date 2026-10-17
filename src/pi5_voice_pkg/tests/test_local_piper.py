@@ -29,8 +29,8 @@ def test_missing_voice_file_is_unavailable():
 @pytest.mark.skipif(not os.path.exists(VOICE), reason="piper voice not downloaded")
 def test_real_voice_speaks_and_speed_shortens():
     normal = LocalPiperProvider.from_config({"piper_model": VOICE, "speed": 1.0}, {})
-    a, sr = normal.synthesize("Hello, I am Mitra.")
+    a, sr = normal.synthesize("Hello, I am Kino.")
     assert a.dtype == np.float32 and sr > 0 and len(a) / sr > 0.5 and np.abs(a).max() <= 1.0
     fast = LocalPiperProvider.from_config({"piper_model": VOICE, "speed": 1.3}, {})
-    b, _ = fast.synthesize("Hello, I am Mitra.")
+    b, _ = fast.synthesize("Hello, I am Kino.")
     assert len(b) < len(a)

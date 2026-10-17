@@ -7,8 +7,8 @@ from langrobo_core.utils import addressing as a
 
 
 def test_who_counts_as_addressed():
-    assert a.addressed("Emitra, can you move forward?", "voice", None, 100.0)
-    assert a.addressed("Mithra what time is it", "voice", None, 100.0)
+    assert a.addressed("Keeno, can you move forward?", "voice", None, 100.0)
+    assert a.addressed("Keeno what time is it", "voice", None, 100.0)
     assert not a.addressed("Amma, dinner is ready", "voice", None, 100.0)
     assert a.addressed("yes send it", "voice", 90.0, 100.0)            # answering the robot
     assert not a.addressed("yes send it", "voice", 100.0 - a.FOLLOW_UP_S - 1, 100.0)

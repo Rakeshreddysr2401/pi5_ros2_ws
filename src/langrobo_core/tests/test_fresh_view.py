@@ -47,7 +47,7 @@ def run(monkeypatch):
 
 
 def test_a_stale_view_is_replaced_before_the_model_answers(run):
-    shown, out, looks = run("Mitra, what do you see?", view_age=73)
+    shown, out, looks = run("Kino, what do you see?", view_age=73)
     assert len(looks) == 1
     assert shown[-1] is PHOTO, "the model sees the fresh photo"
     calls = [m for m in out["messages"] if isinstance(m, AIMessage) and m.tool_calls]

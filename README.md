@@ -1,6 +1,6 @@
 # LangRobo — Pi5 Robot Brain
 
-The **brain** of a distributed home assistant robot ("Mitra"). The Pi5 runs all
+The **brain** of a distributed home assistant robot ("Kino"). The Pi5 runs all
 reasoning (a LangGraph state machine over three agents) and bridges motor commands to
 the chassis; the Jetson handles perception.
 
@@ -93,7 +93,7 @@ cp example.env .env    # then fill in keys as they become available
 ```
 
 Claude Code skills wrap these with the troubleshooting steps: `/robot-start`,
-`/robot-stop`, `/bt-audio`. Then talk to it — say **"Mitra"** in the sentence —
+`/robot-stop`, `/bt-audio`. Then talk to it — say **"Kino"** in the sentence —
 or message it on Telegram ([TELEGRAM.md](TELEGRAM.md)). How the machines find
 each other: [NETWORKING.md](NETWORKING.md). The Jetson side (`~/rover` there)
 has its own README.md and STARTUP.md.

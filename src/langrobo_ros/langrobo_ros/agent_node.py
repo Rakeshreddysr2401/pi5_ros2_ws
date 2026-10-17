@@ -1059,7 +1059,7 @@ class AgentNode(Node):
                     self.get_logger().info(f"→ (silent: not for me) {text[:120]!r}")
                     metrics.inc("turns_silent_total")
                     return
-                # Called by name (any misspelling: Emitra, Imitra) or a
+                # Called by name (any misspelling: Keeno, Keeno) or a
                 # [SYSTEM]/Telegram turn: silence is never the answer there.
                 self.get_logger().warning("silent reply to a turn that needs one -- asking again")
                 response = "Sorry, could you say that again?"

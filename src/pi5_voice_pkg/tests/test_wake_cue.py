@@ -11,7 +11,7 @@ def test_a_pause_after_the_name_gets_the_cue():
 
 
 def test_a_continued_sentence_is_never_talked_over():
-    """'Mitra, go to the kitchen' — speech starts before the delay is up."""
+    """'Kino, go to the kitchen' — speech starts before the delay is up."""
     gate = CueGate(delay_s=0.4)
     gate.on_wake(now=10.0)
     assert gate.update(voiced=True, now=10.1) is False

@@ -19,8 +19,8 @@ import json
 import re
 import urllib.request
 
-SYSTEM = ("You filter a living-room microphone for Mitra, a home robot assistant "
-          "(in Telugu 'mitra' means 'friend', so 'Friend, ...' is the robot being called). "
+SYSTEM = ("You filter a living-room microphone for Kino, a home robot assistant "
+          ""
           "Speech is translated from Telugu. Decide if the sentence is directed AT THE ROBOT: "
           "a question or request to an assistant, a command, or an answer to what the robot just said. "
           "Answer no for people talking to each other, TV or video audio, songs, and bare reactions "
@@ -113,7 +113,7 @@ class HoldWhileBusy:
     while the brain is busy with a turn, and goes on when the turn ends.
 
     2026-10-11, twice in one evening: "Do you have an audio?" (room talk) came
-    3 s after "Mitra, follow me", barged in and cancelled the follow before its
+    3 s after "Kino, follow me", barged in and cancelled the follow before its
     tool ran; earlier "How do you mean?" replaced "move back 40 cm". A sentence
     WITH the name, and a stop word, still cut in at once -- the caller only
     offers the llm-judged ones. Held one at a time (the newest wins, like the

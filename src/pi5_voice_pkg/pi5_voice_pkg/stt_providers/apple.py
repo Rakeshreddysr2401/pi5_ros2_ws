@@ -2,7 +2,7 @@
 Mac Mini by scripts/mac_mini/stt_server (mitra-stt.app) and called over the LAN
 -- the same one-utterance-in, text-out shape as Sarvam's REST call.
 
-    POST http://singireddys-mac-mini.local:8091/stt?lang=en-IN&context=Mitra
+    POST http://singireddys-mac-mini.local:8091/stt?lang=en-IN&context=Kino
     body = WAV  ->  {"transcript": "...", "secs": 0.07, "on_device": true}
 
 English only: Apple has no Telugu recogniser (no te-IN locale at all, probed
@@ -11,7 +11,7 @@ stays on the Mac (on-device only unless MAC_STT_SERVER=1).
 
 Measured on the Mac (M4, 2026-10-10): 0.02-0.25 s a sentence; robot commands
 synthesised and squeezed to 8 kHz (the Bluetooth HFP mic) came back word-for-
-word, "Mitra" included thanks to the context hint. Not yet scored on the
+word, "Kino" included thanks to the context hint. Not yet scored on the
 owner's own recordings -- scripts/voice_lab/score_set.py runs it as 'apple'.
 
 Settings (environment, like the cloud keys; all optional):
@@ -38,7 +38,7 @@ class AppleProvider(STTProvider):
 
     @classmethod
     def from_config(cls, params: dict, env: Mapping[str, str]) -> "AppleProvider":
-        # stt_hotwords ("Mitra") doubles as Apple's contextualStrings: without it
+        # stt_hotwords ("Kino") doubles as Apple's contextualStrings: without it
         # the name comes back as "Metro"/"Mira" more often.
         words = [w.strip() for w in (params.get('hotwords') or '').split(',') if w.strip()]
         context = words + [f'Hey {w}' for w in words]

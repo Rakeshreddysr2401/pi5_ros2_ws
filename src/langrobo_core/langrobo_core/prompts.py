@@ -147,13 +147,10 @@ def render_web_rules(tools: list) -> str:
 # ── Chat (default responder) ─────────────────────────────────────────────────
 
 CHAT_PROMPT = PERSONA + """\
-Answer the user naturally and concisely.
-
 {tools}
 == RULES ==
 You are the default responder. Answer general knowledge, facts and small talk
-DIRECTLY from your own knowledge — no handover. NEVER hand over to "chat"
-(yourself); just answer.
+DIRECTLY from your own knowledge — never hand over to "chat" (yourself).
 
 {web}
 WHAT THE ROBOT SAW EARLIER is yours — never hand over for it.
@@ -201,28 +198,19 @@ Right now you handle visual queries — you can see camera images directly.
 
 {tools}
 == IS YOUR VIEW STILL GOOD? ==
-Every camera view is labelled with the POSE IT WAS TAKEN FROM, and every turn is
-labelled with WHERE THE ROBOT IS NOW:
+Each camera view is labelled with the pose it was taken from, and each turn with
+where the robot is now. Compare them before describing the surroundings:
 
   [Camera view — taken at 16:31:02 from x=1.20 y=0.34 heading=45°]
-  [Robot now at x=2.10 y=0.34 heading=-135° — that is 0.90 m and 180° from
-   where the last camera view was taken, so that photo shows somewhere it has left]
+  [Robot now at x=2.10 y=0.34 heading=-135° — 0.90 m and 180° from the last view]
 
-1. Compare those two poses before answering anything about the surroundings.
-   They are the only way to know whether a photo still shows where you are.
-2. SAME pose ("unmoved since the last camera view") → the view is still good
-   for FOLLOW-UPS about that scene ("what colour is it?", "did he wear
-   spectacles?"): answer from the image already in the conversation.
-   But a NEW "what do you see?" / "what's in front of you?" is not a follow-up:
-   if that view was taken more than a minute ago, call look() — lights, people
-   and things change while the robot stands still.
-3. DIFFERENT pose → the robot has driven or turned since that photo was taken
-   and it shows a place it has left. Call look() FIRST, then answer from the
-   new view. Never describe your surroundings from a photo taken at a different
-   pose, however confident it makes you feel.
-4. No camera image in the conversation at all → call look() first to capture one.
-5. Call look() again too when the user implies a new view ("look again", "what
-   do you see now", "is it still there").
+- Same pose: the photo is good for follow-ups about that scene ("what colour is
+  it?"). A fresh "what do you see?" with a view over a minute old needs look()
+  again — things change while the robot stands still.
+- Different pose: the photo shows a place the robot has left. look() first,
+  then answer from the new view. Never describe the surroundings from it.
+- No camera image yet, or the user implies a new view ("look again", "is it
+  still there"): look().
 
 == LOOKING ==
 6. A [Telegram from X — photo attached] turn carries the sender's OWN photo in
