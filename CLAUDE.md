@@ -49,11 +49,11 @@ when the owner explicitly asks for the virtual rover, and take it down after (`f
   ~10 min from cold). Voice is the Pi5's own trio (`langrobo-voice` user
   unit, starts at boot). Switches `robot_body` to `rover` (plain Twist on
   `/cmd_vel`).
-- **`sim`** — the SIMULATION body: sshes the laptop and starts the OLDER Gazebo sim +
-  its own Nav2 (`rover_sim`, not the Mitra twin -- see below); voice stays on the Pi5; the Jetson is not used (its old
-  sim roles, `ai_stack` + `isaac_ros`, are retired). Switches `robot_body` to
-  `sim` (TwistStamped on /mecanum_drive_controller/cmd_vel).
-- **`stop`** parks the robot: stops the body (sim + the Jetson's `rover` container) but
+- **`twin up|status|down`** — the SIMULATED robot (Isaac Sim on the laptop, "The twin"
+  below): after `./mitra up home_real` on the laptop, runs `TWIN=1 ./rover up` on the
+  Jetson and the twin brain here, all on domain 42. (`sim`, the old Gazebo
+  rover_sim, is retired.)
+- **`stop`** parks the robot: stops the body (the Jetson's `rover` container) but
   keeps `langrobo-brain` and voice up, so chat/Telegram keeps listening. No password.
 - **`down`** full shutdown: everything `stop` does PLUS this Pi5's system units (brain,
   micro-ROS, discovery) via sudo. Those units are `enabled`, so a Pi5 reboot restarts them.
@@ -63,7 +63,7 @@ when the owner explicitly asks for the virtual rover, and take it down after (`f
 does not. `./scripts/fleet.sh rover` (or `ssh rakhi-jetson.local 'cd ~/rover && ./rover up'`)
 is the whole recovery. The Jetson's own STARTUP.md is the layer-by-layer version.
 
-Each machine can still be driven on its own — the laptop via `rover_sim/.../fleet_sim.sh`,
+Each machine can still be driven on its own — the laptop's twin via `~/mitra_sim/mitra`,
 the Jetson via `~/rover/rover <layer>`. Reaches the other machines by mDNS name over
 passwordless ssh; DDS is plain multicast on domain 0 everywhere (NETWORKING.md).
 
@@ -73,7 +73,7 @@ passwordless ssh; DDS is plain multicast on domain 0 everywhere (NETWORKING.md).
 # Whole robot (see "Fleet start" above)
 ./scripts/fleet.sh            # = rover, the default: real body (pi5 microros + jetson ./rover up; pi5 voice)
 ./scripts/fleet.sh rover      # real body (pi5 microros + jetson ./rover up; pi5 voice)
-./scripts/fleet.sh sim        # simulation body (laptop sim; pi5 voice)
+./scripts/fleet.sh twin up    # the simulated robot (after ./mitra up on the laptop; domain 42)
 ./scripts/fleet.sh stop       # park robot body (brain stays up)
 ./scripts/fleet.sh down       # full shutdown incl. Pi5 services (sudo)
 ./scripts/fleet.sh status
@@ -333,24 +333,39 @@ no longer exist.
   "agent X must never do Y" rule is the same shape of untrustworthy until
   it's been driven on the robot, not just read.
 
-## The Mitra twin (mitra_sim) — test the real brain in a simulated home
+## The twin (mitra_sim) — test the real robot's code on a simulated robot
 
-Since 2026-10-03 (owner: "nav2, cuVSLAM, nvblox, all planning on the Jetson
-only; the laptop is just the simulator"). Repo
-github.com/Rakeshreddysr2401/mitra_sim (private), laptop
-`/workspace/mitra_sim`. The laptop is the WORLD only: Gazebo homes, the
-rover's measured body, lidar, depth camera, gyro, and its real wheel slide,
-published on the rover's own topic contract. The Jetson is the BRAIN: the
-rover's own nvblox / nav2 / reach / goal_exec as a second instance in the
-`rover` container (`~/mitra_sim/jetson/sim_stack.sh up`). Both on **ROS
-domain 42**, so the twin can never reach the real wheels (domain 0); its
-learned state goes to `/tmp/mitra_state`, never `/logs`. Laptop: `./mitra up
-home`, `./mitra rviz`, `./mitra goal X Y`, `./mitra scenario <world>`. From
-this Pi: `tools/run_suite.sh` runs every world end to end, judged on the true
-pose. Results, fixes and open items: mitra_sim `docs/STATUS.md`.
+The twin is the robot's HARDWARE simulated, nothing else: since 2026-10-18 in
+**Isaac Sim 5.1** on the new laptop (user `chotesh`, 192.168.1.9, DHCP, RTX
+4050; Gazebo is gone). Repo github.com/Rakeshreddysr2401/mitra_sim (private),
+laptop `~/mitra_sim` (branch `isaac`). The laptop simulates the D555, the C1
+and the ESP32 + encoders with the rover's measured body, noise and wheel
+response; the Jetson runs the rover's WHOLE, unchanged stack on it
+(`TWIN=1 ./rover up`: cuVSLAM, fusion2, slam_toolbox, nvblox, nav2, reach,
+the VLM bridge); this Pi runs a second brain (below). Everything on **ROS
+domain 42**, so the twin can never reach the real wheels (domain 0).
 
-**The brain on the twin (2026-10-03):** `scripts/twin_brain.sh up` runs a
-SECOND agent_node, unchanged, on domain 42 beside the real one (langrobo-brain,
+**Switching body is the domain, not the code:** a fix found on the twin is
+made in the real code (`~/rover` on the Jetson, this repo) and already is the
+robot's. Real robot: `fleet.sh rover`. Twin: on the laptop `./mitra up
+home_real`, then here `./scripts/fleet.sh twin up` (status / down). The twin
+announces itself on domain 42 (latched `/sim/hardware`: the laptop's address,
+the cable ports, the world, the body's params sha1), so neither this Pi nor
+the Jetson logs in to the laptop. The Jetson runs one stack at a time (real or
+twin): it is CPU-bound.
+
+Laptop commands (in `~/mitra_sim`): `./mitra up <world> [follow=true]` (the
+Isaac window chasing the rover), `./mitra status`, `./mitra scenario <world>`
+(drives the world's goals, judged on the TRUE pose: a touch fails the run),
+`./mitra selftest`, `./mitra parity snapshot real|twin` + `compare` (does the
+twin publish the real robot's interface?), `./mitra rviz [real]`. Results,
+fixes and open items: mitra_sim `docs/STATUS.md`; agent rules: its `CLAUDE.md`.
+First Isaac day (2026-10-18): every `./rover up` gate OK; home_real scenario
+4/4 reached, through the 80 cm door; it drives over the 1 cm tablet, as the
+real robot does.
+
+**The brain on the twin:** `scripts/twin_brain.sh up` runs a SECOND
+agent_node, unchanged, on domain 42 beside the real one (langrobo-brain,
 domain 0, untouched): `LANGROBO_STATE_DIR=~/.langrobo_twin` (its photos, saved
 places and object memory never mix with the real robot's), Telegram off, no
 voice, its own teleop switch (`twin_brain.sh manual on|off`, a file), health on
@@ -358,39 +373,8 @@ voice, its own teleop switch (`twin_brain.sh manual on|off`, a file), health on
 (prints the replies and the later arrival report). The Jetson half runs the
 rover's own `pixel_to_goal`, so "go near X" is the real path. It shares the Mac
 mini's llama.cpp slots with the real brain. **Default is the real robot**: the
-twin runs only when started. Whole twin at once: `./scripts/fleet.sh twin
-[up|down|status] [world]` (default `home_real`: real-looking household models).
-First run, `home`: "go near the red cylinder" -> reached, 24 cm from it on the
-true pose. `fleet.sh sim` still means the older rover_sim below.
+twin runs only when started.
 
-## Simulation laptop (rover_sim) — the second body
-
-**The real rover exists and drives** (see Gotchas). The sim is no longer a
-stand-in — it is a second body you can develop against without a robot in the
-room, selected with `./scripts/fleet.sh sim`.
-
-A Gazebo sim on the laptop (`rakhi24`, wifi DHCP): mecanum X3 rover with lidar
-+ RealSense-D555-style RGBD camera in a furnished house world, Nav2 +
-slam_toolbox on top. Repo:
-https://github.com/Rakeshreddysr2401/rover_sim (laptop path
-`/workspace/ros2_ws/src/rover_sim`); `docs/INTERFACE.md` is its contract.
-
-**The two bodies do NOT agree, and that is the trap.** The sim has a `map`
-frame (slam_toolbox) and takes TwistStamped; the real rover has **no map frame
-at all** and takes plain Twist. Code that works in sim can therefore fail
-silently on the rover — which is exactly how `navigate_to_pose` was broken for
-months. `ROS2Bridge` handles the cmd_vel shape (`robot_body`), and `NAV_FRAME`
-handles the frame; anything else that differs is on you to check.
-
-- The sim is on the same plain-multicast DDS graph (domain 0, no
-  `ROS_DISCOVERY_SERVER`), so this brain's `navigate_to_pose` tool talks to
-  the sim's Nav2 server directly.
-- Highlights of the contract: `/navigate_to_pose` (NavigateToPose),
-  `/scan` 10 Hz, `/cam_1/color/image_raw` + `/cam_1/depth/image_rect_raw`
-  15 Hz (D555 names — nvblox-ready), odom `/mecanum_drive_controller/odom`,
-  cmd_vel is **TwistStamped** on `/mecanum_drive_controller/cmd_vel`
-  (plain `/cmd_vel` exists only while its Nav2 is up).
-- Sim runs ≈0.1× real time in the furnished house world (laptop iGPU) — don't
-  tune wall-clock timeouts against it.
-- Keep the machine/interface details in sync across this CLAUDE.md, the
-  Jetson's `~/rover` docs, and rover_sim's — change all or none.
+The old Gazebo `rover_sim` (mecanum, its own nav2, a different contract) is
+retired: `fleet.sh sim` only says so. `ROS2Bridge`'s `robot_body: sim`
+(TwistStamped) is now unused.

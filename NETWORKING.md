@@ -11,7 +11,7 @@ name.** No discovery server, no IP lists, no XML profiles.
 | Pi 5 | `rakhi24-desktop.local` | 192.168.1.16 (fixed) | host (systemd) | brain, voice, micro-ROS agent, teleop :8091 |
 | Jetson Orin | `rakhi-jetson.local` | 192.168.1.15 | `rover` container, host network | camera, lidar, pose, slam, nvblox, nav2, VLM bridge |
 | Mac Mini | `singireddys-mac-mini.local` | moves | — (HTTP only) | llama.cpp LLM + VLM on :8080 |
-| Laptop | `rakhi24.local` | moves | host | RViz (`./rover view` finds it) and the Gazebo sim |
+| Laptop | — (user `chotesh`) | moves (192.168.1.9 on 2026-10-18) | Isaac Sim's bundled ROS (no install) | the twin (Isaac Sim, domain 42; announces itself on `/sim/hardware`) and RViz (`./mitra rviz [real]`) |
 | D555 camera | — | 192.168.11.55 (PoE) | itself — a raw DDS participant | depth + IR + IMU |
 | ESP32 | — | USB cable to the Pi 5 | micro-ROS → Pi 5 serial `/dev/ttyUSB0` 115200 (was WiFi UDP 8888 until 2026-10-07) | wheels |
 

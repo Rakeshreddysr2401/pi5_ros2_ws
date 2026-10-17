@@ -12,7 +12,7 @@ slot map all derive from it.
 ```
 Mac Mini  ──────  llama.cpp — Gemma multimodal GGUF, --parallel 4 (a KV slot per agent + one for one-shot vision calls)
 Jetson    ──────  ~/rover: D555 + RPLidar · fused pose · slam · nvblox · Nav2 + exact moves · VLM pixel→goal
-Laptop    ──────  RViz (pushed and started by the Jetson's `./rover view`) · Gazebo sim body
+Laptop    ──────  the twin: the robot's hardware in Isaac Sim (mitra_sim, domain 42) · RViz (`./mitra rviz [real]`)
 Pi 5      ──────  THIS REPO — LangGraph brain + STT/TTS + micro-ROS agent
 ESP32     ──────  4-wheel drive chassis, 50 Hz PID (micro-ROS over USB serial to the Pi 5)
 ```

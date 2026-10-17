@@ -8,20 +8,18 @@
 #                               #   (D555 + lidar + fused pose + slam + nvblox +
 #                               #   nav2 + the VLM bridge + Studio + laptop RViz).
 #                               #   Voice is the Pi5's own trio.
-#   ./scripts/fleet.sh sim      # SIMULATION body: the OLDER laptop sim, rover_sim
-#                               #   (mecanum, its own nav2) + Pi5 voice. The Jetson
-#                               #   is not used. To test the REAL Jetson stack in a
-#                               #   simulated home use the Mitra twin instead (below).
-#   ./scripts/fleet.sh twin [up|down|status] [world] [mirror|pose]
-#                               # the MITRA TWIN (default up home_real mirror), all on ROS
-#                               #   domain 42; the real robot (domain 0) is untouched.
-#                               #   mirror: the laptop is ONLY the hardware (simulated D555,
-#                               #   C1, ESP32 + encoders, the measured body) and the Jetson
-#                               #   runs the rover's WHOLE stack on it, `TWIN=1 ./rover up`:
-#                               #   cuVSLAM, fusion2, slam_toolbox, nvblox, nav2, reach, VLM
-#                               #   bridge -- plus a SECOND brain here (twin_brain.sh).
-#                               #   pose: the older shortcut (the laptop hands out /odom;
-#                               #   ~/mitra_sim/jetson/sim_stack.sh: nav only).
+#   ./scripts/fleet.sh twin [up|down|status]
+#                               # the TWIN (the simulated robot), all on ROS domain 42;
+#                               #   the real robot (domain 0) is untouched. The laptop
+#                               #   (Isaac Sim, mitra_sim: `./mitra up home_real` THERE) is
+#                               #   ONLY the hardware -- simulated D555, C1, ESP32 + encoders,
+#                               #   the measured body -- and the Jetson runs the rover's WHOLE
+#                               #   stack on it, `TWIN=1 ./rover up` (cuVSLAM, fusion2,
+#                               #   slam_toolbox, nvblox, nav2, reach, VLM bridge), plus a
+#                               #   SECOND brain here (twin_brain.sh). The twin announces
+#                               #   itself on domain 42 (/sim/hardware): nothing here or on
+#                               #   the Jetson logs in to the laptop.
+#   ./scripts/fleet.sh sim      # RETIRED (2026-10-18): the old Gazebo rover_sim. Use twin.
 #   ./scripts/fleet.sh stop     # park the robot: stop the body, keep brain up
 #   ./scripts/fleet.sh down     # full shutdown incl. this Pi5's services (sudo)
 #   ./scripts/fleet.sh status   # who's up, everywhere
@@ -29,8 +27,8 @@
 #
 # The brain (langrobo-brain) runs here in both modes. Each machine can still
 # be started by itself:
-#   laptop:  /workspace/ros2_ws/src/rover_sim/rover_bringup/scripts/fleet_sim.sh
-#   jetson:  cd ~/rover && ./rover up      (or one layer: ./rover camera, ...)
+#   laptop:  cd ~/mitra_sim && ./mitra up home_real    (the twin's hardware + world)
+#   jetson:  cd ~/rover && ./rover up      (TWIN=1 for the twin; or one layer: ./rover camera, ...)
 #
 # The Jetson's live repo is ~/rover (container `rover`). The older ~/robot
 # roles (`ai_stack` voice, `isaac_ros` perception) are retired: those
@@ -41,9 +39,7 @@
 set -eo pipefail
 CMD="${1:-rover}"     # no argument = start the REAL rover; sims only when named
 
-# mDNS names by default; override when mDNS flakes (it does, transiently):
-#   LANGROBO_LAPTOP_HOST=192.168.1.12 ./scripts/fleet.sh sim
-LAPTOP_HOST="${LANGROBO_LAPTOP_HOST:-rakhi24.local}"
+# mDNS names by default; override when mDNS flakes (it does, transiently).
 JETSON_HOST="${LANGROBO_JETSON_HOST:-rakhi-jetson.local}"
 # After a power cycle the Jetson's avahi can lose its name (a clash renames it
 # rakhi-jetson-N.local) while the Jetson itself is fine; "unreachable" then sent
@@ -59,7 +55,6 @@ if [ -z "${LANGROBO_JETSON_HOST:-}" ]; then
         echo "        (fix the name: ssh rakhi24@$JETSON_HOST 'sudo systemctl restart avahi-daemon')" >&2
     fi
 fi
-LAPTOP=rakhi24@$LAPTOP_HOST
 JETSON=rakhi24@$JETSON_HOST
 # IdentityAgent=none: use ~/.ssh/id_ed25519 directly. A shell whose
 # SSH_AUTH_SOCK points at a dead or hung agent (a stale forwarded one, say)
@@ -67,9 +62,8 @@ JETSON=rakhi24@$JETSON_HOST
 # looked for an hour like a Jetson too loaded to log in to.
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new -o IdentityAgent=none"
 
-SIM_SCRIPT=/workspace/ros2_ws/src/rover_sim/rover_bringup/scripts/fleet_sim.sh
 ROVER_DIR="~/rover"
-TWIN_LAPTOP_DIR=/workspace/mitra_sim     # the Mitra twin's world (github mitra_sim)
+TWIN_DOMAIN=42                           # the twin's ROS domain (mitra_sim MITRA_DOMAIN)
 BRAIN_ENV=/home/rakhi24/.langrobo/brain.env
 
 # Which body (rover|sim) the brain's cmd_vel should drive — see ros2_bridge.py
@@ -139,65 +133,69 @@ jetson_status() {
         printf "%s=%s " "$p" "$s"; done; echo' 2>/dev/null | sed 's/^/jetson: /'
 }
 
+# The twin announces itself (mitra_sim, latched /sim/hardware on domain 42):
+# the laptop's address, cable ports, world. Asked over ROS like jetson_stack_up,
+# so nothing here needs ssh into the laptop. -> the JSON, or nothing.
+twin_announced() {
+    ( source /opt/ros/jazzy/setup.bash
+      unset ROS_DISCOVERY_SERVER FASTRTPS_DEFAULT_PROFILES_FILE
+      export ROS_DOMAIN_ID=$TWIN_DOMAIN RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+      timeout 15 ros2 topic echo --once --qos-durability transient_local --qos-reliability reliable \
+          --full-length --field data /sim/hardware std_msgs/msg/String 2>/dev/null | grep -m1 '^{' ) || true
+}
+
+twin_line() {   # the announcement, readable
+    python3 -c 'import json, sys; h = json.loads(sys.argv[1]); print("twin up at", " ".join(h["hosts"]), "- world", h["world"], "- engine", h.get("engine", "?"), "- body", h.get("params_sha1", "?"))' "$1"
+}
+
 twin_up() {
-    local world="${1:-home_real}" level="${2:-mirror}"
-    echo "twin: world '$world', level $level, on domain 42 (the real robot, domain 0, is not touched)"
-    if reachable "$LAPTOP_HOST"; then
-        $SSH $LAPTOP "cd $TWIN_LAPTOP_DIR && git pull -q --ff-only 2>/dev/null; ./mitra up $world level=$level" 2>&1 | sed 's/^/laptop: /'
-    else
-        echo "laptop: UNREACHABLE ($LAPTOP_HOST) -- is it on and awake? (LANGROBO_LAPTOP_HOST=<ip>)"; return 1
+    echo "twin: the simulated robot on domain $TWIN_DOMAIN (the real robot, domain 0, is not touched)"
+    local hw; hw=$(twin_announced)
+    if [ -z "$hw" ]; then
+        echo "laptop: no twin announcing on domain $TWIN_DOMAIN. Start it ON THE LAPTOP:"
+        echo "        cd ~/mitra_sim && ./mitra up home_real      (then run this again)"
+        return 1
     fi
+    echo "laptop: $(twin_line "$hw")"
     if reachable "$JETSON_HOST"; then
-        if [ "$level" = mirror ]; then
-            # the real layers, one by one, each with its gate (~10 min with nvblox + nav2)
-            # an address, not a .local name: the twin's sensor cables are opened from inside the container
-            local lip; lip=$(getent hosts "$LAPTOP_HOST" | awk '{print $1; exit}')
-            $SSH $JETSON "git -C ~/mitra_sim pull -q --ff-only 2>/dev/null; cd ~/rover && LAPTOP_IP=${lip:-$LAPTOP_HOST} TWIN=1 ./rover up" 2>&1 | sed 's/^/jetson: /'
-        else
-            $SSH $JETSON "git -C ~/mitra_sim pull -q --ff-only 2>/dev/null; ~/mitra_sim/jetson/sim_stack.sh up" 2>&1 | sed 's/^/jetson: /'
-        fi
+        # the real layers, one by one, each with its gate (~10 min with nvblox + nav2);
+        # the Jetson finds the twin by itself (the same /sim/hardware)
+        $SSH $JETSON "git -C ~/mitra_sim pull -q --ff-only 2>/dev/null; cd ~/rover && TWIN=1 ./rover up" 2>&1 | sed 's/^/jetson: /'
     else
         echo "jetson: UNREACHABLE ($JETSON_HOST)"; return 1
     fi
     "$(dirname "$0")/twin_brain.sh" up | sed 's/^/pi5:    /'
-    echo "twin: talk to it -- $(dirname "$0")/twin_brain.sh say \"Mitra, what do you see?\""
-    echo "      watch it    -- the laptop's RViz window 'rover_twin' (TWIN=1 ./rover view on the Jetson)"
+    echo "twin: talk to it -- $(dirname "$0")/twin_brain.sh say \"Kino, what do you see?\""
+    echo "      watch it    -- on the laptop: cd ~/mitra_sim && ./mitra rviz   (or ./mitra up home_real follow=true)"
 }
 twin_down() {
     "$(dirname "$0")/twin_brain.sh" down | sed 's/^/pi5:    /'
-    reachable "$JETSON_HOST" && $SSH $JETSON "cd ~/rover && TWIN=1 ./rover stop; ~/mitra_sim/jetson/sim_stack.sh down" 2>&1 | sed 's/^/jetson: /'
-    reachable "$LAPTOP_HOST" && $SSH $LAPTOP "cd $TWIN_LAPTOP_DIR && ./mitra down" 2>&1 | sed 's/^/laptop: /'
+    reachable "$JETSON_HOST" && $SSH $JETSON "cd ~/rover && TWIN=1 ./rover stop" 2>&1 | sed 's/^/jetson: /'
+    echo "laptop: the twin's world keeps running until, on the laptop: cd ~/mitra_sim && ./mitra down"
     return 0
 }
 
 case "$CMD" in
 twin)
     case "${2:-up}" in
-        up)     twin_up "${3:-home_real}" "${4:-mirror}" ;;
+        up)     [ -n "${3:-}" ] && echo "twin: the world is chosen on the laptop (./mitra up <world>); '$3' ignored"
+                twin_up ;;
         down)   twin_down ;;
         status)
             "$(dirname "$0")/twin_brain.sh" status | sed 's/^/pi5:    /'
-            reachable "$JETSON_HOST" && $SSH $JETSON "if docker ps --format '{{.Names}}' | grep -qx rover_twin; then cd ~/rover && TWIN=1 ./rover status; else ~/mitra_sim/jetson/sim_stack.sh status; fi" 2>&1 | sed 's/^/jetson: /'
-            reachable "$LAPTOP_HOST" && $SSH $LAPTOP "cd $TWIN_LAPTOP_DIR && ./mitra status" 2>&1 | sed 's/^/laptop: /' ;;
-        *)      echo "usage: $0 twin [up|down|status] [world] [mirror|pose]"; exit 2 ;;
+            reachable "$JETSON_HOST" && $SSH $JETSON "if docker ps --format '{{.Names}}' | grep -qx rover_twin; then cd ~/rover && TWIN=1 ./rover status; else echo 'no twin stack (rover_twin container) running'; fi" 2>&1 | sed 's/^/jetson: /'
+            hw=$(twin_announced)
+            if [ -n "$hw" ]; then echo "laptop: $(twin_line "$hw")"
+            else echo "laptop: no twin announcing on domain $TWIN_DOMAIN (on the laptop: ./mitra up home_real)"; fi ;;
+        *)      echo "usage: $0 twin [up|down|status]"; exit 2 ;;
     esac
     ;;
 sim)
-    set_body sim
-    ensure_local_units
-    if reachable "$LAPTOP_HOST"; then
-        echo "laptop: starting sim..."
-        $SSH $LAPTOP "$SIM_SCRIPT start" || echo "laptop: sim start FAILED"
-    else
-        echo "laptop: UNREACHABLE — is it powered on and on the wifi? (sim not started)"
-    fi
-    # Voice stays on the Pi5 (langrobo-voice). The Jetson's old sim roles
-    # (ai_stack voice, isaac_ros perception on the sim's /cam_1) are retired;
-    # the sim's own Nav2 + slam_toolbox drive, look() has no Jetson frame.
-    systemctl --user start langrobo-voice 2>/dev/null || true
-    echo "pi5:    voice=$(systemctl --user is-active langrobo-voice)"
-    echo "fleet: SIM mode up (rover_sim, the older sim). Nav2 needs ~1 min in the house world; check: $0 status"
-    echo "       To test the real Jetson stack instead: the Mitra twin (CLAUDE.md, mitra_sim)."
+    # The old Gazebo rover_sim (mecanum, its own nav2) is retired (2026-10-18):
+    # the twin runs the REAL Jetson stack on simulated hardware instead.
+    echo "fleet: 'sim' (the old Gazebo rover_sim) is retired. The simulated robot is the twin:"
+    echo "       on the laptop: cd ~/mitra_sim && ./mitra up home_real;  here: $0 twin up"
+    exit 2
     ;;
 rover|up|start)
     set_body rover
@@ -224,11 +222,8 @@ rover|up|start)
     echo "fleet: ROVER mode up. Talk to it (say \"Mitra\") or use Telegram."
     ;;
 stop)
-    # Park the robot: stop the body (sim + Jetson roles). No password needed.
+    # Park the robot: stop the body (the Jetson's stack). No password needed.
     # Brain + discovery stay up so chat/Telegram keeps listening.
-    if reachable "$LAPTOP_HOST"; then
-        $SSH $LAPTOP "$SIM_SCRIPT stop" || true
-    fi
     if reachable "$JETSON_HOST"; then
         # Removes the `rover` container (every Jetson layer). A power-on
         # after this needs the full `./rover up` again.
@@ -243,9 +238,6 @@ down)
     # Full shutdown: everything 'stop' does, PLUS this Pi5's own services
     # (brain, micro-ROS wheels, discovery meeting point). Those are systemd
     # system units, so this asks for your password once.
-    if reachable "$LAPTOP_HOST"; then
-        $SSH $LAPTOP "$SIM_SCRIPT stop" || true
-    fi
     if reachable "$JETSON_HOST"; then
         # Removes the `rover` container (every Jetson layer). A power-on
         # after this needs the full `./rover up` again.
@@ -255,16 +247,12 @@ down)
     echo "pi5:    stopping brain, micro-ROS, discovery (needs sudo)..."
     sudo systemctl stop langrobo-brain langrobo-microros langrobo-discovery
     echo "pi5:    discovery=$(systemctl is-active langrobo-discovery)  brain=$(systemctl is-active langrobo-brain)  microros=$(systemctl is-active langrobo-microros)"
-    echo "fleet: fully DOWN. Bring back with: $0 sim   (or rover)"
+    echo "fleet: fully DOWN. Bring back with: $0 rover   (or twin up)"
     echo "       (these units are enabled, so they'll also restart on next Pi5 boot)"
     ;;
 status)
     echo "pi5:    discovery=$(systemctl is-active langrobo-discovery)  brain=$(systemctl is-active langrobo-brain)  microros=$(systemctl is-active langrobo-microros)  voice=$(systemctl --user is-active langrobo-voice 2>/dev/null)"
-    if reachable "$LAPTOP_HOST"; then
-        $SSH $LAPTOP "$SIM_SCRIPT status" 2>/dev/null || true
-    else
-        echo "laptop: unreachable"
-    fi
+    hw=$(twin_announced); [ -n "$hw" ] && echo "laptop: the twin is up on domain $TWIN_DOMAIN ($0 twin status)"
     if reachable "$JETSON_HOST"; then
         jetson_status
     else
