@@ -168,19 +168,8 @@ class AgentNode(Node):
         # were served with no origin check at all.
         known_locations: dict = {}
 
-        # ── Robot body: real rover (ESP32) vs Gazebo sim (rover_sim) ────────
-        # Only affects the cmd_vel wire shape/topic in ROS2Bridge — see
-        # CLAUDE.md "Simulation laptop" and scripts/fleet.sh {sim|rover}.
-        self.declare_parameter("robot_body", "rover")
-        robot_body = self.get_parameter("robot_body").value
-        if robot_body not in ("rover", "sim"):
-            self.get_logger().warning(
-                f"Unknown robot_body {robot_body!r} — defaulting to 'rover'")
-            robot_body = "rover"
-
         # ── Inject config into the core ───────────────────────────────────
-        self._bridge = ROS2Bridge(self, known_locations=known_locations,
-                                  robot_body=robot_body, use_vision=self._use_vision)
+        self._bridge = ROS2Bridge(self, known_locations=known_locations, use_vision=self._use_vision)
         bridge_module.init(self._bridge)
         timing.set_sink(self._bridge.publish_timing)
         self._timing_handler = timing.TimingCallbackHandler()
@@ -333,7 +322,6 @@ class AgentNode(Node):
             user_pending = self._user_pending is not None
         return {
             "sticky_agent": self._sticky_agent,
-            "robot_body": self._bridge.robot_body,
             "last_turn_ts": self._last_turn_ts,
             "camera_frame_age_s": self._bridge.frame_age(),
             "queued_system_events": queued_system,

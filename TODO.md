@@ -3,7 +3,7 @@
 ## LATER — RViz on the new laptop (noted 2026-10-18)
 
 The sim laptop is new (user `chotesh`, 192.168.1.9, DHCP) and runs the twin in
-**Isaac Sim** now (Gazebo is gone): `~/mitra_sim` there, branch `isaac` --
+**Isaac Sim**: `~/mitra_sim` there, branch `isaac` --
 README.md / CLAUDE.md / docs/STATUS.md in it. The full twin was verified
 2026-10-18 (`TWIN=1 ./rover up`: every gate OK; home_real scenario 4/4 reached).
 

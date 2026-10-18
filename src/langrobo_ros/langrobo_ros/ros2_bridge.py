@@ -48,15 +48,8 @@ class ROS2Bridge:
     # /vision/detections_3d contract.
     NAV_FRAME = os.environ.get("LANGROBO_NAV_FRAME", "odom")
 
-    def __init__(self, node, known_locations: dict = None, robot_body: str = "rover",
-                 use_vision: bool = True):
+    def __init__(self, node, known_locations: dict = None, use_vision: bool = True):
         self._node = node
-        # Which body this brain drives cmd_vel to: the real ESP32 rover (plain
-        # Twist on /cmd_vel) or the Gazebo sim rover_sim (TwistStamped on
-        # /mecanum_drive_controller/cmd_vel) — see CLAUDE.md "Simulation
-        # laptop". Switched by scripts/fleet.sh {sim|rover}, default "rover"
-        # so the real robot's behaviour never changes unless sim is requested.
-        self._robot_body = robot_body
 
         # Named map locations: {name: (x, y, yaw_deg)} — populated from nav_params.
         # This is the BASE set; _rebuild_known_locations() layers fresh saved
@@ -176,14 +169,8 @@ class ROS2Bridge:
         # saying "stop" and sweep the wheels (see _on_tts_stop).
         self._tts_stop_pub      = node.create_publisher(String, "/voice/tts_stop", 10)
         self._cue_pub           = node.create_publisher(String, "/voice/cue", 10)
-        self._sim_body = self._robot_body == "sim"
-        if self._sim_body:
-            from geometry_msgs.msg import TwistStamped
-            self._TwistStamped = TwistStamped   # bound once — publish_twist runs at 20 Hz
-            self._twist_pub = node.create_publisher(
-                TwistStamped, "/mecanum_drive_controller/cmd_vel", 10)
-        else:
-            self._twist_pub = node.create_publisher(Twist, "/cmd_vel", 10)
+        # the ESP32's input: plain Twist on /cmd_vel (the twin's esp32_twin is the same)
+        self._twist_pub = node.create_publisher(Twist, "/cmd_vel", 10)
         self._timing_pub        = node.create_publisher(String, "/diag/timing", 10)
         # Camera pan/tilt: raw servo angles for the ESP32 (0-180, 90=centre) +
         # a JSON state topic the Jetson TF broadcaster mirrors into the TF tree
@@ -643,31 +630,10 @@ class ROS2Bridge:
 
     # ── Publishers ─────────────────────────────────────────────────────────
 
-    @property
-    def robot_body(self) -> str:
-        """'rover' or 'sim' — which body cmd_vel is currently wired to."""
-        return self._robot_body
-
     def publish_twist(self, twist: Twist) -> None:
-        """Publish a Twist command to the robot body's cmd_vel — rover gets a
-        plain Twist on /cmd_vel (ESP32/micro-ROS); sim gets the same linear/
-        angular values wrapped in TwistStamped on
-        /mecanum_drive_controller/cmd_vel (rover_sim's Nav2/mecanum contract,
-        see docs/INTERFACE.md in the rover_sim repo)."""
-        if self._sim_body:
-            stamped = self._TwistStamped()
-            stamped.header.stamp = self._node.get_clock().now().to_msg()
-            # mecanum_drive_controller.cpp never reads the command's incoming
-            # frame_id (only sets it on its OWN published odometry) — so this
-            # value doesn't affect driving. Set to "base_footprint" anyway to
-            # match the sim's actual configured base_frame_id (rover_sim's
-            # rover_description/config/rosmaster_x3/ros2_controllers.yaml),
-            # for correctness with any tooling (rviz/rqt) that does read it.
-            stamped.header.frame_id = "base_footprint"
-            stamped.twist = twist
-            self._twist_pub.publish(stamped)
-        else:
-            self._twist_pub.publish(twist)
+        """Publish a Twist on /cmd_vel: the ESP32 (micro-ROS) on the robot, its
+        stand-in esp32_twin on the twin -- the same interface."""
+        self._twist_pub.publish(twist)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 3 — Actions (Nav2)

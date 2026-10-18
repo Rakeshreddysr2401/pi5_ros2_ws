@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # LangRobo fleet launcher — run on the Pi5. One command to bring up the robot.
 # The REAL rover is the default: `./scripts/fleet.sh` with no argument (or `up`,
-# `start`) is `rover`. The simulators run only when named (`sim`, `twin`).
+# `start`) is `rover`. The simulated robot runs only when named (`twin`).
 #
 #   ./scripts/fleet.sh rover    # REAL body (the default): Pi5 micro-ROS agent (ESP32 wheels)
 #                               #   + the Jetson's ~/rover stack, via `./rover up`
@@ -19,7 +19,6 @@
 #                               #   SECOND brain here (twin_brain.sh). The twin announces
 #                               #   itself on domain 42 (/sim/hardware): nothing here or on
 #                               #   the Jetson logs in to the laptop.
-#   ./scripts/fleet.sh sim      # RETIRED (2026-10-18): the old Gazebo rover_sim. Use twin.
 #   ./scripts/fleet.sh stop     # park the robot: stop the body, keep brain up
 #   ./scripts/fleet.sh down     # full shutdown incl. this Pi5's services (sudo)
 #   ./scripts/fleet.sh status   # who's up, everywhere
@@ -64,35 +63,6 @@ SSH="ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-ne
 
 ROVER_DIR="~/rover"
 TWIN_DOMAIN=42                           # the twin's ROS domain (mitra_sim MITRA_DOMAIN)
-BRAIN_ENV=/home/rakhi24/.langrobo/brain.env
-
-# Which body (rover|sim) the brain's cmd_vel should drive — see ros2_bridge.py
-# and CLAUDE.md "Simulation laptop". Only restarts the brain when the body is
-# actually changing, so re-running `fleet.sh rover` while already in rover
-# mode doesn't interrupt a live conversation.
-set_body() {
-    local body="$1" current=""
-    [ -f "$BRAIN_ENV" ] && current=$(sed -n 's/^ROBOT_BODY=//p' "$BRAIN_ENV" | head -1)
-    current="${current:-rover}"     # run_brain.sh's default when the line is absent
-    if [ "$current" = "$body" ]; then
-        return 0
-    fi
-    mkdir -p "$(dirname "$BRAIN_ENV")"
-    # Edit the one line, never rewrite the file: it also holds the turn
-    # calibration (LANGROBO_STEADY_ANGULAR_VEL) and the notes explaining it.
-    if grep -q '^ROBOT_BODY=' "$BRAIN_ENV" 2>/dev/null; then
-        sed -i "s/^ROBOT_BODY=.*/ROBOT_BODY=$body/" "$BRAIN_ENV"
-    else
-        echo "ROBOT_BODY=$body" >> "$BRAIN_ENV"
-    fi
-    if sudo -n systemctl restart langrobo-brain 2>/dev/null \
-        || systemctl restart langrobo-brain 2>/dev/null; then
-        echo "pi5:    robot_body switched to '$body' (brain restarted)"
-    else
-        echo "pi5:    robot_body set to '$body' in $BRAIN_ENV, but the brain"
-        echo "        restart needs sudo — run: sudo systemctl restart langrobo-brain"
-    fi
-}
 
 ensure_local_units() {
     sudo -n systemctl start langrobo-discovery 2>/dev/null \
@@ -190,15 +160,7 @@ twin)
         *)      echo "usage: $0 twin [up|down|status]"; exit 2 ;;
     esac
     ;;
-sim)
-    # The old Gazebo rover_sim (mecanum, its own nav2) is retired (2026-10-18):
-    # the twin runs the REAL Jetson stack on simulated hardware instead.
-    echo "fleet: 'sim' (the old Gazebo rover_sim) is retired. The simulated robot is the twin:"
-    echo "       on the laptop: cd ~/mitra_sim && ./mitra up home_real;  here: $0 twin up"
-    exit 2
-    ;;
 rover|up|start)
-    set_body rover
     ensure_local_units
     sudo -n systemctl start langrobo-microros 2>/dev/null \
         || systemctl start langrobo-microros 2>/dev/null || true
@@ -352,14 +314,13 @@ print("%s object(s) remembered; survey: %s" % (r.get("objects_remembered", "?"),
     else echo "check: $fails FAIL(s) — each line says what to run."; exit 1; fi
     ;;
 *)
-    echo "usage: $0 [rover|stop|down|status|check|sim|twin]   (no argument = rover)"
+    echo "usage: $0 [rover|stop|down|status|check|twin]   (no argument = rover)"
     echo "  rover  start the REAL body -- the default (also: up, start): Pi5 micro-ROS wheels + Jetson ./rover up; Pi5 voice"
-    echo "  sim    start simulation body (laptop Gazebo+Nav2; Pi5 voice)"
     echo "  stop   stop the robot body; keep brain + discovery (Telegram) alive"
     echo "  down   full shutdown incl. Pi5 brain/discovery/microros (asks sudo)"
     echo "  status show what's up everywhere"
-    echo "  twin   (rarely; only when asked) the Mitra twin [up|down|status] [world] [mirror|pose]: simulated hardware on the laptop,"
-    echo "         the rover's whole Jetson stack on it (TWIN=1 ./rover up) + a 2nd brain, domain 42"
+    echo "  twin   (only when asked) the twin [up|down|status]: after ./mitra up on the laptop, the robot's"
+    echo "         hardware simulated in Isaac Sim, the rover's whole Jetson stack on it (TWIN=1 ./rover up) + a 2nd brain, domain 42"
     echo "  check  prove every link works, with data (read-only)"
     exit 2
     ;;

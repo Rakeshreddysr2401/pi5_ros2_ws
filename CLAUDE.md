@@ -47,12 +47,10 @@ when the owner explicitly asks for the virtual rover, and take it down after (`f
   layer in order with its own PASS/FAIL gate — camera, lidar, pose, fused,
   slam, map, nav, vlm — then Studio on this Pi5 and RViz on the laptop;
   ~10 min from cold). Voice is the Pi5's own trio (`langrobo-voice` user
-  unit, starts at boot). Switches `robot_body` to `rover` (plain Twist on
-  `/cmd_vel`).
+  unit, starts at boot).
 - **`twin up|status|down`** — the SIMULATED robot (Isaac Sim on the laptop, "The twin"
   below): after `./mitra up home_real` on the laptop, runs `TWIN=1 ./rover up` on the
-  Jetson and the twin brain here, all on domain 42. (`sim`, the old Gazebo
-  rover_sim, is retired.)
+  Jetson and the twin brain here, all on domain 42.
 - **`stop`** parks the robot: stops the body (the Jetson's `rover` container) but
   keeps `langrobo-brain` and voice up, so chat/Telegram keeps listening. No password.
 - **`down`** full shutdown: everything `stop` does PLUS this Pi5's system units (brain,
@@ -253,7 +251,7 @@ that moves wheels).
 
 ## Config split
 
-- `src/langrobo_ros/config/agent_params.yaml` — LLM provider/model, robot_body
+- `src/langrobo_ros/config/agent_params.yaml` — LLM provider/model
   (ROS params). KV slots are in `registry.py`; named places only come from
   `save_location` (no configured defaults — odom restarts at every boot)
 - `.env` (validated fail-fast at startup) — keys + LANGROBO_* service settings;
@@ -337,7 +335,7 @@ no longer exist.
 
 The twin is the robot's HARDWARE simulated, nothing else: since 2026-10-18 in
 **Isaac Sim 5.1** on the new laptop (user `chotesh`, 192.168.1.9, DHCP, RTX
-4050; Gazebo is gone). Repo github.com/Rakeshreddysr2401/mitra_sim (private),
+4050). Repo github.com/Rakeshreddysr2401/mitra_sim (private),
 laptop `~/mitra_sim` (branch `isaac`). The laptop simulates the D555, the C1
 and the ESP32 + encoders with the rover's measured body, noise and wheel
 response; the Jetson runs the rover's WHOLE, unchanged stack on it
@@ -373,8 +371,6 @@ voice, its own teleop switch (`twin_brain.sh manual on|off`, a file), health on
 (prints the replies and the later arrival report). The Jetson half runs the
 rover's own `pixel_to_goal`, so "go near X" is the real path. It shares the Mac
 mini's llama.cpp slots with the real brain. **Default is the real robot**: the
-twin runs only when started.
-
-The old Gazebo `rover_sim` (mecanum, its own nav2, a different contract) is
-retired: `fleet.sh sim` only says so. `ROS2Bridge`'s `robot_body: sim`
-(TwistStamped) is now unused.
+twin runs only when started. The brain publishes the same plain Twist on
+`/cmd_vel` to both (the twin's ESP32 stand-in, `esp32_twin`, takes it as the
+ESP32 does).

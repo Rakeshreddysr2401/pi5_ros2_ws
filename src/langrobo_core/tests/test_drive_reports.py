@@ -17,8 +17,6 @@ from langrobo_core.tools.system import get_robot_status
 
 
 class _Bridge:
-    robot_body = "rover"
-
     def __init__(self, pose=(1.0, 2.0, 90.0), nav=None):
         self._pose, self._nav = pose, nav or {"active": False, "goal": None, "last": None}
 

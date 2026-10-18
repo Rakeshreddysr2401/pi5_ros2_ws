@@ -63,7 +63,6 @@ def get_robot_status() -> str:
     else:
         parts.append("my camera feed is live")
 
-    parts.append(f"I'm driving the {bridge.robot_body} body")
     return "Status: " + "; ".join(parts) + "."
 
 

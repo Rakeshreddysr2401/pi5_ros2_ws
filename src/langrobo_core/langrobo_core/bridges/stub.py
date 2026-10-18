@@ -152,10 +152,6 @@ class StubBridge:
 
     # ── Publishers ────────────────────────────────────────────────────────
 
-    @property
-    def robot_body(self) -> str:
-        return "stub"
-
     def publish_twist(self, twist) -> None:
         lx = getattr(getattr(twist, "linear",  None), "x", 0.0)
         az = getattr(getattr(twist, "angular", None), "z", 0.0)

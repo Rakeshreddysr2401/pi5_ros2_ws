@@ -6,9 +6,9 @@
 #   ./scripts/twin_brain.sh listen [seconds]            # just print what it says
 #   ./scripts/twin_brain.sh manual on|off               # the twin's own teleop switch
 #
-# The twin (github mitra_sim) is a simulated home: the laptop runs the world
-# (Gazebo), the Jetson runs the rover's own nav stack on it, both on ROS domain
-# 42 (MITRA_DOMAIN). This runs the SAME agent_node, unchanged, on that domain:
+# The twin (github mitra_sim) is the robot's hardware simulated in Isaac Sim on
+# the laptop; the Jetson runs the rover's own whole stack on it, both on ROS
+# domain 42 (MITRA_DOMAIN). This runs the SAME agent_node, unchanged, on that domain:
 #
 #   - ROS_DOMAIN_ID=42: it hears only the twin; its /cmd_vel, /reach and
 #     /goal_exec reach only the twin. Domain 0 -- the real robot, the real
@@ -59,7 +59,7 @@ up)
     export LANGROBO_WARM_ALL=0                  # do not evict the real brain's caches at start
     export LANGSMITH_PROJECT=mitra-twin LANGCHAIN_PROJECT=mitra-twin
     setsid ros2 launch langrobo_ros brain_launch.py provider:=llamacpp \
-        start_micro_ros:=false robot_body:=rover > "$LOG" 2>&1 < /dev/null &
+        start_micro_ros:=false > "$LOG" 2>&1 < /dev/null &
     echo $! > "$PIDF"
   )
   printf "twin brain: starting on domain %s" "$DOMAIN"
