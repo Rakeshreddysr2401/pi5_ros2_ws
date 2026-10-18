@@ -184,9 +184,10 @@ def test_look_around_keeps_a_photo_per_stop(robot, scripted, monkeypatch):
     took = []
     monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5, source="search":
                         (took.append(source) or b"jpeg", {"stamp": (1, 2)}))
-    out = scan_surroundings.invoke({"state": dict(STATE)})
-    assert turns == [60] * 6 and took == ["scan"] * 6
-    assert "6 photo(s)" in out
+    out = scan_surroundings.invoke({"state": dict(STATE), "describe": False})
+    n = ap.SCAN_VIEWS                       # 5 x 72 deg since 2026-10-18 (was 6 x 60)
+    assert turns == [360 / n] * n and took == ["scan"] * n
+    assert f"{n} photo(s)" in out
 
 
 @pytest.fixture(autouse=True)
@@ -267,5 +268,5 @@ def test_a_scan_stopped_partway_says_it_is_incomplete(robot, scripted, monkeypat
         return (True, "") if len(calls) <= 2 else (False, "refused: wall")
     monkeypatch.setattr(ap._mv, "turn_robot", turn)
     monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5, source="search": (b"jpeg", {"stamp": (1, 2)}))
-    out = scan_surroundings.invoke({"state": dict(STATE)})
-    assert "only looked around 120 of 360 degrees" in out and "incomplete" in out
+    out = scan_surroundings.invoke({"state": dict(STATE), "describe": False})
+    assert f"only looked around {round(2 * 360 / ap.SCAN_VIEWS)} of 360 degrees" in out and "incomplete" in out

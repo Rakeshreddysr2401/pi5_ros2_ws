@@ -21,6 +21,7 @@ see INTEGRATION_GAPS.md §1 for the exact JSON contract to restore it against.
 All geometry is pure and unit-tested; robot I/O goes through _bridge.get().
 """
 
+import logging
 import math
 import os
 import re
@@ -37,6 +38,8 @@ from . import photo_recall as _recall
 from . import photos as _photos
 from . import survey as _survey
 from ..utils import viewpoints as _viewpoints
+
+logger = logging.getLogger(__name__)
 
 # How close the robot parks from the object (metres). Floor: D555 depth goes
 # blind under ~0.4 m, and Nav2 can stop up to xy_goal_tolerance (0.10 m) short
@@ -690,14 +693,71 @@ def arrival_check(description: str) -> str:
         return ""
 
 
-@tool
-def scan_surroundings(state: Annotated[dict | None, InjectedState] = None) -> str:
-    """Turn a full slow circle in place so the depth camera can map everything
-    around the robot (fills the 3D map behind/left/right). Use for "look
-    around", "scan the room", "map this area", or before navigating in a spot
-    the robot hasn't seen from all sides.
+# The scan: SCAN_VIEWS stops a full circle apart. The colour camera sees ~87 deg
+# across, so 5 x 72 deg still covers everything with ~15 deg of overlap, and
+# saves a whole turn over the old 6 x 60 (each pivot is ~7 s on the real
+# robot, and slides the body 3-14 cm: 2026-10-18).
+SCAN_VIEWS = int(os.environ.get("LANGROBO_SCAN_VIEWS", "5"))
 
-    Takes about 15 seconds."""
+# One vision call over all the scan's views, each labelled with where it
+# points relative to where the robot faced when the scan began. Before this
+# (real robot, 2026-10-18) "look around and tell me what is in this room" was
+# answered from ONE forward photo, and a scan ended with "I took 6 photos":
+# the user heard nothing about the room.
+_SCAN_PROMPT = (
+    "You are a home robot. You just turned a full circle in place and took the "
+    "photos below, one per direction. Each is labelled with where it points. "
+    "Describe the room around you for a person who cannot see it: the main "
+    "furniture and objects, and which side each is on (ahead, left, behind, "
+    "right). Mention a doorway or an open path if you see one. Plain words, at "
+    "most three short sentences, no lists. Say only what the photos show."
+)
+
+
+def _direction(rel_deg: float) -> str:
+    """Where a view points, relative to the heading the scan started from (CCW +)."""
+    a = (rel_deg + 180.0) % 360.0 - 180.0
+    if abs(a) <= 30:
+        return "ahead"
+    if abs(a) >= 150:
+        return "behind"
+    side = "left" if a > 0 else "right"
+    if abs(a) < 75:
+        return f"ahead-{side}"
+    if abs(a) > 105:
+        return f"behind-{side}"
+    return side
+
+
+def describe_scan(views: list) -> str | None:
+    """views: [(jpeg, degrees turned since the scan began)]. One VLM call on the
+    vision-tool slot. None when there is nothing to describe or the model fails
+    (the scan itself still counts: the map and the photo log have the views)."""
+    views = [(j, d) for j, d in views if j]
+    if not views:
+        return None
+    parts = [{"type": "text", "text": _SCAN_PROMPT}]
+    for jpeg, deg in views:
+        parts.append({"type": "text", "text": f"Photo pointing {_direction(deg)}:"})
+        parts.append(_recall._image_part(jpeg))
+    try:
+        _, _, text = _recall._invoke(_survey.vision_tool_llm(), parts, run_name="scan_describe")
+    except Exception as e:                      # noqa: BLE001 -- a description is a bonus
+        logger.warning("scan_describe failed: %s", e)
+        return None
+    text = " ".join((text or "").split())
+    return text or None
+
+
+@tool
+def scan_surroundings(describe: bool = True,
+                      state: Annotated[dict | None, InjectedState] = None) -> str:
+    """Turn a full circle in place, photograph every direction and say what is
+    around the robot. Use for "look around", "what is in this room", "what is
+    behind you", "scan the room", or before driving somewhere the robot has
+    not seen from all sides (then describe=False: it only fills the map).
+
+    Takes about 45 seconds; returns a short description of the room."""
     refusal = _mv.blocked_by_role(state) or _mv.blocked_by_manual()   # MANUAL: a turn against its zeros goes nowhere
     if refusal:
         return refusal
@@ -708,9 +768,13 @@ def scan_surroundings(state: Annotated[dict | None, InjectedState] = None) -> st
         from geometry_msgs.msg import Twist  # noqa: F401 -- the timed fallback needs it
     except ImportError:
         return "I can't turn right now — my wheel interface isn't available."
-    photos = 0
-    for i in range(6):
-        ok, why = _mv.turn_robot(bridge, 60.0)
+    step = 360.0 / SCAN_VIEWS
+    views = []
+    # The view it already has counts: the first photo is taken BEFORE turning.
+    frame, _ = _capture(bridge, settle_s=1.0, source="scan")
+    views.append((frame, 0.0))
+    for i in range(1, SCAN_VIEWS + 1):
+        ok, why = _mv.turn_robot(bridge, step)
         if not ok:
             if why == "interrupted":
                 return "Scan stopped."
@@ -718,12 +782,15 @@ def scan_surroundings(state: Annotated[dict | None, InjectedState] = None) -> st
             # degrees" got "I have scanned the area around me" back from the
             # model 3 times in 5 (a Telegram "Now check", 2026-10-02); this
             # wording, 5 of 5 honest.
-            if i == 0:
+            if i == 1:
                 return (f"I could NOT look around: I could not turn at all ({why}). "
                         f"Nothing was scanned. Tell the user that, and why.")
-            return (f"I only looked around {i * 60} of 360 degrees, then could not "
-                    f"turn further ({why}). Tell the user the scan is incomplete."
-                    + _mv.view_stale_note())
+            seen = describe_scan(views) if describe else None
+            return (f"I only looked around {round((i - 1) * step)} of 360 degrees, then "
+                    f"could not turn further ({why}). Tell the user the scan is incomplete."
+                    + (f" What I did see: {seen}" if seen else "") + _mv.view_stale_note())
+        if i == SCAN_VIEWS:
+            break                               # back where it began: that view is views[0]
         # Pause so vSLAM/nvblox integrate a still frame (motion blur hurts both).
         end = time.time() + 1.0
         while time.time() < end:
@@ -731,12 +798,17 @@ def scan_surroundings(state: Annotated[dict | None, InjectedState] = None) -> st
                 return "Scan stopped."
             time.sleep(0.05)
         # And keep the view: every photo goes into the photo log, so "where
-        # is my bag?" after "look around" is answered from these six.
+        # is my bag?" after "look around" is answered from these.
         frame, _ = _capture(bridge, settle_s=1.0, source="scan")
-        photos += frame is not None
-    return (f"Scan complete — I turned a full circle, so the map now covers "
-            f"all around me, and I took {photos} photo(s) to remember what is "
-            f"where." + _mv.view_stale_note())
+        views.append((frame, i * step))
+    photos = sum(1 for f, _ in views if f)
+    seen = describe_scan(views) if describe else None
+    if seen:
+        return f"Scan complete, all the way round. What is around me: {seen}"
+    return (f"Scan complete — I turned a full circle, so the map now covers all "
+            f"around me, and I took {photos} photo(s)"
+            + (" (I could not get a description of them right now)" if describe else "")
+            + "." + _mv.view_stale_note())
 
 
 @tool

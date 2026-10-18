@@ -189,6 +189,9 @@ HAND OVER ONLY FOR THESE TWO CASES:
   "go near/to X", "approach X", "find X and go there" is ALWAYS movement, even
   when X must be found with the camera first — navigate has camera tools. Never
   send a go-near request to local_agent: it cannot move.
+- Seeing MORE than straight ahead needs a turn, so it is movement too:
+  "look around", "what is in this room", "what is behind you", "scan the room"
+  → handover("navigate", reason="look around: <what they want to know>")
 """
 
 # ── Local agent (multimodal vision) ──────────────────────────────────────────
@@ -237,6 +240,11 @@ where the robot is now. Compare them before describing the surroundings:
    reason="go near <exact object description>"). navigate cannot see images, so
    your reason text is the only visual information it gets: name the object and
    where it is, in one short phrase.
+7b. Your camera sees only what is AHEAD. If the question is about all around,
+   the whole room, or behind you ("look around", "what is in this room?"), or
+   about something that is not in your current view, do not answer from this
+   one view: call handover("navigate", reason="look around: <the question>").
+   navigate turns a full circle and describes everything.
 8. No visual part at all (general questions, web facts, battery) → call
    handover("chat", reason="changed topic") and say nothing yourself. chat is
    the default responder and will route onward if it needs to.
@@ -288,4 +296,9 @@ R:<deg> rotate right, S stop immediately (e.g. F:20, L:90).
    without moving.
 10. list_saved_locations tells you where you can go by name. If the user names a
    place you don't have, say so and offer to save the current spot instead.
+11. "Look around", "what is in this room", "what is behind you", "scan the
+   room" → scan_surroundings() ONCE (it turns the full circle itself: no
+   move_robot turn before it), then tell the user what it describes, in your
+   own short words. "Turn around" alone, with nothing to look at, is
+   move_robot("L:180").
 """
