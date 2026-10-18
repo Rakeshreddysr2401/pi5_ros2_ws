@@ -41,19 +41,12 @@ pi5_tts_node:
     # pipewire = whatever pi5_audio_device made the default speaker.
     output_device: pipewire
     threads: 4
-    # local | sarvam | soniox — see docs/voice/PI5_VOICE.md. Local Kokoro measured RTF ~1.8
-    # (slower than real time); both cloud options publish sub-second/streaming
-    # latency instead — this switch is about speed, not translation (that's the
-    # STT side's reason). Same key/degrade rules as pi5_stt_node below.
-    # local | sarvam | sarvam_translate | soniox. 'sarvam_translate' takes
-    # English reply text and SPEAKS it in Telugu (translate -> TTS); see below.
-    # Default = sarvam_translate so the brain's English replies are heard in Telugu.
-    # piper: fast local (RTF ~0.25: 3 s of speech in 0.74 s). local = Kokoro, more natural but
-    # RTF ~2 on this Pi (5.9 s for 2.9 s); it stays loaded as the fallback. Was sarvam_translate.
-    # DEFAULT (owner, 2026-10-04): English replies spoken in Telugu through Sarvam.
-    # Sarvam down -> tts_fallback speaks them in English. Fully local: tts_provider piper.
-    # sarvam_stream: the same Telugu, streamed -- first sound ~0.8 s after a sentence
-    # instead of ~1.8 s (translate on a kept-warm session + bulbul over one WebSocket).
+    # local (Kokoro) | piper | sarvam | sarvam_translate | sarvam_stream | soniox.
+    # DEFAULT (owner, 2026-10-04): the brain's English replies are SPOKEN in Telugu
+    # through Sarvam. sarvam_stream = that, streamed: first sound ~0.8 s after a
+    # sentence instead of ~1.8 s (translate on a kept-warm session + bulbul over one
+    # WebSocket). Sarvam down -> tts_fallback speaks English. Fully local: piper
+    # (RTF ~0.25); Kokoro (local) is more natural but RTF ~2 on this Pi.
     tts_provider: sarvam_stream
     tts_fallback: piper
     tts_piper_model: /home/rakhi24/ros2_ws/src/langrobo_ros/models/piper/en_US-lessac-medium.onnx
@@ -133,10 +126,10 @@ pi5_stt_node:
     # busy: "Can you find the door?"). The agent clarifies when unsure; a trained
     # wake word replaces this later. true + addressing_mode: llm = the old filter.
     require_wake: false
-    # NO WAKE WORD (owner, 2026-10-04): the name still works instantly; any other
-    # sentence is judged by the brain's LLM -- for me, or TV / people talking?
+    # With require_wake: true -- the name works instantly; any other sentence is
+    # judged by the brain's LLM (relevance.py, slot 4). Unused while require_wake is false.
     addressing_mode: llm
-    heard_cue: true          # a short chime the moment a sentence is accepted
+    heard_cue: true          # a chime when the filter accepts a sentence (only with require_wake: true)
     # Speak the acknowledgement only if you PAUSE after the name. Saying
     # "Kino, go to the kitchen" in one breath skips it rather than talking
     # over the command (see wake_cue.py).
@@ -158,25 +151,18 @@ pi5_stt_node:
     # + 0.6 s tail made short commands ("ఆగు", 0.4 s) score 0.22-0.31 and get
     # DROPPED in the owner's live test. min duration (300 ms) still applies.
     min_voiced_ratio: 0.0
-    # local | sherpa | sarvam | soniox | apple — see docs/voice/PI5_VOICE.md for the cost/latency comparison.
-    # apple = the Mac Mini's on-device Apple recogniser (kino-stt, docs/voice/MAC_STT.md):
-    # ENGLISH ONLY (Apple has no Telugu), free, audio stays in the house, ~0.1 s on the Mac.
-    # Settings via env (MAC_STT_URL / MAC_STT_LANG); Mac down -> stt_fallback as usual.
-    # sarvam/soniox need SARVAM_API_KEY / SONIOX_API_KEY in ~/ros2_ws/.env (example.env
-    # has placeholders); missing key or any request failure falls back to local
-    # automatically (never goes silent — CLAUDE.md #4).
-    # Default = sarvam: Telugu speech -> English text (household speaks Telugu).
-    # ⚠️ COST/PRIVACY: with the wake word OFF (wake_detector: transcript_alias) this
-    # sends EVERY ambient utterance to Sarvam. Re-enable the wake word to gate it,
-    # or set stt_provider: local for free offline transcription.
-    # DEFAULT (owner, 2026-10-04): Telugu speech -> English text for the brain.
-    # Sarvam down -> local Parakeet transcribes English (since 2026-10-10; Whisper
-    # tiny.en was the fallback and got ~half the owner's words wrong). Fully local:
-    # stt_provider: sherpa.
-    stt_provider: sherpa
-    stt_source_language: te   # Telugu
-    stt_target_language: en
+    # local | sherpa | sarvam | soniox | apple — docs/voice/PI5_VOICE.md compares them.
+    # LIVE since 2026-10-10 (owner, commit 89f6ac0): sherpa = NVIDIA Parakeet on the
+    # Pi 5 -- English only, offline, free, no audio leaves the house. With
+    # require_wake: false every sentence is transcribed, so this is also the
+    # private/cheap choice. sarvam = Telugu speech -> English text (cloud; needs
+    # SARVAM_API_KEY), the most accurate on the owner's voice; apple = the Mac
+    # Mini's recogniser (docs/voice/MAC_STT.md, English only). Any failure falls
+    # back to stt_fallback, then Whisper -- never silent (CLAUDE.md #5).
     # Owner's own voice, 39 sentences, fan on (docs/voice/VOICE_LAB_2026-10.md):
     # Sarvam 6-11 % word errors 0.35 s | Parakeet 10-15 % 0.55 s | tiny.en 45-54 %.
+    stt_provider: sherpa
+    stt_source_language: te   # Telugu -- used by the translating cloud providers only
+    stt_target_language: en
     stt_fallback: sherpa
     stt_sherpa_model_dir: /home/rakhi24/ros2_ws/src/langrobo_ros/models/sherpa/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8

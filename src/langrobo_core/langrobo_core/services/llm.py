@@ -250,26 +250,36 @@ def slot_for(agent: str | None) -> int | None:
 
 
 def get_fallback_llm():
-    """The configured cloud fallback LLM, or None. Fresh instance per call.
+    """The configured cloud fallback LLM, or None.
 
     No slot pin (cloud servers have no KV slots) and no per-agent overrides —
     one fallback model serves every agent. Streaming mirrors the global flag:
     for openai-compatible fallbacks the sentence-streaming TTS path keeps
     working; other providers fall back to whole-reply speech (agent_node
     publishes the full text when nothing streamed).
+
+    Cached like get_llm's clients: safe_invoke asks for this before EVERY
+    call, healthy primary or not, and a fresh build each time paid client
+    construction plus a new HTTP pool for a fallback that was never used.
     """
     if _fallback is None:
         return None
+    cfg = {
+        "provider": _fallback.provider,
+        "model": _fallback.model,
+        "base_url": _fallback.base_url,
+        "api_key": _fallback.api_key or "none",
+        "max_tokens": _config.get("max_tokens", 6000),
+        "streaming": _config.get("streaming", False),
+        "slot": None,
+    }
+    key = ("fallback", repr(sorted(cfg.items())))
     try:
-        return _build({
-            "provider": _fallback.provider,
-            "model": _fallback.model,
-            "base_url": _fallback.base_url,
-            "api_key": _fallback.api_key or "none",
-            "max_tokens": _config.get("max_tokens", 6000),
-            "streaming": _config.get("streaming", False),
-            "slot": None,
-        })
+        with _clients_lock:
+            client = _clients.get(key)
+            if client is None:
+                client = _clients[key] = _build(cfg)
+        return client
     except Exception as e:
         # configure_fallback already proved this builds, so reaching here means
         # something changed under us. Never let it kill a turn whose primary is

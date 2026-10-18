@@ -5,9 +5,13 @@ first; the conference mic is good — feed it properly to Sarvam for now, local 
 Branch `dev-1.6.3-local-voice`. This file is the record of everything measured, so the
 local work can resume without redoing it. Scripts: `scripts/voice_lab/`.
 
-**Where it stands:** the robot runs **Sarvam** (cloud) for both legs, fed by the
-**AM-C28 conference mic** through a cleaned-up input path. Local English STT
-(Parakeet) and local Telugu→English (Jetson) are proven on the bench, not wired in.
+**Where it stands (updated 2026-10-18):** STT is **Parakeet on the Pi**
+(`stt_provider: sherpa`, switched on by the owner late on 2026-10-10, commit
+`89f6ac0`); TTS is **Sarvam** streamed in Telugu (`sarvam_stream`). Both are fed
+by the **AM-C28 conference mic** through a cleaned-up input path. Sarvam STT
+(Telugu→English) is one line away in voice_params.yaml; local Telugu→English
+(Jetson) is proven on the bench, not wired in. The rest of this page was written
+earlier that day, while Sarvam was still the live STT.
 
 ---
 
@@ -133,7 +137,7 @@ ranks models, the owner's own voice decides.
 Built for it: `stt_providers/local_sherpa.py` (`stt_provider: sherpa`,
 `stt_sherpa_model_dir`), Whisper stays loaded as its fallback; `sherpa-onnx==1.13.8`
 (`pip3 install --user --break-system-packages sherpa-onnx==1.13.8`). Model download:
-models/README.md. **Not switched on** — Sarvam is the live provider.
+models/README.md. (Switched on as the live provider later on 2026-10-10.)
 
 ## 3. Telugu → English, local
 

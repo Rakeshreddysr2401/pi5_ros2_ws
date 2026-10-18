@@ -37,10 +37,10 @@ debugging nodes.
    `./rover` uses it as `PI5_HOST`).
 3. **The laptop and the Mac Mini move on DHCP.** Never diagnose them by IP.
 
-`langrobo-discovery.service` (a Fast DDS discovery server on :11811) still
-exists and still starts at boot. **Nothing uses it any more** — it is a
-leftover of the pre-2026-07-16 scheme, harmless, and can be disabled with
-`sudo systemctl disable --now langrobo-discovery` whenever convenient.
+The old `langrobo-discovery.service` (a Fast DDS discovery server on :11811,
+the pre-2026-07-16 scheme) was removed from the repo on 2026-10-18. On a Pi
+installed before that, re-run `./scripts/install_systemd.sh` (it disables and
+deletes the old unit) or run `sudo systemctl disable --now langrobo-discovery`.
 
 ## Checking the link
 

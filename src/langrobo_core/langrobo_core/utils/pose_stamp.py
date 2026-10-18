@@ -49,7 +49,7 @@ CAMERA_VIEW_MARKER = "[Camera view"
 # Below these, the robot has not meaningfully moved: odom jitter, wheel
 # settling, and the sub-centimetre drift of standing still. Above either, the
 # photo is of somewhere else. Chosen against the rover's measured turn variance
-# (±20–25% spin-down coast, Todays_Todo.md) — anything tighter would call a
+# (±20–25% spin-down coast of the old timed turns) — anything tighter would call a
 # stationary robot moved every turn.
 MOVED_M = 0.15
 TURNED_DEG = 15.0

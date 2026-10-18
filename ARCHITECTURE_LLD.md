@@ -313,7 +313,7 @@ services/llm.configure(agent_overrides={name: {"slot": n}})
 ChatOpenAI(extra_body={"id_slot": n})     ← forwarded verbatim to llama.cpp
 ```
 
-**Start the server with `--parallel 4`** (slot 3 is the vision-tool slot: search views, locate, the photo survey -- `survey.VISION_TOOL_SLOT`: a one-shot photo prompt on local_agent's slot 1 would overwrite the vision conversation's cached photos). Fewer slots is not an error; it just
+**Start the server with `--parallel 5`** (`e12b5`; slot 4 is the voice filter's; slot 3 is the vision-tool slot: search views, locate, the photo survey -- `survey.VISION_TOOL_SLOT`: a one-shot photo prompt on local_agent's slot 1 would overwrite the vision conversation's cached photos). Fewer slots is not an error; it just
 costs, and agent_node says so at boot.
 
 This replaced five hand-maintained ROS parameters plus a fold-when-out-of-range
@@ -457,7 +457,6 @@ Driving is not gated. Test: `test_addressing.py`.
 |---|---|
 | `agent_node.py` | the entry point: params → bridge → services → graph → worker thread. |
 | `ros2_bridge.py` | every topic, service and action. `NAV_FRAME` is defined here, once. |
-| `wheel_odom_relay.py` | ESP32 `/wheel_state` → `nav_msgs/Odometry`. |
 
 There is deliberately no custom-interface package. Every topic here is a
 `std_msgs`/`geometry_msgs`/`sensor_msgs` type or JSON in a `String`, which is

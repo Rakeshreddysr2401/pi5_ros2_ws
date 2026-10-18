@@ -54,7 +54,9 @@ when the owner explicitly asks for the virtual rover, and take it down after (`f
 - **`stop`** parks the robot: stops the body (the Jetson's `rover` container) but
   keeps `langrobo-brain` and voice up, so chat/Telegram keeps listening. No password.
 - **`down`** full shutdown: everything `stop` does PLUS this Pi5's system units (brain,
-  micro-ROS, discovery) via sudo. Those units are `enabled`, so a Pi5 reboot restarts them.
+  micro-ROS) via sudo. Those units are `enabled`, so a Pi5 reboot restarts them.
+  (The Fast DDS discovery unit is gone, 2026-10-18 — the fleet is plain multicast;
+  re-running `scripts/install_systemd.sh` disables and removes an old install.)
 - **`status`** shows who's up everywhere, per Jetson layer.
 
 **After a power cycle** the Pi5 units come back on their own; the Jetson's container
@@ -76,8 +78,10 @@ passwordless ssh; DDS is plain multicast on domain 0 everywhere (NETWORKING.md).
 ./scripts/fleet.sh down       # full shutdown incl. Pi5 services (sudo)
 ./scripts/fleet.sh status
 
-# Test (pure core — no robot, no LLM server, no keys; ~350 tests, ~5s; never traces)
-cd src/langrobo_core && python3 -m pytest tests/ -q
+# Test (no robot, no LLM server, no keys; never traces) — run all three after a change
+cd src/langrobo_core && python3 -m pytest tests/ -q     # pure core, ~620 tests, ~25 s
+cd src/pi5_voice_pkg && python3 -m pytest tests/ -q     # voice, ~135 tests
+cd src/langrobo_ros && python3 -m pytest test/ -q       # bridge (needs rclpy), ~10 tests
 
 # Build + deploy after code changes
 colcon build --symlink-install && sudo systemctl restart langrobo-brain
@@ -181,12 +185,14 @@ that moves wheels).
   table that had already drifted (it gated objects on a COCO class list while
   dispatching to a VLM tool). Every turn now goes through the graph, so
   movement costs 2 LLM calls and a vision question 3. **Do not reintroduce
-  regex intent matching** — the replacement is an entry classifier:
-  `services/jev.py` (TypeSafe's Jev, cloud, `LANGROBO_JEV=shadow|on`, off by
-  default; ARCHITECTURE_LLD.md §4.3c) is built; the on-device MiniLM of
-  INTENT_ROUTING_PLAN.md is the private alternative, not yet built.
-  Stopping never depended on it: `agent_node._on_user_input` halts the wheels
-  on every utterance before the graph runs.
+  regex intent matching** — the replacement is an entry classifier, and it is
+  BUILT and ON in production: `langrobo_core/routing/` (bge-small embeddings
+  over each spec's `examples` + `intent_examples`, ~15 ms on the Pi, a
+  confident pick enters that agent directly; `LANGROBO_INTENT_ROUTING=off|shadow|on`,
+  `.env` has `on`). The cloud alternative `services/jev.py` (TypeSafe's Jev,
+  `LANGROBO_JEV`) is built and off. Stopping never depended on either:
+  `agent_node._on_user_input` halts the wheels before the graph runs (while
+  the robot moves, only a stop word does — `utils/stop_words.py`).
 - `langrobo_core/graph/` — topology (build.py, derived entirely from
   registry.py), entry routing (sticky agent, else chat), handover + loop guards
 - `langrobo_core/agents/` — `factory.py` builds EVERY agent from its spec;
@@ -225,8 +231,10 @@ that moves wheels).
   launch, systemd units
 - `pi5_voice_pkg/` — the Pi5 voice trio. **Since 2026-10-10:** mic = USB
   AM-C28 array (audio passed to the recogniser untouched — owner's rule; Silero
-  VAD only marks start/end), speaker = boAt Stone (A2DP); STT = Sarvam, offline
-  fallback = **Parakeet** on the Pi (`stt_fallback: sherpa`). Measurements and
+  VAD only marks start/end), speaker = boAt Stone (A2DP); **STT = Parakeet on
+  the Pi** (`stt_provider: sherpa`, owner's switch 2026-10-10 — English only,
+  offline; `sarvam` = Telugu->English cloud, one line away), TTS = Sarvam
+  streamed in Telugu (`sarvam_stream`, fallback `piper`). Measurements and
   the owner's-voice scoreboard: docs/voice/VOICE_LAB_2026-10.md (re-score any
   change with `scripts/voice_lab/score_set.py`, not by ear). `audio_device_node` is the ONE
   owner of the speaker + mic (any paired Bluetooth device, or a wired
@@ -295,21 +303,27 @@ no longer exist.
 
 - **The rover is real and driving.** The D555 is mounted and streaming;
   cuVSLAM + nvblox + Nav2 run on the Jetson and have driven autonomous goals
-  to within 4-5 cm. Bring it up with `./rover nav && ./rover vlm` in the
-  perception repo.
+  to within 4-5 cm. Bring it up with `./scripts/fleet.sh rover` (the Jetson's
+  `./rover up`).
+- **Feature flags change what the model is shown.** `LANGROBO_FOLLOW=1` binds
+  `follow_person` to navigate (and adds "follow me" to the routing copy);
+  `LANGROBO_PAN_TILT=1` binds `point_camera`. Production `.env` has FOLLOW on,
+  PAN_TILT off. Off, the schema is not shipped and the prompts are byte-identical.
 - **Everything is `odom`, never `map`.** That Nav2 runs single-session with no
   relocalisation, so no node publishes a map frame at all. Goals, TF pose
   reads and any object positions must agree on `ROS2Bridge.NAV_FRAME`
   (default `odom`, one constant, `LANGROBO_NAV_FRAME` to override). A `map`
   goal is not an error — it is silently untransformable, which is how every
   `navigate_to_pose` call failed for months.
-- **Four topics this brain used to speak have no listener on the rover** and
-  the tools built on them were removed rather than left looking functional:
+- **Three topics this brain used to speak have no listener on the rover** and
+  the tools built on them were removed (or, for the servos, bound only behind
+  `LANGROBO_PAN_TILT=1`) rather than left looking functional:
   `/vision/detections_3d` (object positions — the contract to restore it is in
   INTEGRATION_GAPS.md §1), `/vision/target*` (YOLO servo loop), `/servo_pan` +
   `/servo_tilt` (no mount, and the ESP32 firmware has three subscriptions and
-  none are servos), `/audio/music_*`. Check for a publisher before building on
-  a topic here.
+  none are servos). (`/audio/music_*` was the fourth; since 2026-10-04 the
+  Pi's own `media_node` answers it.) Check for a subscriber before building
+  on a topic here.
 - Streaming tool calls need the llama.cpp server started with
   `--jinja --parallel 5` (one slot per agent: chat/local_agent/navigate, + the vision-tool slot 3,
   + the voice filter's slot 4) -- `e12b5` on the Mac does it.

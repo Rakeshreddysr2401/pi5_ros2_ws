@@ -30,7 +30,7 @@ def handover(
 
     Args:
         next_agent: Agent to route to.
-        reason: Why this handover is happening (e.g. "order_placed", "cannot_answer").
+        reason: Why this handover is happening (e.g. "visual query", "changed topic").
         chain: True -> next agent responds immediately in the same turn.
                Use when the next agent must ACT on this one's result (e.g.
                local_agent identifies an object, then navigate drives to it).

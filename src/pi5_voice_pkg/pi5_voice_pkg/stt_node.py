@@ -1,14 +1,14 @@
-"""Pi5 STT — mic capture + VAD + wake gate, same /voice/* wire protocol as
-the Jetson's stt_node. Transcription itself is delegated to a swappable
-provider (stt_providers/) — local faster-whisper, or a cloud STT with
-built-in Telugu->English translation (Sarvam, Soniox). See docs/voice/PI5_VOICE.md.
+"""Pi5 STT — mic capture + VAD + wake gate, publishing on the /voice/* wire
+protocol (CLAUDE.md rule 4). Transcription itself is delegated to a swappable
+provider (stt_providers/) — local Parakeet (sherpa) or Whisper, or a cloud STT
+with built-in Telugu->English translation (Sarvam, Soniox). See docs/voice/PI5_VOICE.md.
 
 Switching: set `stt_provider` in voice_params.yaml (local | sherpa | sarvam | soniox | apple)
-and restart the node. If the selected cloud provider fails for any reason —
+and restart the node. If the selected provider fails for any reason —
 missing API key, network down, bad response — this transparently falls back
-to local_whisper for that utterance and logs a warning; it never goes
-silent (same "missing keys degrade, never crash" rule agent_node follows,
-CLAUDE.md #4).
+to `stt_fallback` (then Whisper) for that utterance and logs a warning; it
+never goes silent (same "missing keys degrade, never crash" rule agent_node
+follows, CLAUDE.md #5).
 
 Wake word: an acoustic detector (wake/, e.g. openWakeWord) gates the mic. While
 ASLEEP the node runs only the cheap detector and transcribes NOTHING — no
@@ -271,7 +271,12 @@ class STTNode(Node):
         self._relevance_want_slot = int(self.get_parameter('relevance_slot').value)
         self._relevance_slot = None          # pinned slot once /props says it exists
         self._relevance_slot_said = 'unset'  # last slot state logged (log on change only)
-        if self._addressing == 'llm' and self._relevance_want_slot >= 0:
+        # The filter is consulted only in transcript_alias mode WITH
+        # require_wake (_transcribe): otherwise probing the Mac's slots every
+        # 5 min is work for a check that never runs.
+        uses_filter = (self._addressing == 'llm' and self._require_wake
+                       and self.get_parameter('wake_detector').value in ('', 'none', 'transcript_alias'))
+        if uses_filter and self._relevance_want_slot >= 0:
             threading.Thread(target=self._probe_relevance_slot, daemon=True).start()
             self.create_timer(300.0, lambda: threading.Thread(
                 target=self._probe_relevance_slot, daemon=True).start())
@@ -283,11 +288,9 @@ class STTNode(Node):
         # What is playing (media_node): context for the relevance check, and the
         # bare music controls ("Louder.") pass at once while it plays.
         self._music_title = ''
-        from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
         self.create_subscription(String, '/audio/music_state', self._on_music_state, QoSProfile(
             depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.RELIABLE))
         # Additive topic: tts_node plays a clip it rendered once at startup.
-        # The Jetson's voice stack ignores it, like /voice/*_meta.
         self._cue_pub = self.create_publisher(String, '/voice/cue', 10)
         self._tts_stop_pub = self.create_publisher(String, '/voice/tts_stop', 10)
         self._debug_vad_pub = self.create_publisher(String, '/voice/debug_vad', 10)

@@ -257,7 +257,7 @@ crashes); `e12b5 stop | status | log`. Source: `scripts/mac_mini/e12b5` (symlink
 | Tool calls flaky / early stops | GGUF chat template mislabels control tokens → suspect the quant, and check the server has `--jinja` |
 | "I couldn't measure how far it is: ..." | `pixel_to_goal.py` isn't running on the Jetson (`./rover vlm`), or depth had a hole at that pixel — the sentence after the colon says which (`approach.DEPTH_FAIL_HELP`). "...no longer in view" = the photo's depth had expired and a fresh photo did not show it: it moved (a person walking off). "I drove over to where I saw..." first = the drive there did happen |
 | ESP32 not moving | `langrobo-microros` unit down, or ESP32 USB cable out (`ls /dev/serial/by-id/`), or rakhi24 not in `dialout` → `systemctl status langrobo-microros`, then power-cycle ESP32 |
-| DDS discovery fails Pi5↔Jetson | `ROS_DOMAIN_ID` mismatch, or a stray `ROS_DISCOVERY_SERVER` in the environment. **Prod is plain multicast since 2026-07-16** (the D555 is a raw DDS participant that discovery-server clients cannot see) — every prod script unsets `ROS_DISCOVERY_SERVER`; `langrobo-discovery` still starts at boot but nothing uses it (NETWORKING.md). A client accidentally pointed at it goes silently invisible to the Jetson |
+| DDS discovery fails Pi5↔Jetson | `ROS_DOMAIN_ID` mismatch, or a stray `ROS_DISCOVERY_SERVER` in the environment. **Prod is plain multicast since 2026-07-16** (the D555 is a raw DDS participant that discovery-server clients cannot see) — every prod script unsets `ROS_DISCOVERY_SERVER`; the old `langrobo-discovery` server is removed (NETWORKING.md). A client still pointed at a discovery server goes silently invisible to the Jetson |
 
 ## Pi5 system record
 

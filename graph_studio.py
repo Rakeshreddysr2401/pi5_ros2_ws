@@ -17,7 +17,6 @@ Usage on dev machine (no ROS2):
 import atexit
 import logging
 import os
-import pathlib
 import threading
 
 from dotenv import load_dotenv
@@ -38,27 +37,10 @@ config_service.sanitize_tracing_env()
 _settings = config_service.load_settings()
 
 # ── Known map locations ──────────────────────────────────────────────────────
-# READ from agent_params.yaml rather than copied out of it. A hand-kept copy of
-# another file's values drifts silently: Studio would then navigate to a
-# "kitchen" the robot has never heard of, and nothing would say so.
+# None preset, exactly as agent_node: places come only from save_location
+# (odom restarts at zero every boot, so fixed coordinates point nowhere).
 
-def _load_locations() -> dict:
-    params = (pathlib.Path(__file__).parent
-              / "src/langrobo_ros/config/agent_params.yaml")
-    try:
-        import yaml
-        raw = yaml.safe_load(params.read_text())["agent_node"]["ros__parameters"]
-    except Exception as e:
-        # pyyaml is a ROS dependency and may be absent on a bare laptop. Studio
-        # still runs; navigate_to_pose just reports it knows no saved places,
-        # which is the honest answer rather than an invented map.
-        logger.warning("Could not read %s (%s) — no preset locations", params, e)
-        return {}
-    return {k.split(".", 1)[1]: tuple(v)
-            for k, v in raw.items() if k.startswith("locations.")}
-
-
-_DEFAULT_LOCATIONS = _load_locations()
+_DEFAULT_LOCATIONS: dict = {}
 
 # ── LLM config from environment ───────────────────────────────────────────────
 
@@ -73,7 +55,7 @@ _PROVIDER_KEY_MAP = {
 _provider   = os.getenv("STUDIO_PROVIDER", "openai")
 _model      = os.getenv("STUDIO_MODEL",    "gpt-4o-mini")
 _base_url   = os.getenv("STUDIO_BASE_URL", "")
-_max_tokens = int(os.getenv("STUDIO_MAX_TOKENS", "3000"))
+_max_tokens = int(os.getenv("STUDIO_MAX_TOKENS", "600"))   # = agent_params.yaml
 
 _key_env = _PROVIDER_KEY_MAP.get(_provider, "OPENAI_API_KEY")
 _api_key = os.getenv(_key_env, "none") if _key_env else "none"

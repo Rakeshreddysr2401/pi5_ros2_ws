@@ -10,7 +10,7 @@ answers and routes, `local_agent` sees, `navigate` moves. Every agent is one
 slot map all derive from it.
 
 ```
-Mac Mini  ──────  llama.cpp — Gemma multimodal GGUF, --parallel 4 (a KV slot per agent + one for one-shot vision calls)
+Mac Mini  ──────  llama.cpp — Gemma multimodal GGUF, --parallel 5 (`e12b5`: a KV slot per agent + vision tools + voice filter)
 Jetson    ──────  ~/rover: D555 + RPLidar · fused pose · slam · nvblox · Nav2 + exact moves · VLM pixel→goal
 Laptop    ──────  the twin: the robot's hardware in Isaac Sim (kino_sim, domain 42) · RViz (`./sim rviz [real]`)
 Pi 5      ──────  THIS REPO — LangGraph brain + STT/TTS + micro-ROS agent
@@ -36,14 +36,15 @@ src/
 │   └── langrobo_core/
 │       ├── registry.py  ONE AgentSpec per agent — start here
 │       ├── prompts.py   every system prompt, in one file
-│       ├── graph/     StateGraph topology, entry routing, handover resolution
+│       ├── graph/     StateGraph topology, entry routing, handover resolution, backstops
+│       ├── routing/   on-device entry classifier (bge-small; LANGROBO_INTENT_ROUTING)
 │       ├── agents/    factory — every agent is built from its spec, no exceptions
-│       ├── tools/     look() · movement · approach · telegram · web · handover
-│       ├── services/  config · llm(+cloud fallback) · telegram · permissions · health · logging · metrics
+│       ├── tools/     look · locate · ask_photos · movement · approach · follow · telegram · memory · lists · reminders · audio · web · handover
+│       ├── services/  config · llm(+cloud fallback) · telegram · memory · alarms · lists · embedder · permissions · health · logging · metrics
 │       ├── utils/     history trimming · message projection · speech streaming · timing
 │       └── bridges/   StubBridge (run everything without ROS2)
 ├── langrobo_ros/      ROS2 shim: agent_node + ROS2Bridge + launch + systemd
-└── pi5_voice_pkg/     CPU-only STT + TTS on the Pi 5 itself
+└── pi5_voice_pkg/     the Pi 5's voice: audio owner, STT, TTS, music
 scripts/               fleet.sh (whole robot) · run_*.sh (systemd entry points) · start_studio.sh · dev.sh
                        latency_replay.py · llm_cache_check.py (KV-slot PASS/FAIL) · topic_rates.py
                        wake_*.py · train_kino_local.py / train_rakhi_local.py (wake-word trainers, laptop)
@@ -117,7 +118,7 @@ ros2 launch langrobo_ros brain_launch.py
 
 ```
 
-The llama.cpp server needs **`--parallel 4`** — one KV-cache slot per agent, plus one for photo questions (`ask_photos`, search, locate). `scripts/llm_cache_check.py` checks the per-slot cache; `--swa-full` would also lift the ~450-token rewind limit (CLAUDE.md rule 2).
+The llama.cpp server needs **`--parallel 5`** (start it with `e12b5` on the Mac) — one KV-cache slot per agent, slot 3 for photo questions (`ask_photos`, search, locate), slot 4 for the voice filter. `scripts/llm_cache_check.py` checks the per-slot cache; the Mac cannot fit `--swa-full`, so a ~480-token rewind limit stays (CLAUDE.md rule 2).
 With fewer, agents share a slot and evict each other's cached prompt prefix;
 agent_node warns at boot when that happens. See ARCHITECTURE_LLD.md §4.1.
 
@@ -131,5 +132,7 @@ curl -s -H "Authorization: Bearer $LANGROBO_API_TOKEN" localhost:8090/status | j
 ## Test (no robot, no LLM server, no keys needed)
 
 ```bash
-cd src/langrobo_core && python3 -m pytest tests/ -q
+cd src/langrobo_core && python3 -m pytest tests/ -q     # the brain (~620 tests)
+cd src/pi5_voice_pkg && python3 -m pytest tests/ -q     # voice (~135)
+cd src/langrobo_ros && python3 -m pytest test/ -q       # ROS bridge (needs rclpy)
 ```

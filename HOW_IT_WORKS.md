@@ -1,7 +1,7 @@
 # How LangRobo Actually Works — End-to-End Walkthrough
 
 A narrative trace of the running system: what happens, in order, at every step.
-ARCHITECTURE.md is the reference (layout, rules, tables); this file is the story.
+ARCHITECTURE_LLD.md is the reference (layout, rules, tables); this file is the story.
 All of this was verified live on 2026-07-03 (18 turns, zero errors).
 
 ---
@@ -298,7 +298,7 @@ turn only pays for the *new* tokens; a cold one re-processes ~2k+ tokens
 
 - **One slot per agent**: chat=0, local_agent=1, navigate=2. Three agents,
   three caches, nothing ever evicts anything. The map is declared beside the
-  agents in `registry.py`; start llama.cpp with `--parallel 4` (slot 3: the vision-tool slot: photo questions, search views, locate, the arrival check). This matters
+  agents in `registry.py`; start llama.cpp with `--parallel 5` (`e12b5`; slot 3: the vision-tool slot: photo questions, search views, locate, the arrival check; slot 4: the voice filter). This matters
   because it was measured: when two agents shared a slot (2026-07-06), each
   call evicted the other's prefix and cost 18-50s of full-history re-prefill
   on the next turn.

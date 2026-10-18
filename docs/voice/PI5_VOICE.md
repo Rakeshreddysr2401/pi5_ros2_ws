@@ -487,11 +487,9 @@ here:
 ## Running it
 
 ```bash
-# Never run this alongside the Jetson's ai_stack voice role — both publish
-# /voice/robot_speech consumers and /voice/user_input producers; you'd get
-# double-speak and double-transcribe. Check first:
-ssh jetson 'fleet_role.sh voice status'
-
+# Never run two voice stacks at once (e.g. run_voice.sh beside the
+# langrobo-voice service): double-speak and double-transcribe. (The Jetson's
+# old ai_stack voice role is retired; its container no longer exists.)
 cd ~/ros2_ws
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 ./scripts/run_voice.sh                          # all three nodes in the foreground

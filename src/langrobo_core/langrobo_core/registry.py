@@ -29,7 +29,8 @@ model. With three agents and three slots, nothing ever evicts anything.
     slot 1  local_agent   image prefix — kept away from the text agents
     slot 2  navigate      latency-sensitive: a movement command is waiting
 
-Start the server with `--parallel 4` (slot 3 is the vision-tool slot: tools/survey.py). Fewer slots still works — slots are
+Start the server with `--parallel 5` (`e12b5`): slot 3 is the vision-tool slot
+(tools/survey.py), slot 4 the voice filter's (pi5_voice_pkg/relevance.py). Fewer slots still works — slots are
 assigned modulo the server's real count at startup (services/llm.py), so a
 2-slot server just means two agents share, at the old cost.
 """

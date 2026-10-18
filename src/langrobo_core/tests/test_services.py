@@ -173,8 +173,11 @@ def test_a_buildable_fallback_still_arms():
     llm_service.configure_fallback(FallbackLLM(
         provider="openai", model="gpt-4o-mini", api_key="k",
         base_url="", configured=True))
-    assert llm_service.get_fallback_llm() is not None
+    fb = llm_service.get_fallback_llm()
+    assert fb is not None
     assert llm_service.status()["fallback"] == "openai/gpt-4o-mini"
+    # safe_invoke asks for it before every call: one client, not one per call
+    assert llm_service.get_fallback_llm() is fb
 
 
 # ── the Gemma thinking-loop ban (llama.cpp only) ────────────────────────────

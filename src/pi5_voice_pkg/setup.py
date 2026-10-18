@@ -28,7 +28,7 @@ setup(
     zip_safe=True,
     maintainer='rakhi24',
     maintainer_email='sumanasomineni09@gmail.com',
-    description='CPU-only STT/TTS for the Pi5 (same /voice/* wire protocol as the Jetson voice_pkg)',
+    description='CPU-only STT/TTS/music for the Pi5 (the /voice/* wire protocol: langrobo_core/utils/speech_stream.py)',
     license='Apache-2.0',
     entry_points={
         'console_scripts': [

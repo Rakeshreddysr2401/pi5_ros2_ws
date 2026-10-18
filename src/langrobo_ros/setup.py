@@ -14,7 +14,6 @@ setup(
         ('share/' + package_name + '/systemd', [
             'systemd/langrobo-brain.service',
             'systemd/langrobo-microros.service',
-            'systemd/langrobo-discovery.service',
         ]),
     ],
     install_requires=[
@@ -30,7 +29,6 @@ setup(
     entry_points={
         'console_scripts': [
             'agent_node = langrobo_ros.agent_node:main',
-            'wheel_odom_relay = langrobo_ros.wheel_odom_relay:main',
         ],
     },
 )

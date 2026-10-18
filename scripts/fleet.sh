@@ -65,11 +65,9 @@ ROVER_DIR="~/rover"
 TWIN_DOMAIN=42                           # the twin's ROS domain (kino_sim TWIN_DOMAIN)
 
 ensure_local_units() {
-    sudo -n systemctl start langrobo-discovery 2>/dev/null \
-        || systemctl start langrobo-discovery 2>/dev/null || true
     sudo -n systemctl start langrobo-brain 2>/dev/null \
         || systemctl start langrobo-brain 2>/dev/null || true
-    echo "pi5:    discovery=$(systemctl is-active langrobo-discovery)  brain=$(systemctl is-active langrobo-brain)"
+    echo "pi5:    brain=$(systemctl is-active langrobo-brain)"
 }
 
 reachable() { timeout 4 ping -c1 -W2 "$1" >/dev/null 2>&1; }
@@ -185,7 +183,7 @@ rover|up|start)
     ;;
 stop)
     # Park the robot: stop the body (the Jetson's stack). No password needed.
-    # Brain + discovery stay up so chat/Telegram keeps listening.
+    # The brain stays up so chat/Telegram keeps listening.
     if reachable "$JETSON_HOST"; then
         # Removes the `rover` container (every Jetson layer). A power-on
         # after this needs the full `./rover up` again.
@@ -193,12 +191,12 @@ stop)
     fi
     # Pi5 voice stays up like the brain: parked is not deaf.
     systemctl --user start langrobo-voice 2>/dev/null || true
-    echo "fleet: robot body stopped. Brain + discovery + Pi5 voice still up (Telegram/chat/voice alive)."
+    echo "fleet: robot body stopped. Brain + Pi5 voice still up (Telegram/chat/voice alive)."
     echo "       Full shutdown incl. Pi5 services: $0 down"
     ;;
 down)
     # Full shutdown: everything 'stop' does, PLUS this Pi5's own services
-    # (brain, micro-ROS wheels, discovery meeting point). Those are systemd
+    # (brain, micro-ROS wheels). Those are systemd
     # system units, so this asks for your password once.
     if reachable "$JETSON_HOST"; then
         # Removes the `rover` container (every Jetson layer). A power-on
@@ -206,14 +204,14 @@ down)
         $SSH $JETSON "cd $ROVER_DIR && ./rover stop" || true
     fi
     systemctl --user stop langrobo-voice 2>/dev/null || true
-    echo "pi5:    stopping brain, micro-ROS, discovery (needs sudo)..."
-    sudo systemctl stop langrobo-brain langrobo-microros langrobo-discovery
-    echo "pi5:    discovery=$(systemctl is-active langrobo-discovery)  brain=$(systemctl is-active langrobo-brain)  microros=$(systemctl is-active langrobo-microros)"
+    echo "pi5:    stopping brain, micro-ROS (needs sudo)..."
+    sudo systemctl stop langrobo-brain langrobo-microros
+    echo "pi5:    brain=$(systemctl is-active langrobo-brain)  microros=$(systemctl is-active langrobo-microros)"
     echo "fleet: fully DOWN. Bring back with: $0 rover   (or twin up)"
     echo "       (these units are enabled, so they'll also restart on next Pi5 boot)"
     ;;
 status)
-    echo "pi5:    discovery=$(systemctl is-active langrobo-discovery)  brain=$(systemctl is-active langrobo-brain)  microros=$(systemctl is-active langrobo-microros)  voice=$(systemctl --user is-active langrobo-voice 2>/dev/null)"
+    echo "pi5:    brain=$(systemctl is-active langrobo-brain)  microros=$(systemctl is-active langrobo-microros)  voice=$(systemctl --user is-active langrobo-voice 2>/dev/null)"
     hw=$(twin_announced); [ -n "$hw" ] && echo "laptop: the twin is up on domain $TWIN_DOMAIN ($0 twin status)"
     if reachable "$JETSON_HOST"; then
         jetson_status
@@ -316,8 +314,8 @@ print("%s object(s) remembered; survey: %s" % (r.get("objects_remembered", "?"),
 *)
     echo "usage: $0 [rover|stop|down|status|check|twin]   (no argument = rover)"
     echo "  rover  start the REAL body -- the default (also: up, start): Pi5 micro-ROS wheels + Jetson ./rover up; Pi5 voice"
-    echo "  stop   stop the robot body; keep brain + discovery (Telegram) alive"
-    echo "  down   full shutdown incl. Pi5 brain/discovery/microros (asks sudo)"
+    echo "  stop   stop the robot body; keep the brain (Telegram) + voice alive"
+    echo "  down   full shutdown incl. Pi5 brain/microros (asks sudo)"
     echo "  status show what's up everywhere"
     echo "  twin   (only when asked) the twin [up|down|status]: after ./sim up on the laptop, the robot's"
     echo "         hardware simulated in Isaac Sim, the rover's whole Jetson stack on it (TWIN=1 ./rover up) + a 2nd brain, domain 42"

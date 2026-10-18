@@ -75,8 +75,10 @@ class AgentNode(Node):
         self.declare_parameter("model",      "default")
         self.declare_parameter("api_key_env", "")
         self.declare_parameter("base_url",   "http://singireddys-mac-mini.local:8080/v1")
-        self.declare_parameter("max_tokens", 3000)
-        self.declare_parameter("history_turns", 20)
+        # Same values as agent_params.yaml (which explains them), so a node
+        # started without that file is not the one with a ~5 min runaway cap.
+        self.declare_parameter("max_tokens", 600)
+        self.declare_parameter("history_turns", 12)
         # A natural mid-thought pause outlasts the VAD's 600ms end-silence, so
         # one sentence arrives as two utterances. Within this window a second
         # utterance CONTINUES the first instead of replacing it — replacing
@@ -127,7 +129,11 @@ class AgentNode(Node):
         # just means some agents share again — it never breaks, it only costs.
         # A failed probe leaves the map alone (the server may still be booting).
         slots = dict(registry.SLOTS)
-        need = len(slots) + 1
+        # The server the fleet expects (e12b5): the agents' slots, the
+        # vision-tool slot (tools/survey.py) and the voice filter's slot 4
+        # (pi5_voice_pkg/relevance.py) -- --parallel 5.
+        from langrobo_core.tools import survey as _survey
+        need = max(len(slots), _survey.VISION_TOOL_SLOT + 1) + 1
         total = None
         if provider == "llamacpp":
             total = self._probe_total_slots(base_url)
@@ -143,7 +149,6 @@ class AgentNode(Node):
 
         # One-shot vision calls (search views, locate, the photo survey) have
         # their own slot, so local_agent's keeps its conversation and photos.
-        from langrobo_core.tools import survey as _survey
         want = _survey.VISION_TOOL_SLOT
         got = _survey.fit_slot(total, slots.get("local_agent"))
         if got is None:
@@ -238,8 +243,8 @@ class AgentNode(Node):
         # Barge-in: set when a NEW user utterance arrives while a turn is
         # still running — the worker aborts the in-flight turn at the next
         # graph step so the new utterance is answered instead of the stale one.
-        # (The Jetson forwards mid-TTS speech once AEC lands — see
-        # JETSON_VOICE_UPGRADE.md; without AEC this fires only on queued input.)
+        # (stt_node mutes the mic while the robot speaks -- no AEC on the Pi 5 --
+        # so this fires on input queued while the turn was thinking.)
         self._turn_interrupt = threading.Event()
         self._turn_active    = False
         # True while the running turn's last step is a call to a movement tool
@@ -258,8 +263,8 @@ class AgentNode(Node):
 
         # ── Subscribers ───────────────────────────────────────────────────
         self.create_subscription(String, "/voice/user_input", self._on_user_input, 10)
-        # Stop keyword spotted by the Jetson while TTS plays: the Jetson halts
-        # speech itself; here we make it a safety word — halt wheels too.
+        # Stop word spotted by stt_node: it halts speech itself; here it is a
+        # safety word — halt the wheels too.
         self.create_subscription(String, "/voice/tts_stop", self._on_tts_stop, 10)
         # Voice-pipeline cost telemetry from pi5_voice_pkg (input and output
         # legs). Purely observational — nothing in the turn path depends on
@@ -413,7 +418,8 @@ class AgentNode(Node):
     # ── Startup readiness check ───────────────────────────────────────────
 
     def _startup_check(self) -> None:
-        """Announce readiness. Nav2 check skipped — not available in current hardware scope."""
+        """Announce readiness, then warm the KV cache. Nav2 is not waited for:
+        it lives on the Jetson, and a drive tool reports it if it is down."""
         self._bridge.publish_speech("I'm ready.")
         self.get_logger().info("Startup complete")
         self._ready_event.set()
@@ -608,11 +614,6 @@ class AgentNode(Node):
             self._telegram_pending.append(inbound)
         self._input_event.set()
 
-    def _has_pending_work(self) -> bool:
-        with self._queue_lock:
-            return (self._turn_active or self._user_pending is not None
-                    or bool(self._system_pending) or bool(self._telegram_pending))
-
     # ── Worker loop ───────────────────────────────────────────────────────
 
     def _worker_loop(self) -> None:
@@ -752,10 +753,8 @@ class AgentNode(Node):
     def _trace_span(self, name: str, inputs: dict, metadata: dict, tags=None):
         """A standalone LangSmith run for work that never enters the graph.
 
-        The fast path answers movement commands with zero LLM calls, so it
-        produces no LangChain runs at all — without this it would be an
-        invisible gap in the trace list ("why did 'stop' never show up?").
-        Yields the run (call .end(outputs=...)) or None when tracing is off.
+        Used for the TTS leg (_on_tts_meta): each spoken sentence is its own
+        run, joined to its turn by trace_id. Yields the run (call .end(outputs=...)) or None when tracing is off.
         """
         try:
             from langsmith.utils import tracing_is_enabled
@@ -828,6 +827,7 @@ class AgentNode(Node):
         source = "system" if is_system else ("telegram" if telegram else "voice")
         self._trace_for_tts = trace   # read by _on_tts_meta on the spin thread
         turn_start = time.time()
+        slow_cue = None
         metrics.inc("turns_total")
         if is_system:
             metrics.inc("system_turns_total")
@@ -979,7 +979,6 @@ class AgentNode(Node):
             # been said after this long, something is wrong (cold KV cache, the
             # Mac Mini unreachable) and silence reads as a dead robot — so say
             # "one moment". Voice only: a Telegram sender gets typing dots.
-            slow_cue = None
             if not telegram and not quiet:
                 def _say_one_moment():
                     if speech_stream is None or not speech_stream.chunks_sent:
@@ -1008,8 +1007,8 @@ class AgentNode(Node):
                 stream_mode="values"):
                 if self._turn_interrupt.is_set():
                     # Barge-in: a newer utterance is waiting. Abandon this turn
-                    # at the step boundary — close any partial speech so the
-                    # Jetson releases the mic, keep history/sticky untouched,
+                    # at the step boundary — drop any partial speech so
+                    # tts_node releases the mic, keep history/sticky untouched,
                     # and let the worker loop pick up the new input.
                     interrupted = True
                     break
@@ -1056,7 +1055,7 @@ class AgentNode(Node):
             if not response:
                 if speech_stream and speech_stream.chunks_sent:
                     # Something was streamed but the graph ended without a final
-                    # text — close the utterance so the Jetson releases the mic.
+                    # text — close the utterance so tts_node releases the mic.
                     self._bridge.publish_speech_end()
                 if telegram:
                     # A texter gets an answer or an apology — never silence.
@@ -1072,10 +1071,8 @@ class AgentNode(Node):
 
             # Remember where the turn ended, so the next user follow-up can
             # re-enter it directly and skip the routing hop entirely.
-            # turn_entry decides which agents are actually sticky-eligible:
-            # chat and local_agent, both of which can re-route a topic change
-            # themselves. navigate is not, so the turn after a drive starts at
-            # chat.
+            # turn_entry decides which agents are actually sticky-eligible
+            # (registry.py `sticky`; all three since 2026-09-08).
             self._sticky_agent = result.get("active_agent") if result else None
             self._jev_outcome(jev_read if jev_mode == "on" else
                               (jev_shadow or {}).get("read"), self._sticky_agent,
@@ -1142,11 +1139,8 @@ class AgentNode(Node):
         finally:
             # The cue must never outlive the turn — a late "one moment" after
             # the answer has been spoken is worse than no cue at all.
-            try:
-                if slow_cue is not None:
-                    slow_cue.cancel()
-            except NameError:
-                pass
+            if slow_cue is not None:
+                slow_cue.cancel()
             with self._queue_lock:
                 self._turn_active = False
                 self._turn_moving = False
@@ -1193,9 +1187,9 @@ class AgentNode(Node):
                  if self._sticky_agent in registry.STICKY_ELIGIBLE else "chat")
         # LANGROBO_WARM_ALL=1: every agent, entry FIRST (registry.warm_order),
         # so a handover target is warm too. OFF by default: on a server whose
-        # slots wipe each other (the Mac's until --swa-full) it costs ~3 full
-        # prompt reads per idle spell for nothing. Turn it on once
-        # scripts/llm_cache_check.py PASSES.
+        # slots wipe each other it costs ~3 full prompt reads per idle spell
+        # for nothing. The Mac PASSES scripts/llm_cache_check.py since
+        # 2026-10-01 and production .env sets it.
         order = registry.warm_order(
             agent, os.environ.get("LANGROBO_WARM_ALL", "0").strip().lower() in ("1", "true", "yes", "on"))
         self._warm_thread = threading.Thread(

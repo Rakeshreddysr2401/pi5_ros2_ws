@@ -9,7 +9,6 @@ Usage:
 """
 
 import argparse
-import sys
 import time
 import numpy as np
 import sounddevice as sd
@@ -88,7 +87,7 @@ def main():
     print(f"  Audio Level (RMS): {rms:.1f}  {'[Volume OK]' if rms > 40 else '[Low Volume - speak closer/louder]'}")
 
     if peak_score >= args.threshold:
-        print(f"  Result:           ✅ SUCCESS! Robot would wake up and answer.")
+        print("  Result:           ✅ SUCCESS! Robot would wake up and answer.")
     else:
         print(f"  Result:           ❌ Did not trigger (peak {peak_score:.3f} < threshold {args.threshold}).")
     print("-" * 65 + "\n")

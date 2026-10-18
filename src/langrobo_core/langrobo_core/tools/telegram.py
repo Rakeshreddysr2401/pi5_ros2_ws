@@ -1,9 +1,8 @@
 """send_telegram_message() / send_telegram_photo() — reach household members'
 phones. Pure zone.
 
-This is how you talk to the robot today: the Pi 5 has no microphone or speaker
-attached (see the rover repo's FLEET_STATUS.md), so Telegram is the working
-channel and voice is the one waiting on hardware.
+Telegram is the channel for people who are not in the room (voice is the
+other: the Pi 5's own mic + speaker, pi5_voice_pkg).
 
 Capability-gated (services/permissions.py): the sender's identity rides on the
 turn state (channel / sender_name / sender_role — set per-turn by agent_node

@@ -42,7 +42,7 @@ dead node, not a stopped container: no code anywhere that speaks them.
 | `/vision/detections_3d` | rover → brain | `approach_object`, `where_is`, `list_known_objects`, `forget_object`, `scan_surroundings`'s object report, **the entire `world_model` service** | ✅ removed (tools gone; Jetson publisher opt-in via `./rover detect`; returns with B4) |
 | `/vision/target` + `/vision/target_result` | both ways | `navigate_to_visible_object` (the mono visual-servo fallback) | ✅ removed (tool gone, movement.py) |
 | `/servo_pan`, `/servo_tilt`, `/camera/pan_tilt_state` | brain → ESP32 | `point_camera`, `ensure_head_centred`, `approach.py`'s pan sweep | ✅ gated off |
-| `/audio/music_cmd`, `/audio/music_state` | both ways | every tool in `tools/music.py` | ✅ removed (no music tools) |
+| `/audio/music_cmd`, `/audio/music_state` | both ways | `tools/audio.py` music tools | ✅ live again since 2026-10-04: the Pi's own `pi5_voice_pkg/media_node.py` answers (the old Jetson-side listener never existed) |
 
 ### `/vision/detections_3d` is the expensive one
 

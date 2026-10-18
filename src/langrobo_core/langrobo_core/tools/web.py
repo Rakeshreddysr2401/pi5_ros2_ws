@@ -2,8 +2,8 @@
 
 Loaded once at import time: if TAVILY_API_KEY is not set
 (e.g. on the Pi5 without a key) the tool is simply disabled and WEB_TOOLS is empty,
-so binding it is a no-op. The chat prompt advertises this as "tavily_search (if
-available)" — that wording matches this optional wiring.
+so binding it is a no-op, and chat's prompt renders its web rules from the bound
+tools (prompts.render_web_rules): with no key it says it cannot look things up.
 
 We call Tavily with include_answer=True and search_depth="basic": Tavily returns a
 short synthesized answer plus compact snippets, instead of dumping whole scraped

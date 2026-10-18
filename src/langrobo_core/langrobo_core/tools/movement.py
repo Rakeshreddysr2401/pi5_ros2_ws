@@ -349,9 +349,9 @@ def _report_partial(labels: list, at: int, why: str, moved: bool = True) -> str:
 @tool
 def move_robot(command: str,
                state: Annotated[dict | None, InjectedState] = None) -> str:
-    """Send short, precise movement commands directly to the wheels via /cmd_vel.
+    """Exact turns and short straight moves, closed on the measured pose.
 
-    Use for fine adjustments - aligning, nudging, short scans.
+    Use for fine adjustments - aligning, nudging, turning by an angle.
     Do NOT use for room-to-room navigation - use navigate_to_pose() instead.
 
     Format - DIRECTION:VALUE  or  'S' to stop:

@@ -1,6 +1,7 @@
-"""Bring up Pi5-local STT+TTS. Only run this while the Jetson's ai_stack
-voice role is stopped (fleet_role.sh voice stop) — two tts_node/stt_node
-pairs on the same /voice/* topics would double-speak and double-transcribe.
+"""Bring up the Pi 5 voice: the audio owner, TTS, STT and music
+(langrobo-voice user unit, scripts/run_voice.sh). Never run two of these at
+once — two tts_node/stt_node pairs on the same /voice/* topics double-speak
+and double-transcribe.
 """
 
 import os

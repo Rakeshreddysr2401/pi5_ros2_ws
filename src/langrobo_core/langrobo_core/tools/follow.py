@@ -3,7 +3,7 @@
 Bound to navigate only with LANGROBO_FOLLOW=1 (FOLLOW_AND_FAST_EYES.md): with
 it off, no schema is shipped and every prompt is byte-identical to before.
 
-The Jetson does the work (phase3/nodes/follow.py): it picks the person nearest
+The Jetson does the work (phase3/nodes/follow_node.py): it picks the person nearest
 the middle of the camera view, keeps ~1 m from them at <= 0.3 m/s, checks the
 way ahead every step, and stops on its own when they are lost or the way is
 blocked. Here: who may ask, and the honest first answer.
@@ -18,9 +18,10 @@ blocked. Here: who may ask, and the honest first answer.
     "follow"): ask_photos can say later who it followed.
   - Its end (lost / blocked / reached) comes back as the same [SYSTEM] report
     as an arrival (movement.nav_report), to whoever asked.
-  - Stopping is not this tool's job: every utterance already stops the wheels
-    and cancels the background drive (agent_node._on_user_input), and that
-    cancel reaches follow_node as /follow/cancel.
+  - Stopping is not this tool's job: while the robot moves, an utterance with a
+    stop word cancels the background drive (agent_node._on_user_input +
+    utils/stop_words.py; other talk is answered with the follow still on), and
+    that cancel reaches follow_node as /follow/cancel.
   - Over Telegram "me" is not someone the camera can see: refused, by code.
   - Role and teleop MANUAL: the same guards as every drive.
 """
@@ -62,7 +63,8 @@ def follow_person(state: Annotated[dict, InjectedState],
     people only: asked to follow a pet or a thing, say you can only follow
     people for now. It does not know people by name: if the user named or
     described someone ("follow him", "follow the man in red"), say you will
-    follow whoever is in front of you. Any new sentence from the user stops it.
+    follow whoever is in front of you. Saying stop (or any stop word) ends it;
+    other talk is answered while it keeps going.
 
     then: for mode="come", what to do on arriving ("come here and tell me the
     time" -> then="tell the user the time"). Leave empty otherwise.

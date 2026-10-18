@@ -51,8 +51,8 @@ class ROS2Bridge:
     def __init__(self, node, known_locations: dict = None, use_vision: bool = True):
         self._node = node
 
-        # Named map locations: {name: (x, y, yaw_deg)} — populated from nav_params.
-        # This is the BASE set; _rebuild_known_locations() layers fresh saved
+        # Named map locations: {name: (x, y, yaw_deg)} — the caller's base set
+        # (empty in production: places come only from save_location). This is the BASE set; _rebuild_known_locations() layers fresh saved
         # locations on top of it and reassigns _known_locations wholesale, so
         # keep the config-declared set around under its own name.
         self._config_locations: dict = dict(known_locations or {})
@@ -93,7 +93,7 @@ class ROS2Bridge:
 
         node.create_subscription(String, "/fusion/status", self._on_fusion_status, 10)
 
-        # TF buffer for get_current_pose() (map -> base_link)
+        # TF buffer for get_current_pose() (NAV_FRAME -> base_link)
         from tf2_ros import Buffer, TransformListener
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, node)
@@ -118,8 +118,8 @@ class ROS2Bridge:
         # the Jetson could only ground a VLM pixel against its NEWEST depth
         # and pose -- 10-40 s after the photo, wherever the rover had got to
         # (rover repo INTELLIGENCE_PLAN.md B2). It is only ever echoed back to
-        # the Jetson, never compared with this clock, so the Pi 5's offset
-        # from the Jetson (LOCALIZATION_GAPS.md G9) does not matter.
+        # the Jetson, never compared with this clock, so the Pi 5's ~1.5 s
+        # offset from the Jetson's clock does not matter.
         self._frame_camera_stamp: tuple | None = None
 
         # Commanded pan/tilt (open-loop; servos settle in ~0.3s). Kept so tools
@@ -127,9 +127,9 @@ class ROS2Bridge:
         self._pan_tilt = (0.0, 0.0)
 
         # ── Speech state ───────────────────────────────────────────────────────
-        # No Pi5-side queue: sentence chunks are published immediately and the
-        # Jetson tts_node queues/plays them in order (utterance ends with the
-        # SPEECH_EOU marker). _is_speaking is informational (stop-keyword later).
+        # No queue here: sentence chunks are published immediately and
+        # pi5_voice_pkg's tts_node queues/plays them in order (utterance ends
+        # with the SPEECH_EOU marker). _is_speaking is informational.
         self._speech_lock    = threading.Lock()
         self._is_speaking    = False   # updated by /voice/tts_speaking subscription
 
@@ -146,7 +146,7 @@ class ROS2Bridge:
 
         # ── Motion interrupt ───────────────────────────────────────────────────
         # Set by agent_node when new user input arrives, so blocking motion tools
-        # (navigate_to_visible_object's servo loop, move_robot's timed drive) can
+        # (move_robot, the approach search, scan_surroundings, reach_and_wait)
         # bail out promptly — i.e. a spoken "stop" actually stops the wheels.
         self._motion_interrupt = threading.Event()
 
@@ -158,7 +158,7 @@ class ROS2Bridge:
         self._nav_done_callback: Callable[[bool, str], None] | None = None
 
         # ── Registered callback for tool-injected [SYSTEM] turns ───────────────
-        # Lets pure-zone tools (e.g. announce_at_home) hand a proactive turn to
+        # Lets pure-zone tools hand a proactive turn to
         # agent_node's system queue without importing anything ROS-side.
         self._system_turn_callback: Callable[[str], None] | None = None
 
@@ -173,8 +173,9 @@ class ROS2Bridge:
         self._twist_pub = node.create_publisher(Twist, "/cmd_vel", 10)
         self._timing_pub        = node.create_publisher(String, "/diag/timing", 10)
         # Camera pan/tilt: raw servo angles for the ESP32 (0-180, 90=centre) +
-        # a JSON state topic the Jetson TF broadcaster mirrors into the TF tree
-        # (NAV_FRAME detections stay correct while the head is turned).
+        # a JSON state topic for a TF broadcaster. NO listener today (no mount,
+        # no servo subscriptions in the firmware): only point_camera uses them,
+        # and it is bound only with LANGROBO_PAN_TILT=1 (movement.PAN_TILT_ENABLED).
         from std_msgs.msg import UInt16
         self._UInt16 = UInt16
         self._servo_pan_pub  = node.create_publisher(UInt16, "/servo_pan", 10)
@@ -182,7 +183,7 @@ class ROS2Bridge:
         self._pan_tilt_state_pub = node.create_publisher(String, "/camera/pan_tilt_state", 10)
 
         # VLM pixel grounding (Jetson pixel_to_goal): PointStamped pixel query
-        # in, JSON result out — see langrobo_perception pixel_to_goal_node.py.
+        # in, JSON result out — see ~/rover phase4/nodes/pixel_to_goal.py (Jetson).
         from geometry_msgs.msg import PointStamped
         self._PointStamped = PointStamped
         self._pixel_query_pub = node.create_publisher(PointStamped, "/vision/pixel_query", 10)
@@ -233,7 +234,7 @@ class ROS2Bridge:
         node.create_subscription(String, "/follow/status",
                                  lambda m: self._on_status(m, self._follow_status, "req"), 10)
 
-        # Subscribe to Kokoro speaking status (half-duplex state, stop-keyword later)
+        # tts_node's speaking state (half-duplex: the mic is muted while True)
         node.create_subscription(Bool, "/voice/tts_speaking", self._on_speaking, 10)
 
         # ── Vision input ──────────────────────────────────────────────────
@@ -581,8 +582,8 @@ class ROS2Bridge:
         self._timing_pub.publish(String(data=json.dumps(event)))
 
     # ── Speech (streamed utterance protocol) ──────────────────────────────
-    # An utterance = 1..N text chunks followed by the SPEECH_EOU marker. The
-    # Jetson tts_node plays chunks in order and holds /voice/tts_speaking True
+    # An utterance = 1..N text chunks followed by the SPEECH_EOU marker.
+    # tts_node plays chunks in order and holds /voice/tts_speaking True
     # (mic muted) until the marker arrives.
 
     def publish_speech_chunk(self, text: str) -> None:

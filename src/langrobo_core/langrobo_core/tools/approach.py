@@ -598,7 +598,7 @@ def _approach(description: str, state: dict, then: str = "") -> str:
             break
         visited.append(vp[:2])
         _say(bridge, state, f"The {name} isn't around here. I'll look from another spot."
-             if spots == 1 else f"Not here either. Trying another spot.")
+             if spots == 1 else "Not here either. Trying another spot.")
         leg = bridge.reach_and_wait(round(vp[0], 2), round(vp[1], 2), round(vp[2], 1))
         if leg.get("result") == "interrupted":
             return f"Stopped searching for the {name}."

@@ -38,6 +38,9 @@ def fake(subs=1):
     s._Empty = lambda: "EMPTY"
     s.done = []
     s._fire_nav_done = lambda ok, msg: s.done.append((ok, msg))
+    s.photos, s.said = [], []
+    s._photograph_follow_target = lambda: s.photos.append(1)
+    s.publish_speech = s.said.append
     s.cancel_navigation = lambda: s._nav_cancel_event and s._nav_cancel_event.set()
     n = [0]
 
@@ -138,6 +141,7 @@ def test_silence_ends_it():
     start(s)
     (ok, msg), = wait_done(s)
     assert not ok and "went silent" in msg and s._follow_cancel_pub.sent == ["EMPTY"]
+    assert s.photos == [1]                      # the person is photographed once
 
 
 def test_a_newer_follow_supersedes_a_running_one():

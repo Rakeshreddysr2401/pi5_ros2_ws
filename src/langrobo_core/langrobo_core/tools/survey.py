@@ -37,7 +37,7 @@ Rules that keep it from getting in the way:
   * Each object remembers WHICH photo placed it (`photo`: the camera stamp),
     so "go near it" about a photo the survey has done needs no VLM call at
     all (approach._in_conversation_photos).
-  * On the vision-TOOL slot (VISION_TOOL_SLOT, default 3; needs --parallel 4),
+  * On the vision-TOOL slot (VISION_TOOL_SLOT, default 3; needs --parallel 4+),
     never local_agent's: that slot holds the vision conversation and its
     photos. No such slot on the server -> the survey is off (fit_slot),
     unstreamed (streamed, this server files marked-up answers as hidden text).
@@ -70,7 +70,7 @@ logger = logging.getLogger(__name__)
 # its prompt, its tools and the earlier photos it reasons over ("is it still
 # there?", "what colour was it?"). A one-shot call there overwrote all of it,
 # up to 8 times in one search, and the next vision turn re-read every kept
-# photo through the vision encoder. So they share slot 3 (--parallel 4),
+# photo through the vision encoder. So they share slot 3 (--parallel 4+; e12b5 runs 5),
 # one at a time (approach pauses the survey while it searches).
 VISION_TOOL_SLOT = int(os.environ.get("LANGROBO_VISION_TOOL_SLOT",
                                       os.environ.get("LANGROBO_SURVEY_SLOT", "3")))

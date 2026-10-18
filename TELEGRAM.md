@@ -2,8 +2,8 @@
 
 Chat with Kino from anywhere: text or photos in, text or photos back, from
 the same brain that answers voice in the living room. This is the household
-setup guide; internals live in ARCHITECTURE.md ("Telegram channel"), the turn
-walkthrough in HOW_IT_WORKS.md §4b, and the env reference in OPERATIONS.md.
+setup guide; the turn walkthrough is HOW_IT_WORKS.md §4b, the internals
+`services/telegram.py` + `tools/telegram.py`, and the env reference OPERATIONS.md.
 
 Your phone number is never involved — it only logs you into the Telegram app.
 The robot connects as a **bot** with its own token.

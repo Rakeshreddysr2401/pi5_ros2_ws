@@ -25,7 +25,7 @@ import threading
 import time
 
 from ..services import embedder
-from .intent import IntentRouter, Pick, entry_for, strip_address  # noqa: F401
+from .intent import IntentRouter, Pick, entry_for, strip_address  # noqa: F401  (re-exported)
 
 logger = logging.getLogger(__name__)
 

@@ -71,7 +71,7 @@ def test_every_speaking_agent_gets_the_speech_contract(name):
 def test_every_agent_shares_one_identity():
     """PERSONA carries the "you are Kino, built by Rakesh" block. An agent
     without it falls back to its training and tells users it was made by
-    Google (Issues/asked_weather.txt) — so every agent that can answer a user
+    Google — so every agent that can answer a user
     must have it, and all of them can now."""
     for name in SPECS:
         assert prompts._IDENTITY in RENDERED[name], f"{name} has no identity block"
@@ -136,3 +136,14 @@ def test_no_web_placeholder_survives_rendering():
         _, build = build_agent(spec)
         _, msgs = build([])
         assert "{web}" not in msgs[0].content and "{tools}" not in msgs[0].content
+
+
+def test_local_agent_measures_distance_itself():
+    """local_agent is bound to locate_object (depth-camera distance) and chat
+    routes "how far is the box?" to it -- so its prompt must send distance
+    questions to that tool, not hand them on to navigate (it said "you CANNOT
+    say how far ... hand over to navigate" until 2026-10-18)."""
+    names = {t.name for t in SPECS["local_agent"].tools}
+    assert "locate_object" in names
+    distance = RENDERED["local_agent"].split("== DISTANCE ==", 1)[1].split("==", 1)[0]
+    assert "locate_object(" in distance and "navigate" not in distance
