@@ -11,6 +11,7 @@ tool — see CLAUDE.md rule 3.
 """
 
 from .look import look
+from .look_toward import look_toward
 from .locate import locate_object
 from .photo_recall import ask_photos
 from .approach import (approach_described_object, list_saved_locations,
@@ -61,7 +62,7 @@ CHAT_TOOLS = ([get_current_time, get_robot_status, ask_photos, handover] + WEB_T
 # invention. It is read-only and never turns the robot -- driving to a
 # thing is navigate's job (approach_described_object).
 # ask_photos: something seen EARLIER, from every photo of the session, read-only.
-LOCAL_AGENT_TOOLS = [look, locate_object, ask_photos, handover] + HEAD_TOOLS + TELEGRAM_TOOLS
+LOCAL_AGENT_TOOLS = [look, look_toward, locate_object, ask_photos, handover] + HEAD_TOOLS + TELEGRAM_TOOLS
 
 # navigate — everything that moves the wheels.
 # get_robot_status: "where are you now?" / "did you get there?" right after a
@@ -82,5 +83,5 @@ NAVIGATE_TOOLS = ([move_robot, navigate_to_pose, approach_described_object,
 # (follow_person, point_camera) still counts if it is ever bound.
 MOTION_TOOL_NAMES = frozenset({
     move_robot.name, navigate_to_pose.name, approach_described_object.name,
-    scan_surroundings.name, follow_person.name, point_camera.name,
+    scan_surroundings.name, follow_person.name, point_camera.name, look_toward.name,
 })

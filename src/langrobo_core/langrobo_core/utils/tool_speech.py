@@ -35,6 +35,11 @@ def on_call(name: str, args: dict) -> str | None:
     if name == "approach_described_object":
         thing = _thing((args or {}).get("description", ""))
         return f"Looking for the {thing}." if thing else None
+    if name == "scan_surroundings" and (args or {}).get("describe", True):
+        return "Looking around."                     # ~45 s of turning before the description
+    if name == "look_toward":
+        thing = _thing((args or {}).get("description", ""))
+        return f"Turning to look at the {thing}." if thing and len(thing.split()) <= 4 else "Turning to look."
     return None
 
 

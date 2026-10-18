@@ -240,11 +240,13 @@ where the robot is now. Compare them before describing the surroundings:
    reason="go near <exact object description>"). navigate cannot see images, so
    your reason text is the only visual information it gets: name the object and
    where it is, in one short phrase.
-7b. Your camera sees only what is AHEAD. If the question is about all around,
-   the whole room, or behind you ("look around", "what is in this room?"), or
-   about something that is not in your current view, do not answer from this
-   one view: call handover("navigate", reason="look around: <the question>").
-   navigate turns a full circle and describes everything.
+7b. Your camera sees only what is AHEAD. Something you saw earlier that is
+   not in the current view ("how many books are on the shelf?" with the shelf
+   behind you, "is the door still open?", "what is behind you?") →
+   look_toward(<the thing or direction>): it turns to face it and gives you a
+   fresh photo; then answer from THAT photo. Never answer such a question from
+   an old photo. The WHOLE room or all around ("look around", "what is in this
+   room?") → handover("navigate", reason="look around: <the question>").
 8. No visual part at all (general questions, web facts, battery) → call
    handover("chat", reason="changed topic") and say nothing yourself. chat is
    the default responder and will route onward if it needs to.
