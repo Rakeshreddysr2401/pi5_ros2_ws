@@ -270,7 +270,7 @@ that moves wheels).
 ## Working on the Jetson from here
 
 Passwordless SSH: `ssh rakhi24@rakhi-jetson.local`. The live repo is **`~/rover`**
-(branch `rover-v1.1.15-find-follow`, container `rover`, image `orin-nav:1.2` by default since
+(branch `rover-v1.1.16-review`, container `rover`, image `orin-nav:1.2` by default since
 2026-10-18 — Isaac ROS 4.6 cuVSLAM, `VO=isaac`; proven on the twin only, the real-robot run
 (ISAAC_ROS_4_6_UPGRADE.md step F) is pending; `IMAGE=orin-nav:1.1 ./rover up` rolls back); read its
 README.md, STARTUP.md (power-on → working), OPERATIONS.md and OPEN_ISSUES.md before
