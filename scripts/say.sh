@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # say.sh -- type one turn to the REAL robot's brain, as if spoken, and print what it says back.
 #
-#   ./scripts/say.sh "Mitra, what do you see?" [--wait 240] [--quiet 25]
+#   ./scripts/say.sh "Kino, what do you see?" [--wait 240] [--quiet 25]
 #   ./scripts/say.sh --listen 120          # only print what it says
 #
 # The same as stt_node publishing a transcript (domain 0, /voice/user_input), via

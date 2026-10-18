@@ -17,8 +17,8 @@ A Bluetooth speaker with a mic is in ONE of two modes at a time:
 | **A2DP** (music) | 44–48 kHz stereo — good | **off** | music |
 
 So: while the robot listens, music sounds like a phone call; in good-music mode
-it cannot hear you. Measured 2026-10-03: in HFP the "Mitra" wake model scored
-0.02 on the owner's voice; Whisper with the `Mitra` hotword found the name 20/20
+it cannot hear you. Measured 2026-10-03: in HFP the earlier wake model (for the old name; `kino.onnx` replaces it) scored
+0.02 on the owner's voice; Whisper with the name as hotword found it 20/20
 on simulated 8 kHz speech.
 
 ## Scenarios
@@ -27,7 +27,7 @@ on simulated 8 kHz speech.
 
 | # | Scenario | Mic needs | Speaker needs | Software needs | Status |
 |---|---|---|---|---|---|
-| S1 | **Ask a question** ("Mitra, what time is it?") | hear the name + sentence | speak the reply | STT → name gate → brain → TTS | ✅ Whisper tiny.en + hotword, Piper (65879e2) |
+| S1 | **Ask a question** ("Kino, what time is it?") | hear the name + sentence | speak the reply | STT → name gate → brain → TTS | ✅ Whisper tiny.en + hotword, Piper (65879e2) |
 | S2 | **Follow-up without the name** ("…and tomorrow?") | stays open after a reply | — | follow-up window (9 s) after each reply | ✅ `follow_up_window_s` |
 | S3 | **Ignore the TV / people talking** | — | — | answer only when the name is in the text | ✅ `require_wake: true`, hotword-biased Whisper |
 | S4 | **"Stop" while it is talking** | mic is muted while it talks (its own voice) | stop instantly | stop word → `/voice/tts_stop` | ⏳ by voice; ✅ via Telegram / a new turn |

@@ -60,8 +60,8 @@ _PAUSE = re.compile(r"\s*(?:[,.!?:;-]|$)")
 
 def strip_leading_alias(text: str, aliases) -> str | None:
     """Like strip_alias, but for names a translator turns into an ordinary
-    word: Sarvam renders "మిత్ర, సినిమాకి వెళ్దామా" as "Friend, shall we go
-    to a movie?" -- kino means friend.
+    word: a name that means something in the speaker's language comes back
+    translated (a name meaning "friend": "Friend, shall we go to a movie?").
 
     It counts only at the START of the sentence, and only when it is called:
     followed by a pause ("Friend, ...", "Friend?") or after a calling word

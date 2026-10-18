@@ -10,7 +10,7 @@ take). Writes ~/voice_lab/recordings/results.md and prints the same.
 Models: Parakeet 0.6B, Moonshine base, whisper tiny.en, whisper small.en (local, Pi
 CPU, 2 threads), Sarvam saaras:v3 (cloud) twice -- as the robot calls it today
 (te-IN, translate) and as plain English (en-IN, transcribe) -- and Apple's on-device
-recogniser on the Mac Mini (mitra-stt, docs/voice/MAC_STT.md; skipped if not running).
+recogniser on the Mac Mini (kino-stt, docs/voice/MAC_STT.md; skipped if not running).
 """
 import gc
 import os
@@ -92,7 +92,7 @@ def models():
         ('whisper small.en (Pi)', lambda: LocalWhisperProvider('small.en', f'{MODELS}/whisper', THREADS, beam_size=1)),
         ('Sarvam, as robot (te->en)', lambda: SarvamProvider(key, 'te-IN')),
         ('Sarvam, English (en-IN)', lambda: SarvamEnglish(key, 'en-IN')),
-        ('Apple on-device (Mac Mini)', lambda: AppleProvider.from_config({'hotwords': 'Mitra'}, os.environ)),
+        ('Apple on-device (Mac Mini)', lambda: AppleProvider.from_config({'hotwords': 'Kino'}, os.environ)),
     ]
 
 

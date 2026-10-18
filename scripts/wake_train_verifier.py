@@ -3,10 +3,10 @@
 
 Usage:
     python3 scripts/wake_train_verifier.py \
-        --model src/langrobo_ros/models/wake/mitra.onnx \
-        --pos ~/wake_data/mitra_pos \
-        --neg ~/wake_data/mitra_neg \
-        --out src/langrobo_ros/models/wake/mitra_verifier.pkl
+        --model src/langrobo_ros/models/wake/kino.onnx \
+        --pos ~/wake_data/kino_pos \
+        --neg ~/wake_data/kino_neg \
+        --out src/langrobo_ros/models/wake/kino_verifier.pkl
 
 Needs: pip install openwakeword scikit-learn scipy
 """

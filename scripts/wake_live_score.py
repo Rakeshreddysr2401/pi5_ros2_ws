@@ -3,13 +3,13 @@
 
 Usage:
     # Test a custom model:
-    python3 scripts/wake_live_score.py src/langrobo_ros/models/wake/mitra.onnx
+    python3 scripts/wake_live_score.py src/langrobo_ros/models/wake/kino.onnx
 
     # Test with threshold:
-    python3 scripts/wake_live_score.py src/langrobo_ros/models/wake/mitra.onnx --threshold 0.45
+    python3 scripts/wake_live_score.py src/langrobo_ros/models/wake/kino.onnx --threshold 0.45
 
     # Test with a personal verifier attached:
-    python3 scripts/wake_live_score.py src/langrobo_ros/models/wake/mitra.onnx --verifier src/langrobo_ros/models/wake/mitra_verifier.pkl
+    python3 scripts/wake_live_score.py src/langrobo_ros/models/wake/kino.onnx --verifier src/langrobo_ros/models/wake/kino_verifier.pkl
 
     # Test built-in stock model (e.g. hey_jarvis) without a custom file:
     python3 scripts/wake_live_score.py hey_jarvis

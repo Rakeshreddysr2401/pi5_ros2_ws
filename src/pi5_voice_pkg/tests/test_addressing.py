@@ -51,7 +51,7 @@ LEADING = ["friend", "friends"]
 
 
 @pytest.mark.parametrize("text,expected", [
-    # what Sarvam actually returned for "మిత్ర, ..." on 2026-10-04
+    # what Sarvam returned (2026-10-04) for a name that is a Telugu word ("friend")
     ("Friend, shall we go to a movie tomorrow?", "shall we go to a movie tomorrow"),
     ("Hey friend, play a song", "play a song"),
     ("Oh friend! What time is it?", "What time is it"),

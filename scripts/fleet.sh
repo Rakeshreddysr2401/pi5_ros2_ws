@@ -11,7 +11,7 @@
 #   ./scripts/fleet.sh twin [up|down|status]
 #                               # the TWIN (the simulated robot), all on ROS domain 42;
 #                               #   the real robot (domain 0) is untouched. The laptop
-#                               #   (Isaac Sim, mitra_sim: `./mitra up home_real` THERE) is
+#                               #   (Isaac Sim, kino_sim: `./sim up home_real` THERE) is
 #                               #   ONLY the hardware -- simulated D555, C1, ESP32 + encoders,
 #                               #   the measured body -- and the Jetson runs the rover's WHOLE
 #                               #   stack on it, `TWIN=1 ./rover up` (cuVSLAM, fusion2,
@@ -26,7 +26,7 @@
 #
 # The brain (langrobo-brain) runs here in both modes. Each machine can still
 # be started by itself:
-#   laptop:  cd ~/mitra_sim && ./mitra up home_real    (the twin's hardware + world)
+#   laptop:  cd ~/kino_sim && ./sim up home_real    (the twin's hardware + world)
 #   jetson:  cd ~/rover && ./rover up      (TWIN=1 for the twin; or one layer: ./rover camera, ...)
 #
 # The Jetson's live repo is ~/rover (container `rover`). The older ~/robot
@@ -62,7 +62,7 @@ JETSON=rakhi24@$JETSON_HOST
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new -o IdentityAgent=none"
 
 ROVER_DIR="~/rover"
-TWIN_DOMAIN=42                           # the twin's ROS domain (mitra_sim MITRA_DOMAIN)
+TWIN_DOMAIN=42                           # the twin's ROS domain (kino_sim TWIN_DOMAIN)
 
 ensure_local_units() {
     sudo -n systemctl start langrobo-discovery 2>/dev/null \
@@ -103,7 +103,7 @@ jetson_status() {
         printf "%s=%s " "$p" "$s"; done; echo' 2>/dev/null | sed 's/^/jetson: /'
 }
 
-# The twin announces itself (mitra_sim, latched /sim/hardware on domain 42):
+# The twin announces itself (kino_sim, latched /sim/hardware on domain 42):
 # the laptop's address, cable ports, world. Asked over ROS like jetson_stack_up,
 # so nothing here needs ssh into the laptop. -> the JSON, or nothing.
 twin_announced() {
@@ -123,32 +123,32 @@ twin_up() {
     local hw; hw=$(twin_announced)
     if [ -z "$hw" ]; then
         echo "laptop: no twin announcing on domain $TWIN_DOMAIN. Start it ON THE LAPTOP:"
-        echo "        cd ~/mitra_sim && ./mitra up home_real      (then run this again)"
+        echo "        cd ~/kino_sim && ./sim up home_real      (then run this again)"
         return 1
     fi
     echo "laptop: $(twin_line "$hw")"
     if reachable "$JETSON_HOST"; then
         # the real layers, one by one, each with its gate (~10 min with nvblox + nav2);
         # the Jetson finds the twin by itself (the same /sim/hardware)
-        $SSH $JETSON "git -C ~/mitra_sim pull -q --ff-only 2>/dev/null; cd ~/rover && TWIN=1 ./rover up" 2>&1 | sed 's/^/jetson: /'
+        $SSH $JETSON "git -C ~/kino_sim pull -q --ff-only 2>/dev/null; cd ~/rover && TWIN=1 ./rover up" 2>&1 | sed 's/^/jetson: /'
     else
         echo "jetson: UNREACHABLE ($JETSON_HOST)"; return 1
     fi
     "$(dirname "$0")/twin_brain.sh" up | sed 's/^/pi5:    /'
     echo "twin: talk to it -- $(dirname "$0")/twin_brain.sh say \"Kino, what do you see?\""
-    echo "      watch it    -- on the laptop: cd ~/mitra_sim && ./mitra rviz   (or ./mitra up home_real follow=true)"
+    echo "      watch it    -- on the laptop: cd ~/kino_sim && ./sim rviz   (or ./sim up home_real follow=true)"
 }
 twin_down() {
     "$(dirname "$0")/twin_brain.sh" down | sed 's/^/pi5:    /'
     reachable "$JETSON_HOST" && $SSH $JETSON "cd ~/rover && TWIN=1 ./rover stop" 2>&1 | sed 's/^/jetson: /'
-    echo "laptop: the twin's world keeps running until, on the laptop: cd ~/mitra_sim && ./mitra down"
+    echo "laptop: the twin's world keeps running until, on the laptop: cd ~/kino_sim && ./sim down"
     return 0
 }
 
 case "$CMD" in
 twin)
     case "${2:-up}" in
-        up)     [ -n "${3:-}" ] && echo "twin: the world is chosen on the laptop (./mitra up <world>); '$3' ignored"
+        up)     [ -n "${3:-}" ] && echo "twin: the world is chosen on the laptop (./sim up <world>); '$3' ignored"
                 twin_up ;;
         down)   twin_down ;;
         status)
@@ -156,7 +156,7 @@ twin)
             reachable "$JETSON_HOST" && $SSH $JETSON "if docker ps --format '{{.Names}}' | grep -qx rover_twin; then cd ~/rover && TWIN=1 ./rover status; else echo 'no twin stack (rover_twin container) running'; fi" 2>&1 | sed 's/^/jetson: /'
             hw=$(twin_announced)
             if [ -n "$hw" ]; then echo "laptop: $(twin_line "$hw")"
-            else echo "laptop: no twin announcing on domain $TWIN_DOMAIN (on the laptop: ./mitra up home_real)"; fi ;;
+            else echo "laptop: no twin announcing on domain $TWIN_DOMAIN (on the laptop: ./sim up home_real)"; fi ;;
         *)      echo "usage: $0 twin [up|down|status]"; exit 2 ;;
     esac
     ;;
@@ -181,7 +181,7 @@ rover|up|start)
     # speaker/mic owner + STT + TTS; docs/voice/PI5_VOICE.md).
     systemctl --user start langrobo-voice 2>/dev/null || true
     echo "pi5:    voice=$(systemctl --user is-active langrobo-voice)"
-    echo "fleet: ROVER mode up. Talk to it (say \"Mitra\") or use Telegram."
+    echo "fleet: ROVER mode up. Talk to it (say \"Kino\") or use Telegram."
     ;;
 stop)
     # Park the robot: stop the body (the Jetson's stack). No password needed.
@@ -310,7 +310,7 @@ print("%s object(s) remembered; survey: %s" % (r.get("objects_remembered", "?"),
         || printf "  %-34s --    %s\n" "LangSmith tracing key" "none in .env (optional)"
 
     echo
-    if [ "$fails" -eq 0 ]; then echo "check: ALL OK — say \"Mitra, ...\" or message it on Telegram."
+    if [ "$fails" -eq 0 ]; then echo "check: ALL OK — say \"Kino, ...\" or message it on Telegram."
     else echo "check: $fails FAIL(s) — each line says what to run."; exit 1; fi
     ;;
 *)
@@ -319,7 +319,7 @@ print("%s object(s) remembered; survey: %s" % (r.get("objects_remembered", "?"),
     echo "  stop   stop the robot body; keep brain + discovery (Telegram) alive"
     echo "  down   full shutdown incl. Pi5 brain/discovery/microros (asks sudo)"
     echo "  status show what's up everywhere"
-    echo "  twin   (only when asked) the twin [up|down|status]: after ./mitra up on the laptop, the robot's"
+    echo "  twin   (only when asked) the twin [up|down|status]: after ./sim up on the laptop, the robot's"
     echo "         hardware simulated in Isaac Sim, the rover's whole Jetson stack on it (TWIN=1 ./rover up) + a 2nd brain, domain 42"
     echo "  check  prove every link works, with data (read-only)"
     exit 2

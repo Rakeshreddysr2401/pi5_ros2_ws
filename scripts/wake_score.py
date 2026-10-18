@@ -2,8 +2,8 @@
 """Score WAV clips against a wake-word model — does it fire on the word, and
 does it stay quiet on everything else?
 
-    python3 scripts/wake_score.py models/wake/mitra.onnx data/mitra_pos data/mitra_neg
-    python3 scripts/wake_score.py mitra.onnx pos/ neg/ --verifier mitra_verifier.pkl --threshold 0.5
+    python3 scripts/wake_score.py models/wake/kino.onnx data/kino_pos data/kino_neg
+    python3 scripts/wake_score.py kino.onnx pos/ neg/ --verifier kino_verifier.pkl --threshold 0.5
 
 Prints the peak score per clip and a summary: how many positives crossed the
 threshold (want ~all) and how many negatives did (want none). Run this on

@@ -156,7 +156,7 @@ class STTNode(Node):
         # last resort: built only if the sherpa fallback cannot load or fails.
         self.declare_parameter('stt_fallback', 'local')
         self.declare_parameter('wake_aliases', ['kino', 'hey kino'])
-        # Names as a TRANSLATING recogniser writes them (Sarvam: kino -> "friend"):
+        # Names as a TRANSLATING recogniser writes them (a name that is also a word):
         # they count only at the start of the sentence. [''] = none.
         self.declare_parameter('wake_leading_aliases', [''])
         self.declare_parameter('stop_words', ['stop'])
@@ -166,7 +166,7 @@ class STTNode(Node):
         # Wake word: 'transcript_alias' = legacy (transcribe all, match a name in text);
         # 'openwakeword' = acoustic gate (transcribe nothing until the word is heard).
         self.declare_parameter('wake_detector', 'transcript_alias')
-        self.declare_parameter('wake_word', 'hey_jarvis')  # bundled stand-in until mitra.onnx
+        self.declare_parameter('wake_word', 'hey_jarvis')  # bundled stand-in until kino.onnx
         self.declare_parameter('wake_model_path', '')      # explicit .onnx (custom Kino) wins
         self.declare_parameter('wake_threshold', 0.5)
         # Personal verifier trained on the owner's own clips (optional; see

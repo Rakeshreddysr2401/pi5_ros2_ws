@@ -50,8 +50,7 @@ DEFAULT_THRESHOLD = 0.80
 DEFAULT_MARGIN = 0.06
 
 # Calling the robot is not part of the request: "Kino, what do you see" and
-# "what do you see" must embed alike. "friend" is how Sarvam translates the
-# name.
+# "what do you see" must embed alike.
 _ADDRESS = re.compile(
     r"^\s*((hey|hi|hello|ok|okay|oh)\s+)?(kino|keeno|keno|jarvis)\b[\s,.!?:-]*",
     re.IGNORECASE)

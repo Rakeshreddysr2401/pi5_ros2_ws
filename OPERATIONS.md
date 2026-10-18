@@ -212,13 +212,13 @@ crashes); `e12b5 stop | status | log`. Source: `scripts/mac_mini/e12b5` (symlink
 
 ```bash
 # what e12b5 runs (GPU limit raised to 13312 MB first: sudo sysctl iogpu.wired_limit_mb=13312)
-~/llama.cpp-mitra/build/bin/llama-server -m gemma-4-12B-it-Q4_K_M.gguf --mmproj mmproj-gemma-4-12B-it-Q8_0.gguf \
+~/llama.cpp-kino/build/bin/llama-server -m gemma-4-12B-it-Q4_K_M.gguf --mmproj mmproj-gemma-4-12B-it-Q8_0.gguf \
     --host 0.0.0.0 --port 8080 -ngl 99 --parallel 5 --ctx-size 81920 -ub 512 \
     --jinja --flash-attn on --reasoning off --cache-ram 0 --metrics
 ```
 
-- **Patched llama.cpp** (`~/llama.cpp-mitra`, b9830 + `scripts/mac_mini/llama_swa_cache.patch`,
-  rebuilt by `scripts/mac_mini/build_llama_mitra.sh`): upstream re-reads every prompt shorter than
+- **Patched llama.cpp** (`~/llama.cpp-kino`, b9830 + `scripts/mac_mini/llama_swa_cache.patch`,
+  rebuilt by `scripts/mac_mini/build_llama_kino.sh`): upstream re-reads every prompt shorter than
   Gemma's 1024-token sliding window from scratch (photo questions 9-15 s instead of ~1 s).
   docs/mac/LLAMA_CACHE_ISSUE.md §8. Homebrew's `llama-server` is the unpatched fallback.
 - **GPU limit 13 GB** of the 16: 5 slots at `-ub 512` don't fit macOS's default ~10.7 GB. The

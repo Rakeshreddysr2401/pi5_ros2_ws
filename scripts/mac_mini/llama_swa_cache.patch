@@ -7,7 +7,7 @@ index bb1c236..452467f 100644
                                  }
  
 -                                if (pos_min >= pos_min_thold) {
-+                                // MITRA PATCH: pos_min == 0 = the slot still holds every position from 0 (nothing slid out of
++                                // KINO PATCH: pos_min == 0 = the slot still holds every position from 0 (nothing slid out of
 +                                // the SWA window), so the cache is usable as-is. Upstream `>=` sent every prompt shorter than
 +                                // n_swa (1024 on Gemma) to the checkpoint search, which restored a 1-token checkpoint.
 +                                if (pos_min > 0 && pos_min >= pos_min_thold) {

@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.mitra.stt</string>
+    <string>com.kino.stt</string>
     <key>CFBundleName</key>
-    <string>mitra-stt</string>
+    <string>kino-stt</string>
     <key>CFBundleExecutable</key>
-    <string>mitra-stt</string>
+    <string>kino-stt</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleVersion</key>
@@ -15,6 +15,6 @@
     <key>LSUIElement</key>
     <true/>
     <key>NSSpeechRecognitionUsageDescription</key>
-    <string>Mitra's robot sends its microphone audio here to be turned into text on this Mac.</string>
+    <string>Kino's robot sends its microphone audio here to be turned into text on this Mac.</string>
 </dict>
 </plist>

@@ -1,7 +1,7 @@
-// mitra-stt: Apple's on-device speech recogniser (the Siri/Dictation engine)
+// kino-stt: Apple's on-device speech recogniser (the Siri/Dictation engine)
 // as a tiny HTTP service on the Mac Mini, for the Pi5's stt_node.
 //
-//   POST /stt?lang=en-IN&context=Mitra,Hey%20Mitra    body = one WAV utterance
+//   POST /stt?lang=en-IN&context=Kino,Hey%20Kino    body = one WAV utterance
 //     -> 200 {"transcript": "...", "secs": 0.31, "on_device": true}
 //   GET  /health -> 200 {"ok": true, "auth": "authorized", "locales": [...]}
 //
@@ -12,7 +12,7 @@
 // No Telugu: SFSpeechRecognizer has no te-IN at all (probed 2026-10-10,
 // macOS 15.5) -- en-IN and hi-IN only for India, hi-IN without an on-device model.
 //
-// Build + run: scripts/mac_mini/stt_server/build.sh, then ./mitra-stt [port]
+// Build + run: scripts/mac_mini/stt_server/build.sh, then ./kino-stt [port]
 
 import Foundation
 import Network
@@ -63,7 +63,7 @@ func transcribe(wav: Data, locale: String, context: [String], allowServer: Bool)
         throw STTError.unavailable("no on-device model for \(locale) (pass server=1 to allow Apple's servers)")
     }
     let url = FileManager.default.temporaryDirectory
-        .appendingPathComponent("mitra-stt-\(UUID().uuidString).wav")
+        .appendingPathComponent("kino-stt-\(UUID().uuidString).wav")
     try wav.write(to: url)
     defer { try? FileManager.default.removeItem(at: url) }
 
@@ -72,7 +72,7 @@ func transcribe(wav: Data, locale: String, context: [String], allowServer: Bool)
     req.shouldReportPartialResults = false
     req.addsPunctuation = true
     req.taskHint = .dictation
-    if !context.isEmpty { req.contextualStrings = context }   // "Mitra" instead of "Metro"
+    if !context.isEmpty { req.contextualStrings = context }   // "Kino" instead of "Metro"
 
     let text: String = try await withCheckedThrowingContinuation { cont in
         let once = Once(cont)
@@ -178,10 +178,10 @@ func receive(_ conn: NWConnection, _ buf: Data = Data()) {
 
 // MARK: - main
 
-print("mitra-stt: speech recognition auth = \(authName())")
+print("kino-stt: speech recognition auth = \(authName())")
 if SFSpeechRecognizer.authorizationStatus() == .notDetermined {
-    print("mitra-stt: asking for Speech Recognition permission -- click Allow on the Mac's screen")
-    SFSpeechRecognizer.requestAuthorization { _ in print("mitra-stt: auth now \(authName())"); fflush(stdout) }
+    print("kino-stt: asking for Speech Recognition permission -- click Allow on the Mac's screen")
+    SFSpeechRecognizer.requestAuthorization { _ in print("kino-stt: auth now \(authName())"); fflush(stdout) }
 }
 let listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: port)!)
 listener.newConnectionHandler = { conn in
@@ -190,5 +190,5 @@ listener.newConnectionHandler = { conn in
 }
 listener.stateUpdateHandler = { if case .failed(let e) = $0 { print("listener failed: \(e)"); exit(1) } }
 listener.start(queue: .main)
-print("mitra-stt: listening on :\(port) (default \(defaultLocale), on-device)"); fflush(stdout)
+print("kino-stt: listening on :\(port) (default \(defaultLocale), on-device)"); fflush(stdout)
 dispatchMain()

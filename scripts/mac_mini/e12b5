@@ -1,5 +1,5 @@
 #!/bin/zsh
-# e12b5 -- start Mitra's LLM + VLM server (Gemma 4 12B, llama.cpp) on the Mac Mini.
+# e12b5 -- start Kino's LLM + VLM server (Gemma 4 12B, llama.cpp) on the Mac Mini.
 #
 #   e12b5            start (asks for the Mac password once per boot: GPU memory limit)
 #   e12b5 stop       stop it
@@ -12,7 +12,7 @@
 # blocks system sleep). Only a power cut/reboot or logging out stops it.
 #
 # Why each choice (measured 2026-10-11, docs/mac/LLAMA_CACHE_ISSUE.md):
-#  - PATCHED llama.cpp b9830 (~/llama.cpp-mitra, scripts/mac_mini/llama_swa_cache.patch):
+#  - PATCHED llama.cpp b9830 (~/llama.cpp-kino, scripts/mac_mini/llama_swa_cache.patch):
 #    upstream re-reads every prompt under 1024 tokens (Gemma's sliding window) from scratch.
 #  - 5 slots: 0-2 agents, 3 photo questions, 4 the voice "is this for me?" check.
 #  - -ub 512: the sliding-window cache keeps 1024 + ub tokens, so a request may branch
@@ -22,10 +22,10 @@
 #  - no --swa-full: it would need ~20 GB of cache for 5 slots. Not needed with the patch.
 #  - --cache-ram 0: the host-RAM prompt cache thrashed swap on 16 GB (2026-09-30).
 set -u
-LABEL=com.mitra.llama-server
-BIN=$HOME/llama.cpp-mitra/build/bin/llama-server
+LABEL=com.kino.llama-server
+BIN=$HOME/llama.cpp-kino/build/bin/llama-server
 M=$HOME/llm_models/gemma/12B
-PLIST=$HOME/llama.cpp-mitra/$LABEL.plist      # NOT in ~/Library/LaunchAgents: no autostart
+PLIST=$HOME/llama.cpp-kino/$LABEL.plist      # NOT in ~/Library/LaunchAgents: no autostart
 LOG=$HOME/Library/Logs/llama-server.log
 GPU_MB=13312
 DOMAIN=gui/$(id -u)
@@ -61,7 +61,8 @@ case ${1:-start} in
   *)      echo "usage: e12b5 [start|stop|status|log]"; exit 2 ;;
 esac
 
-[[ -x $BIN ]] || { echo "missing $BIN -- rebuild: scripts/mac_mini/build_llama_mitra.sh"; exit 1; }
+[[ -x $BIN ]] || { echo "missing $BIN -- first time after the rename to KINO: scripts/mac_mini/migrate_to_kino.sh"
+                 echo "(a rebuild alone: scripts/mac_mini/build_llama_kino.sh)"; exit 1; }
 
 # 1. GPU memory limit (resets at every boot)
 if (( $(sysctl -n iogpu.wired_limit_mb) < GPU_MB )); then

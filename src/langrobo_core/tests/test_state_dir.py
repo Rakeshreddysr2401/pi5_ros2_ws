@@ -1,4 +1,4 @@
-"""LANGROBO_STATE_DIR: a second brain (the Mitra twin, scripts/twin_brain.sh)
+"""LANGROBO_STATE_DIR: a second brain (the Kino twin, scripts/twin_brain.sh)
 keeps everything it learns apart from the real robot's ~/.langrobo."""
 import os
 

@@ -87,7 +87,7 @@ pi5_stt_node:
     # A2DP buffers 100-250ms on top, so raise to ~1.2 with a Bluetooth speaker
     # or the robot transcribes the tail of its own reply.
     tts_tail_mute_s: 1.2   # raised for A2DP buffering (was 0.5, for the USB headset)
-    # tiny.en, beam 1, hotword "Mitra" (the old name) (2026-10-03, bench on 8 kHz HFP-degraded speech):
+    # tiny.en, beam 1, hotword "Kino" (the old name) (2026-10-03, bench on 8 kHz HFP-degraded speech):
     # name 20/20, about half base's time, and "stop" right where base heard "Star".
     # Its slip: "what do you see" -> "think". base: model_size: base.
     # With stt_provider sarvam this is only the fallback: English-only, so a failed
@@ -159,7 +159,7 @@ pi5_stt_node:
     # DROPPED in the owner's live test. min duration (300 ms) still applies.
     min_voiced_ratio: 0.0
     # local | sherpa | sarvam | soniox | apple — see docs/voice/PI5_VOICE.md for the cost/latency comparison.
-    # apple = the Mac Mini's on-device Apple recogniser (mitra-stt, docs/voice/MAC_STT.md):
+    # apple = the Mac Mini's on-device Apple recogniser (kino-stt, docs/voice/MAC_STT.md):
     # ENGLISH ONLY (Apple has no Telugu), free, audio stays in the house, ~0.1 s on the Mac.
     # Settings via env (MAC_STT_URL / MAC_STT_LANG); Mac down -> stt_fallback as usual.
     # sarvam/soniox need SARVAM_API_KEY / SONIOX_API_KEY in ~/ros2_ws/.env (example.env

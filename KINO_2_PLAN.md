@@ -1,4 +1,4 @@
-# Mitra 2 — listen, speak, reason, act, remember (on the hardware we own)
+# KINO 2 — listen, speak, reason, act, remember (on the hardware we own)
 
 **Status: plan. Written 2026-10-07** on branch `dev-1.6.0-agents`, after a web
 survey of what is new in STT / TTS / models / agent memory (sources at the end)
@@ -8,7 +8,7 @@ it is merged.
 
 Hardware this plan is limited to — nothing new to buy:
 
-| Box | What it has | Its job in Mitra 2 |
+| Box | What it has | Its job in KINO 2 |
 |---|---|---|
 | Pi 5 (8 GB) | CPU, BT headset | **Ears + mouth + memory + conductor** |
 | Mac Mini | llama.cpp b9830, Gemma 4 12B Q4, vision **and audio** in, 4 slots | **Brain + hearing** |
@@ -32,7 +32,7 @@ Hardware this plan is limited to — nothing new to buy:
 
 **A. The Mac's Gemma can hear — but not well enough. REJECTED as the ears
 (measured later the same day, below).** First impression: `/props` reports `audio: true`. Sent a WAV of
-"Mitra, can you go near the red bag in the kitchen and tell me what is on it?"
+"Kino, can you go near the red bag in the kitchen and tell me what is on it?"
 straight to `/v1/chat/completions` (`input_audio`, slot 3):
 
 | audio | asked for | got | time (cold) |
@@ -70,7 +70,7 @@ a spoken reply from ~4 s to ~2 s.
 ```
             ┌──────────────────── Pi 5 ─────────────────────┐
  mic ──► VAD ─► Smart-Turn v3 ─► wake check ─► audio clip ──┼──► Mac: FRONT DOOR (slot 3)
-         (Silero) (end of turn,   ("mitra")                 │      Gemma hears the clip →
+         (Silero) (end of turn,   ("kino")                 │      Gemma hears the clip →
                   8 MB, ~12 ms)   + local STOP words ─► halt│      {text, agent, lang}
                                                             │            │
              speaker-ID (who is talking) ───────────────────┤            ▼
@@ -86,7 +86,7 @@ a spoken reply from ~4 s to ~2 s.
 
 What changes against today (`HOW_IT_WORKS.md`):
 
-| | today | Mitra 2 |
+| | today | KINO 2 |
 |---|---|---|
 | hearing | Sarvam cloud → English text; `tiny.en` fallback | Gemma hears the audio on the Mac (English); Sarvam Saaras v3 stays for Telugu until Gemma's Telugu is measured |
 | end of speech | silence timer | Smart-Turn v3 (listens to *how* you stopped) |
@@ -131,7 +131,7 @@ each). /status → `intent` keeps the live precision.
 
 One request per utterance: the audio clip plus a fixed ~300-token prompt (the
 three agents' one-line descriptions, rendered from `registry.py`, and "the
-robot is called Mitra"). Output is grammar-constrained JSON:
+robot is called Kino"). Output is grammar-constrained JSON:
 `{"text": ..., "agent": "chat|local_agent|navigate", "lang": "en|te"}`.
 
 - The prompt never changes, so it stays cached on slot 3; only ~100 audio tokens
@@ -168,7 +168,7 @@ heard the voice, not a possibly-wrong transcript.
 - Primary stays **Sarvam Bulbul v3 streaming** (Telugu, ~0.8 s to first sound
   measured) — no open Telugu TTS beats it at that latency yet.
 - English / offline: **Kyutai Pocket TTS** (100 M params, CPU, streaming,
-  ~200 ms, voice cloning — Mitra can have *one* voice in both paths) replacing
+  ~200 ms, voice cloning — Kino can have *one* voice in both paths) replacing
   Piper, if it holds real-time on the Pi 5. Measure RTF before switching.
 - The two-package protocol (`speech_stream.py` ↔ `tts_node.py`) is unchanged.
 
@@ -217,7 +217,7 @@ steps instead of one hopeful turn. Teleop MANUAL still refuses every motion.
 
 ### 3.8 Reach — plug into the house
 
-- **MCP server** exposing Mitra's safe tools (status, look, ask_photos, lists,
+- **MCP server** exposing Kino's safe tools (status, look, ask_photos, lists,
   reminders; motion only with the teleop gate) so Claude or a phone assistant
   can use the robot.
 - **Home Assistant** as ONE chat tool `home(command)` (lights, fans, plugs) —
@@ -227,7 +227,7 @@ steps instead of one hopeful turn. Teleop MANUAL still refuses every motion.
 
 ## 4. Latency budget (warm turn, English)
 
-| step | today | Mitra 2 target |
+| step | today | KINO 2 target |
 |---|---|---|
 | end of speech detected | ~1.2 s silence | ~0.3 s (Smart-Turn) |
 | transcript | Sarvam ~1 s | front door ~1.5 s (hears + routes) |
@@ -252,7 +252,7 @@ Every number in the right column is a target until §5's eval says otherwise.
 | 5 | **Errands**: `run_errand` plan → do → check | floor test, owner watching | 3-step errand on the twin, then on the floor |
 | 6 | **Object map**: NanoOWL on the Jetson | — | "where is my bag" < 1 s, Jetson CPU within budget |
 | 7 | **Voice polish**: Pocket TTS fallback, Moonshine backup STT | — | offline mode speaks and hears |
-| 8 | **Reach**: MCP server, Home Assistant | HA token | Claude can ask Mitra what it sees |
+| 8 | **Reach**: MCP server, Home Assistant | HA token | Claude can ask Kino what it sees |
 
 Phase 0 first because every later phase claims a speed-up or an accuracy gain,
 and only the eval can show it.

@@ -7,7 +7,7 @@ give me a clean final product."* Branch `dev-1.5.0-voice`.
 
 ## 1. Where the time went (measured on the robot)
 
-"What is the time now?" spoken in Telugu ("మిత్ర, ఇప్పుడు సమయం ఎంత?"):
+"What is the time now?" spoken in Telugu ("కినో, ఇప్పుడు సమయం ఎంత?"):
 
 | stage | before | after | how |
 |---|---|---|---|
@@ -57,7 +57,7 @@ Sources: [Sarvam streaming TTS](https://docs.sarvam.ai/api-reference/text-to-spe
 
 `addressing_mode: llm` (stt_node + `relevance.py`):
 
-1. The name ("Mitra", or "Friend," as Sarvam translates it) → accepted at once.
+1. The name ("Kino") → accepted at once.
 2. Music playing + a bare control ("Louder.", "Next song", "Pause it") → accepted at once.
 3. Anything else → one yes/no to the brain's LLM with the robot's last words and
    what is playing as context. Real room audio + requests: **28/30 right**, 0.67 s.

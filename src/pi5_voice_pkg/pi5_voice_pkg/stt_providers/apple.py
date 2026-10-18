@@ -1,5 +1,5 @@
 """Apple's on-device speech recogniser (the Siri/Dictation engine), run on the
-Mac Mini by scripts/mac_mini/stt_server (mitra-stt.app) and called over the LAN
+Mac Mini by scripts/mac_mini/stt_server (kino-stt.app) and called over the LAN
 -- the same one-utterance-in, text-out shape as Sarvam's REST call.
 
     POST http://singireddys-mac-mini.local:8091/stt?lang=en-IN&context=Kino
@@ -59,8 +59,8 @@ class AppleProvider(STTProvider):
             health = self._http.get(url.rsplit('/', 1)[0] + '/health', timeout=2).json()
             if health.get('auth') != 'authorized':
                 raise ProviderUnavailable(
-                    f"mitra-stt has no Speech Recognition permission ({health.get('auth')}); "
-                    'open mitra-stt.app on the Mac and click Allow')
+                    f"kino-stt has no Speech Recognition permission ({health.get('auth')}); "
+                    'open kino-stt.app on the Mac and click Allow')
         except (requests.RequestException, ValueError):
             pass
 

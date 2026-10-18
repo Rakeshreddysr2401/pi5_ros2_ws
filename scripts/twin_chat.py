@@ -50,7 +50,7 @@ def main():
         if not text:
             return
         state["said"] += 1
-        print(f"[{time.monotonic() - t0:6.1f}s] MITRA: {text}", flush=True)
+        print(f"[{time.monotonic() - t0:6.1f}s] KINO: {text}", flush=True)
 
     def on_thinking(m):
         state["thinking"] = bool(m.data)

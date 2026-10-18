@@ -31,7 +31,7 @@ through clean — *"If you want to take admission, you have to pay the money to 
 YouTube channel."*
 
 ### The owner's voice, measured (fan on, 2026-10-10)
-One sentence, "Mitra, find the earphones on the floor and go near to it", at the
+One sentence, "Kino, find the earphones on the floor and go near to it", at the
 owner's usual spot, fan running:
 
 | | |
@@ -53,7 +53,7 @@ Owner's first live A/B (15 sentences, before the distance question): Parakeet wa
 best whenever the audio was clean ("Can you find my dad and go near to him and say
 hello to him?", "find the earphones on the floor and go near to it.", "Move back and
 take it."), 0.25–0.54 s a sentence; all three failed together on the same few
-sentences (the audio, not the model). Wake word: undecided ("Mitra" or another) —
+sentences (the audio, not the model). Wake word: undecided ("Kino" or another) —
 later.
 
 ### The decision table — the owner's own voice (2026-10-10)
@@ -106,16 +106,16 @@ Final, as configured: **39/39 sentences cut as exactly one**, none dropped or sp
 
 Sarvam's real misses: "Remaining 10 minutes" (remind me in), "what is our name" (on it),
 "What do you say" (see), "Vajna" (volume up), "Tech mobile" (move back); the rest keep
-the meaning ("Come near to me", "Friend, go…" = Mitra translated).
+the meaning ("Come near to me", "Friend, go…" = the old name, translated).
 
 ## 2. English → English, local, on the Pi 5 CPU (2 threads)
 
-96 clips: 24 Mitra commands (`scripts/voice_lab/phrases.py`) × 4 Kokoro voices (two
+96 clips: 24 Kino commands (`scripts/voice_lab/phrases.py`) × 4 Kokoro voices (two
 Indian-accent: `hf_alpha`, `hm_omega`), mixed with 30 s of real AM-C28 room noise at
 20 dB ("near") and 5 dB ("far"). Synthetic speech is easier than a real voice: this
 ranks models, the owner's own voice decides.
 
-| model (engine) | WER near / far | "Mitra" heard | s per clip | RAM |
+| model (engine) | WER near / far | "Kino" heard | s per clip | RAM |
 |---|---|---|---|---|
 | whisper tiny.en, beam 1 + hotword (faster-whisper) — the old local | 3.6 / 3.0 % | 24/24 | 1.2 | 340 MB |
 | Moonshine tiny int8 (sherpa-onnx) | 5.7 / 7.0 % | 18–20/24 | 0.1 | 233 MB |
@@ -149,9 +149,9 @@ sentence (chrF, 0–100).
 Short commands (the robot's case), Jetson GPU: speech→Telugu **0.8 s (2 s clip),
 1.2 s (3 s), 1.9 s (5 s)**; Telugu→English **0.46 s greedy / 0.56 s beam 5**. All 13
 hand-written Telugu commands translated correctly ("ఎడమ వైపు తిరుగు" → "Turn left",
-"షాపింగ్ లిస్ట్‌లో పాలు చేర్చు" → "add milk to shopping list"). **"మిత్ర" becomes
-"Friend"** — stt_node already takes "Friend," at the start (`wake_leading_aliases`);
-better is to look for మిత్ర in the Telugu text before translating.
+"షాపింగ్ లిస్ట్‌లో పాలు చేర్చు" → "add milk to shopping list"). **The old name
+became "Friend"** (it was a Telugu word); `wake_leading_aliases` handled that. A name
+that is not a word, like Kino, comes through as itself.
 
 Published: Indic-Transcribe-core Telugu 11.4 % vs Sarvam Saaras V3 13.5 % (Voice of
 India benchmark, model card).

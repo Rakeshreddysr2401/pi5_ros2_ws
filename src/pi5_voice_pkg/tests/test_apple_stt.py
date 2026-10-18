@@ -1,4 +1,4 @@
-"""The 'apple' provider against a stand-in mitra-stt (a local HTTP server), plus
+"""The 'apple' provider against a stand-in kino-stt (a local HTTP server), plus
 one live call when the real one on the Mac Mini answers."""
 import json
 import os
@@ -85,7 +85,7 @@ def _live():
         return False
 
 
-@pytest.mark.skipif(not _live(), reason='mitra-stt not running on the Mac Mini')
+@pytest.mark.skipif(not _live(), reason='kino-stt not running on the Mac Mini')
 def test_live_silence_is_empty_not_an_error():
     p = apple.from_config({'hotwords': 'Kino'}, {'MAC_STT_URL': LIVE_URL})
     assert p.transcribe(np.zeros(16000, np.float32), 16000) == ''

@@ -88,7 +88,7 @@ class TelegramMember:
 def state_path(name: str = "") -> str:
     """Where this brain keeps what it learns: ~/.langrobo, or LANGROBO_STATE_DIR.
 
-    A second brain -- the Mitra twin's, on ROS domain 42 (scripts/twin_brain.sh)
+    A second brain -- the Kino twin's, on ROS domain 42 (scripts/twin_brain.sh)
     -- sets its own directory, so photos-of-a-simulated-room places, saved
     locations and object memory never leak into the real robot's (2026-10-03).
     Read at call time, never cached: tests and the twin set it per process."""

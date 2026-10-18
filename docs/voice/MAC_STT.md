@@ -2,21 +2,21 @@
 
 The Mac Mini already runs the LLM/VLM. It also has Apple's speech recogniser
 (the engine behind Siri and Dictation), which runs on the Neural Engine. This
-puts it on the LAN as a small HTTP service, **mitra-stt**. The Pi5 sends each
+puts it on the LAN as a small HTTP service, **kino-stt**. The Pi5 sends each
 utterance to it, the same way it sends one to Sarvam, and gets text back.
 
 ```
- Pi5 (stt_node)                                     Mac Mini (mitra-stt.app, :8091)
+ Pi5 (stt_node)                                     Mac Mini (kino-stt.app, :8091)
  mic ─► VAD cuts one utterance ─► WAV ── POST /stt ──► SFSpeechRecognizer
-                                                        en-IN, on-device, "Mitra" hint
- /voice/user_input ◄── wake/addressing gate ◄── {"transcript": "Mitra, go to the kitchen"}
+                                                        en-IN, on-device, "Kino" hint
+ /voice/user_input ◄── wake/addressing gate ◄── {"transcript": "Kino, go to the kitchen"}
         │
         └─ Mac down? the same utterance goes to stt_fallback (Parakeet, on the Pi)
 ```
 
 | Piece | Where |
 |---|---|
-| Mac server | `scripts/mac_mini/stt_server/`: `main.swift` (the server), `build.sh`, `install.sh`, `ensure.sh` (run by `e12b4`), `com.mitra.stt.plist` (LaunchAgent), `Info.plist` |
+| Mac server | `scripts/mac_mini/stt_server/`: `main.swift` (the server), `build.sh`, `install.sh`, `ensure.sh` (run by `e12b4`), `com.kino.stt.plist` (LaunchAgent), `Info.plist` |
 | Pi5 provider | `src/pi5_voice_pkg/pi5_voice_pkg/stt_providers/apple.py`, registered as `apple` |
 | Pi5 config | `src/pi5_voice_pkg/config/voice_params.yaml` (`stt_provider`), `~/ros2_ws/.env` (`MAC_STT_*`) |
 | Tests | `src/pi5_voice_pkg/tests/test_apple_stt.py` (a stand-in server, plus one live call) |
@@ -30,8 +30,8 @@ utterance to it, the same way it sends one to Sarvam, and gets text back.
   never translates, so Telugu speech stays on `sarvam`.
 - **On-device.** Audio never leaves the house, unless you set `MAC_STT_SERVER=1`.
 - **Fast.** On the Mac (M4) a sentence takes 0.02–0.25 s; add a few ms of LAN.
-- **Name hint.** `stt_hotwords` ("Mitra") is sent as Apple's
-  `contextualStrings` (plus "Hey Mitra"), so the name comes back as "Mitra"
+- **Name hint.** `stt_hotwords` ("Kino") is sent as Apple's
+  `contextualStrings` (plus "Hey Kino"), so the name comes back as "Kino"
   instead of "Metro".
 - **Formatting.** It writes numbers and units the way a person types them
   ("Turn left 90° and move forward 1 m"). The brain's LLM reads that fine.
@@ -50,12 +50,12 @@ once for permission:
 
 ```bash
 cd ~/PycharmProjects/pi5_ros2_ws/scripts/mac_mini/stt_server
-./install.sh            # builds mitra-stt.app, asks for Speech Recognition, starts the LaunchAgent
+./install.sh            # builds kino-stt.app, asks for Speech Recognition, starts the LaunchAgent
 curl -s localhost:8091/health     # "auth":"authorized", en-IN "on_device":true
 ```
 
-- The LaunchAgent `com.mitra.stt` starts it at login and restarts it if it dies.
-  Log: `/tmp/mitra-stt.log`. Remove it with `./install.sh uninstall`.
+- The LaunchAgent `com.kino.stt` starts it at login and restarts it if it dies.
+  Log: `/tmp/kino-stt.log`. Remove it with `./install.sh uninstall`.
 - **`e12b4` starts it too.** The alias (`~/.zshrc`) runs `ensure.sh` before
   llama-server. If speech is already up it says so. Otherwise it restarts the
   LaunchAgent (or opens the app), waits up to 10 s, and reports. It never
@@ -64,11 +64,11 @@ curl -s localhost:8091/health     # "auth":"authorized", en-IN "on_device":true
   permission again, that is the ad-hoc signature changing. Click Allow.
 - **Sleep is off** (`pmset sleep 0`, already set for llama-server).
 - **The Mac must be logged in.** FileVault is on, so auto-login is disabled:
-  after a power cut or reboot, mitra-stt does not run until someone logs in on
+  after a power cut or reboot, kino-stt does not run until someone logs in on
   the Mac. llama-server has the same requirement. Until then the Pi
   transcribes with its fallback (Parakeet) and logs the reason (2.10). For a
   planned reboot, `sudo fdesetup authrestart` comes back logged in.
-- The macOS firewall is off. If you turn it on, allow `mitra-stt` when asked,
+- The macOS firewall is off. If you turn it on, allow `kino-stt` when asked,
   or the Pi gets "connection refused".
 
 **Why an `.app`?** macOS checks Speech Recognition permission against the
@@ -123,9 +123,9 @@ section 4. Always use the mDNS name, never an IP: DHCP has moved the Mac before
 This uses a clip that is in git, so no microphone is needed:
 
 ```bash
-curl -s --data-binary @data/test_pos/mitra_rishi.wav \
-  'http://singireddys-mac-mini.local:8091/stt?lang=en-IN&context=Mitra,Hey%20Mitra'
-# {"transcript":"Mitra","secs":0.13,"on_device":true}
+curl -s --data-binary @data/test_neg/hello_daniel.wav \
+  'http://singireddys-mac-mini.local:8091/stt?lang=en-IN&context=Kino,Hey%20Kino'
+# {"transcript":"Hello","secs":0.13,"on_device":true}
 ```
 
 Then run the same code path stt_node will use:
@@ -134,8 +134,8 @@ Then run the same code path stt_node will use:
 cd ~/ros2_ws/src/pi5_voice_pkg && python3 - <<'EOF'
 import os, wave, numpy as np
 from pi5_voice_pkg.stt_providers import REGISTRY
-p = REGISTRY['apple'].from_config({'hotwords': 'Mitra'}, os.environ)
-w = wave.open('../../data/test_pos/hey_mitra_samantha.wav')
+p = REGISTRY['apple'].from_config({'hotwords': 'Kino'}, os.environ)
+w = wave.open('../../data/test_neg/hello_daniel.wav')
 pcm = np.frombuffer(w.readframes(w.getnframes()), np.int16).astype(np.float32) / 32768
 print(repr(p.transcribe(pcm, w.getframerate())))
 EOF
@@ -148,7 +148,7 @@ Edit `src/pi5_voice_pkg/config/voice_params.yaml`, in the `pi5_stt_node:` block:
 ```yaml
     stt_provider: apple       # was: sarvam  (Apple = English only; see top of this page)
     stt_fallback: sherpa      # keep: Mac down -> Parakeet on the Pi
-    stt_hotwords: "Mitra"     # keep: also sent to Apple as the name hint
+    stt_hotwords: "Kino"     # keep: also sent to Apple as the name hint
 ```
 
 Leave the other STT keys alone. `stt_source_language` / `stt_target_language`
@@ -187,15 +187,15 @@ produced it.
 journalctl --user -u langrobo-voice -b -o cat | grep -E 'stt_provider|apple|fallback'
 #    stt_provider = apple
 
-# 2. speak to it ("Mitra, what time is it?") and watch, in two terminals:
+# 2. speak to it ("Kino, what time is it?") and watch, in two terminals:
 source /opt/ros/jazzy/setup.bash && source ~/ros2_ws/install/setup.bash
 ros2 topic echo /voice/debug_transcript     # the words Apple heard
 ros2 topic echo /voice/stt_meta             # one JSON line per utterance
 #    {"provider": "apple", "configured_provider": "apple", "fell_back": false, "latency_ms": ~150, ...}
 
 # 3. the Mac sees the requests
-ssh singireddy@singireddys-mac-mini.local tail -f /tmp/mitra-stt.log    # or tail it on the Mac
-#    0.12s en-IN Mitra, what time is it?
+ssh singireddy@singireddys-mac-mini.local tail -f /tmp/kino-stt.log    # or tail it on the Mac
+#    0.12s en-IN Kino, what time is it?
 ```
 
 `"fell_back": true` means the call to the Mac failed and Parakeet answered
@@ -226,7 +226,7 @@ The Pi never goes deaf (CLAUDE.md rule 5):
 
 | Situation | What the Pi does | Where you see it |
 |---|---|---|
-| Mac asleep / logged out / mitra-stt down | each utterance falls back to Parakeet; switches back to Apple on its own when the Mac returns | `stt_meta` `"fell_back": true`, `fallback_reason: mac stt request failed` |
+| Mac asleep / logged out / kino-stt down | each utterance falls back to Parakeet; switches back to Apple on its own when the Mac returns | `stt_meta` `"fell_back": true`, `fallback_reason: mac stt request failed` |
 | Mac up but Speech permission missing | refuses at startup; Parakeet for the whole session (restart voice once fixed) | journal: `apple unavailable at startup (... no Speech Recognition permission ...)` |
 | Mac unreachable when the voice service starts | starts as `apple` anyway; each call falls back until the Mac is reachable | journal: `stt_provider = apple`, then per-call fallbacks |
 | Clip is silence / noise | empty transcript, no turn (same as every provider) | `debug_transcript`: `(empty — filtered ...)` |
@@ -237,11 +237,11 @@ The Pi never goes deaf (CLAUDE.md rule 5):
 | Symptom (on the Pi) | Cause → fix |
 |---|---|
 | `curl: (6) Could not resolve host` | mDNS: Pi or Mac off the network, or avahi down on the Pi → `systemctl status avahi-daemon`; check that both are on the same Wi-Fi |
-| `curl: (7) ... Connection refused` | mitra-stt not running → on the Mac: `launchctl print gui/$(id -u)/com.mitra.stt \| grep state`; `cat /tmp/mitra-stt.log`; re-run `./install.sh`. Or the Mac's firewall is blocking it |
+| `curl: (7) ... Connection refused` | kino-stt not running → on the Mac: `launchctl print gui/$(id -u)/com.kino.stt \| grep state`; `cat /tmp/kino-stt.log`; re-run `./install.sh`. Or the Mac's firewall is blocking it |
 | `curl: (28) timed out` | Mac asleep or logged out after a reboot → log in on the Mac (FileVault, section 1) |
-| `"auth":"denied"` / `"notDetermined"` | System Settings → Privacy & Security → Speech Recognition → enable mitra-stt, or run `./install.sh` on the Mac's screen and click Allow |
+| `"auth":"denied"` / `"notDetermined"` | System Settings → Privacy & Security → Speech Recognition → enable kino-stt, or run `./install.sh` on the Mac's screen and click Allow |
 | HTTP 503 `no on-device model for ...` | `MAC_STT_LANG` is a locale without an on-device model (en-GB, hi-IN) → use en-IN/en-US, or `MAC_STT_SERVER=1` |
-| Name heard as "Mira" / "Metro" | `stt_hotwords` empty → set it to `"Mitra"` (it becomes the context hint) |
+| Name heard as "Mira" / "Metro" | `stt_hotwords` empty → set it to `"Kino"` (it becomes the context hint) |
 | Telugu speech comes out as English nonsense | expected: Apple has no Telugu → `stt_provider: sarvam` |
 | Journal: `unknown stt_provider 'apple'` | old code on the Pi → 2.1 (pull), then 2.7 (build) |
 
@@ -250,9 +250,9 @@ The Pi never goes deaf (CLAUDE.md rule 5):
 Change `main.swift` and `apple.py` together or not at all.
 
 ```
-POST /stt?lang=en-IN&context=Mitra,Hey%20Mitra[&server=1]
+POST /stt?lang=en-IN&context=Kino,Hey%20Kino[&server=1]
      Content-Type: audio/wav      body = one utterance, 16-bit PCM WAV, any sample rate
-  200 {"transcript": "Mitra, stop.", "secs": 0.07, "on_device": true}
+  200 {"transcript": "Kino, stop.", "secs": 0.07, "on_device": true}
   200 {"transcript": ""}                       silence / no speech
   400 {"error": "empty body (send a WAV)"}
   503 {"error": "..."}                          recogniser failed / no model / timeout (15 s)

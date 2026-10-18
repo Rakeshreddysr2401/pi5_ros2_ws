@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Watch the voice pipeline live — say "Mitra" and see what happens.
+# Watch the voice pipeline live — say "Kino" and see what happens.
 #
 #   ./scripts/voice_watch.sh          # voice only (wake word, what it heard)
 #   ./scripts/voice_watch.sh all      # + the brain (which agent, the reply)
 #
 # Ctrl-C to stop. What the lines mean:
 #   asleep peak_wake_score=0.02   idle noise floor (heartbeat every 10 s)
-#   wake word ... detected        it heard "Mitra" and is now listening
+#   wake word ... detected        it heard "Kino" and is now listening
 #   command: "..."                what it understood and sent to the brain
 #   follow-up window closed       nobody spoke in time; back to sleep
 #   audio ready / not ready       speaker+mic appeared / went away

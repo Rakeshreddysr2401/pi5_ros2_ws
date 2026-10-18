@@ -1,6 +1,6 @@
 # LangRobo Pi5 brain — project guide
 
-Home robot "Mitra" (renamed from "Rakhi" 2026-09-20; the `rakhi24` username and `rakhi-jetson` hostname are unrelated and unchanged). Four machines:
+Home robot "Kino" (renamed from "Rakhi" 2026-09-20; the `rakhi24` username and `rakhi-jetson` hostname are unrelated and unchanged). Four machines:
 
 - **Pi 5** (this repo) — the LangGraph brain, **three agents**, plus a CPU-only
   STT/TTS pair (`pi5_voice_pkg`) so voice runs concurrently with driving.
@@ -32,7 +32,7 @@ INTEGRATION_GAPS.md before building anything that touches the world;
 OPERATIONS.md for run/deploy/troubleshooting; docs/voice/PI5_VOICE.md for the Pi5 voice trio
 (speaker/mic owner + STT + TTS); **docs/voice/VOICE_ROADMAP.md** for the phased voice plan
 (what is done, what is next); docs/voice/WAKE_WORD_INTEGRATION.md to train and plug in the
-"Mitra" wake word; docs/voice/MAC_STT.md for `stt_provider: apple` (Apple's on-device
+"Kino" wake word; docs/voice/MAC_STT.md for `stt_provider: apple` (Apple's on-device
 recogniser served from the Mac Mini, `scripts/mac_mini/stt_server`, :8091 -- English only).
 
 ## Fleet start — one command brings up the whole robot
@@ -49,7 +49,7 @@ when the owner explicitly asks for the virtual rover, and take it down after (`f
   ~10 min from cold). Voice is the Pi5's own trio (`langrobo-voice` user
   unit, starts at boot).
 - **`twin up|status|down`** — the SIMULATED robot (Isaac Sim on the laptop, "The twin"
-  below): after `./mitra up home_real` on the laptop, runs `TWIN=1 ./rover up` on the
+  below): after `./sim up home_real` on the laptop, runs `TWIN=1 ./rover up` on the
   Jetson and the twin brain here, all on domain 42.
 - **`stop`** parks the robot: stops the body (the Jetson's `rover` container) but
   keeps `langrobo-brain` and voice up, so chat/Telegram keeps listening. No password.
@@ -61,7 +61,7 @@ when the owner explicitly asks for the virtual rover, and take it down after (`f
 does not. `./scripts/fleet.sh rover` (or `ssh rakhi-jetson.local 'cd ~/rover && ./rover up'`)
 is the whole recovery. The Jetson's own STARTUP.md is the layer-by-layer version.
 
-Each machine can still be driven on its own — the laptop's twin via `~/mitra_sim/mitra`,
+Each machine can still be driven on its own — the laptop's twin via `~/kino_sim/kino`,
 the Jetson via `~/rover/rover <layer>`. Reaches the other machines by mDNS name over
 passwordless ssh; DDS is plain multicast on domain 0 everywhere (NETWORKING.md).
 
@@ -71,7 +71,7 @@ passwordless ssh; DDS is plain multicast on domain 0 everywhere (NETWORKING.md).
 # Whole robot (see "Fleet start" above)
 ./scripts/fleet.sh            # = rover, the default: real body (pi5 microros + jetson ./rover up; pi5 voice)
 ./scripts/fleet.sh rover      # real body (pi5 microros + jetson ./rover up; pi5 voice)
-./scripts/fleet.sh twin up    # the simulated robot (after ./mitra up on the laptop; domain 42)
+./scripts/fleet.sh twin up    # the simulated robot (after ./sim up on the laptop; domain 42)
 ./scripts/fleet.sh stop       # park robot body (brain stays up)
 ./scripts/fleet.sh down       # full shutdown incl. Pi5 services (sudo)
 ./scripts/fleet.sh status
@@ -233,17 +233,17 @@ that moves wheels).
   fallback; publishes latched `/voice/audio_ready`), `stt_node` and
   `tts_node` follow it and never touch Bluetooth. `bt_audio.py` is the
   pure bluez/PipeWire glue. `/bt-audio` (Claude skill) is the operator
-  checklist. Robot name / wake word: **Mitra**. The acoustic gate is
+  checklist. Robot name / wake word: **Kino**. The acoustic gate is
   **OFF since 2026-09-26** (owner wants a better-trained model first):
   `wake_detector: transcript_alias` + `require_wake: true`, so everything is
-  transcribed; text containing "mitra" / "hey mitra" becomes a turn at once and,
+  transcribed; text containing "kino" / "hey kino" becomes a turn at once and,
   with `addressing_mode: llm` (2026-10-04), any other sentence is put to the
   brain's LLM as "is this for me?". **OFF since 2026-10-12** (owner: every sentence
   is processed, the agent clarifies or answers `[silent]`): `require_wake: false`;
   sentences without the name wait while a turn runs (`HoldWhileBusy`). The wake word itself is undecided (owner,
-  2026-10-10: Mitra or another name).
-  The trained `models/wake/mitra.onnx` (and Telugu `rakhi.onnx`) are in git,
-  one `./scripts/wake_switch.py mitra` away. It answers "చెప్పండి బాస్" when
+  2026-10-10: Kino or another name).
+  The trained `models/wake/kino.onnx` (and Telugu `rakhi.onnx`) are in git,
+  one `./scripts/wake_switch.py kino` away. It answers "చెప్పండి బాస్" when
   you pause after the name (`wake_cue.py`).
   `./scripts/wake_switch.py` swaps model/threshold and restarts the service;
   `./scripts/wake_test.sh` shows a live score bar. docs/voice/WAKE_WORD_INTEGRATION.md
@@ -331,12 +331,12 @@ no longer exist.
   "agent X must never do Y" rule is the same shape of untrustworthy until
   it's been driven on the robot, not just read.
 
-## The twin (mitra_sim) — test the real robot's code on a simulated robot
+## The twin (kino_sim) — test the real robot's code on a simulated robot
 
 The twin is the robot's HARDWARE simulated, nothing else: since 2026-10-18 in
 **Isaac Sim 5.1** on the new laptop (user `chotesh`, 192.168.1.9, DHCP, RTX
-4050). Repo github.com/Rakeshreddysr2401/mitra_sim (private),
-laptop `~/mitra_sim` (branch `isaac`). The laptop simulates the D555, the C1
+4050). Repo github.com/Rakeshreddysr2401/kino_sim (private),
+laptop `~/kino_sim` (branch `isaac`). The laptop simulates the D555, the C1
 and the ESP32 + encoders with the rover's measured body, noise and wheel
 response; the Jetson runs the rover's WHOLE, unchanged stack on it
 (`TWIN=1 ./rover up`: cuVSLAM, fusion2, slam_toolbox, nvblox, nav2, reach,
@@ -345,19 +345,19 @@ domain 42**, so the twin can never reach the real wheels (domain 0).
 
 **Switching body is the domain, not the code:** a fix found on the twin is
 made in the real code (`~/rover` on the Jetson, this repo) and already is the
-robot's. Real robot: `fleet.sh rover`. Twin: on the laptop `./mitra up
+robot's. Real robot: `fleet.sh rover`. Twin: on the laptop `./sim up
 home_real`, then here `./scripts/fleet.sh twin up` (status / down). The twin
 announces itself on domain 42 (latched `/sim/hardware`: the laptop's address,
 the cable ports, the world, the body's params sha1), so neither this Pi nor
 the Jetson logs in to the laptop. The Jetson runs one stack at a time (real or
 twin): it is CPU-bound.
 
-Laptop commands (in `~/mitra_sim`): `./mitra up <world> [follow=true]` (the
-Isaac window chasing the rover), `./mitra status`, `./mitra scenario <world>`
+Laptop commands (in `~/kino_sim`): `./sim up <world> [follow=true]` (the
+Isaac window chasing the rover), `./sim status`, `./sim scenario <world>`
 (drives the world's goals, judged on the TRUE pose: a touch fails the run),
-`./mitra selftest`, `./mitra parity snapshot real|twin` + `compare` (does the
-twin publish the real robot's interface?), `./mitra rviz [real]`. Results,
-fixes and open items: mitra_sim `docs/STATUS.md`; agent rules: its `CLAUDE.md`.
+`./sim selftest`, `./sim parity snapshot real|twin` + `compare` (does the
+twin publish the real robot's interface?), `./sim rviz [real]`. Results,
+fixes and open items: kino_sim `docs/STATUS.md`; agent rules: its `CLAUDE.md`.
 First Isaac day (2026-10-18): every `./rover up` gate OK; home_real scenario
 4/4 reached, through the 80 cm door; it drives over the 1 cm tablet, as the
 real robot does.
@@ -367,7 +367,7 @@ agent_node, unchanged, on domain 42 beside the real one (langrobo-brain,
 domain 0, untouched): `LANGROBO_STATE_DIR=~/.langrobo_twin` (its photos, saved
 places and object memory never mix with the real robot's), Telegram off, no
 voice, its own teleop switch (`twin_brain.sh manual on|off`, a file), health on
-:8092, LangSmith project `mitra-twin`. Talk to it with `twin_brain.sh say "..."`
+:8092, LangSmith project `kino-twin`. Talk to it with `twin_brain.sh say "..."`
 (prints the replies and the later arrival report). The Jetson half runs the
 rover's own `pixel_to_goal`, so "go near X" is the real path. It shares the Mac
 mini's llama.cpp slots with the real brain. **Default is the real robot**: the

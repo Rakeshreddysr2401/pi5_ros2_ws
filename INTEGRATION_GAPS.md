@@ -385,7 +385,7 @@ worker (`start_nav_to_pose` and `reach_and_wait` both do), or the old worker's
 
 ## 8. The follow-me wire contract ✅
 
-"Mitra, follow me" / "come to me": `tools/follow.py` `follow_person` (navigate
+"Kino, follow me" / "come to me": `tools/follow.py` `follow_person` (navigate
 agent, behind `LANGROBO_FOLLOW=1`) -> `ROS2Bridge.start_follow`. The Jetson half
 is `~/rover/phase3/nodes/follow_node.py` (driving) + `phase4/nodes/person_tracker.py`
 inside `detections_3d.py` (YOLO people with ids) -- started by `./rover follow`,

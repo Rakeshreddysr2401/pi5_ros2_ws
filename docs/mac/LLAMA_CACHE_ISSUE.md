@@ -213,8 +213,8 @@ can't fit, and with the patch it isn't needed.
 
 **What runs now** (`scripts/mac_mini/e12b5`, started by hand after each power-on):
 
-- llama.cpp **b9830 + `scripts/mac_mini/llama_swa_cache.patch`**, built in `~/llama.cpp-mitra`
-  by `scripts/mac_mini/build_llama_mitra.sh` (Homebrew's unpatched build stays as fallback).
+- llama.cpp **b9830 + `scripts/mac_mini/llama_swa_cache.patch`**, built in `~/llama.cpp-kino`
+  by `scripts/mac_mini/build_llama_kino.sh` (Homebrew's unpatched build stays as fallback).
 - `--parallel 5 --ctx-size 81920` (5 x 16384), `-ub 512`, `--metrics`, the other flags as before.
 - GPU memory limit raised to 13312 MB (`sudo sysctl iogpu.wired_limit_mb=13312`, asked by
   `e12b5`; resets at reboot). 5 slots at `-ub 512` ran out of GPU memory at the default limit.

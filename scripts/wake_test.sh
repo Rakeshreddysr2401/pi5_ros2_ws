@@ -4,7 +4,7 @@
 #
 #   ./scripts/wake_test.sh            # the model the robot is using now
 #   ./scripts/wake_test.sh rakhi      # test the Rakhi model
-#   ./scripts/wake_test.sh mitra 0.5  # ...with a different threshold
+#   ./scripts/wake_test.sh kino 0.5  # ...with a different threshold
 #
 # Ctrl-C to stop. The robot keeps listening at the same time, so a real
 # call also wakes it; `systemctl --user stop langrobo-voice` first if you

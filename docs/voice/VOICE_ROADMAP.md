@@ -49,7 +49,7 @@ Measured from the code on `dev-1.3.3-minimal`, not from memory:
   VAD-positive utterance in the room is sent to Sarvam and forwarded to the
   brain. The only real wake model is the bundled `hey_jarvis` stand-in, which
   scored 0.12 / 0.25 / 0.47 through the boAt Stone's HFP mic against a 0.35
-  threshold — ~1 in 3 misses. No "Mitra" model has been trained.
+  threshold — ~1 in 3 misses. No "Kino" model has been trained.
 - **Self-hearing is prevented by a hard mute.** `stt_node._on_audio` drops
   every frame while `/voice/tts_speaking` is true, plus `tts_tail_mute_s`
   (1.2 s). T3 holds, but the mic is dead while the robot talks, so **T4 is
@@ -190,19 +190,19 @@ work and can start while Phase 0 is being measured.
 
 **Tasks**
 - [x] **Train the real wake models** — COMPLETED 2026-09-20 on branch `dev-1.3.4-minimal`.
-  - `mitra.onnx` (414 KB): verified on positives (0.92–0.99 peak) and negatives (0.02) at `src/langrobo_ros/models/wake/mitra.onnx`.
+  - the earlier model for the old name (414 KB; positives 0.92–0.99 peak, negatives 0.02), since replaced by `kino.onnx` (`scripts/train_kino_local.py`; not re-measured here).
   - `rakhi.onnx` (414 KB): specialized for Telugu households (*"Rakhi"*, *"రాఖీ"*, *"ఏయ్ రాఖీ"*, *"Hello Rakhi"*), verified with zero false wakes on Telugu conversational phrases (*"repu movie ke veldama"*, *"cheppu"*, *"aagu"* all 0.000) at `src/langrobo_ros/models/wake/rakhi.onnx`.
-  - Live mic scorer `scripts/wake_live_score.py`, trainer `scripts/train_rakhi_local.py`, verifier trainer `scripts/wake_train_verifier.py`, and Colab trainer `notebooks/train_mitra_wakeword.ipynb` are all in place.
+  - Live mic scorer `scripts/wake_live_score.py`, trainer `scripts/train_rakhi_local.py`, verifier trainer `scripts/wake_train_verifier.py`, and Colab trainer `notebooks/train_kino_wakeword.ipynb` are all in place.
   See **WAKE_WORD_INTEGRATION.md**.
 - [~] **Acoustic gating: built, verified in the lab, currently OFF.** Owner's
   call 2026-09-26 evening — "disable wakeword for now, we need a more
-  trained one". Back on with `./scripts/wake_switch.py mitra`. **The models
+  trained one". Back on with `./scripts/wake_switch.py kino`. **The models
   have never had a fair live test:** the only attempt ran while the Stone's
   HFP link was delivering pure digital silence (fixed the same evening), so
   nothing could have fired. Before retraining, re-run the exit test below on
   a working mic — the answer may be a threshold, not a model.
 - [x] **The switch itself** (2026-09-26): `wake_detector: openwakeword`,
-  `wake_model_path: models/wake/mitra.onnx`, `require_wake: true`,
+  `wake_model_path: models/wake/kino.onnx`, `require_wake: true`,
   threshold 0.45. Nothing is transcribed or sent to Sarvam until the name is
   heard. Switch model/threshold with `./scripts/wake_switch.py <word>|off
   [--threshold X]`; watch a call with `./scripts/wake_test.sh` (live score
@@ -227,7 +227,7 @@ work and can start while Phase 0 is being measured.
   boss?" costs no API call per wake and sounds like the same voice) and plays
   it through the same output stream. Pause-aware: `stt_node` publishes `wake`
   only if no voiced frame arrives within ~400 ms of the wake firing — if the
-  user keeps talking ("Mitra, go to the kitchen") the cue is skipped so it
+  user keeps talking ("Kino, go to the kitchen") the cue is skipped so it
   never talks over the command. Until Phase 2 lands, the cue must **not** set
   `/voice/tts_speaking` (it is < 0.5 s and muting would clip the command).
 - [ ] **Follow-up window** stays (`follow_up_window_s`, restarted when the
@@ -257,7 +257,7 @@ work and can start while Phase 0 is being measured.
 **Exit test (real room, real mic):** 20 wake attempts at conversational
 volume from 2 m → ≥ 18 fire; 30 minutes of TV/conversation without the name →
 0 false wakes and **zero** `/voice/stt_meta` messages (nothing transcribed).
-"Mitra" + pause → cue within 300 ms. "Mitra go forward" with no pause → no
+"Kino" + pause → cue within 300 ms. "Kino go forward" with no pause → no
 cue, command reaches the brain intact (check the pre-roll is not clipped).
 
 ---
@@ -290,7 +290,7 @@ it). What is left is making the *turn-taking* feel right.
   even less. Clipping the start of the owner's reply is the failure to
   watch for (the pre-roll ring fix in `stt_node` exists because of it).
 
-**Exit test:** a 5-turn conversation ("Mitra, what time is it" / "and the
+**Exit test:** a 5-turn conversation ("Kino, what time is it" / "and the
 date" / "set a reminder" / "for six" / "thanks") with the name said once;
 "stop" while driving halts the wheels within 300 ms when the robot is quiet;
 a 20-minute idle room with the TV on → 0 turns.
@@ -434,7 +434,7 @@ over music, which is louder and longer than any reply).
 - [ ] Degrade: no library / no network → the robot says it cannot play that,
   never crashes (CLAUDE.md #5).
 
-**Exit test:** "Mitra, play some music" → audio within 3 s; "Mitra" over the
+**Exit test:** "Kino, play some music" → audio within 3 s; "Kino" over the
 music at normal listening volume fires ≥ 9/10; "stop" halts it; asking a
 question mid-song ducks, answers, restores.
 
@@ -467,7 +467,7 @@ outside dependency. **Needs Phase 0** for the audio path.
   the tool explains it cannot call (CLAUDE.md #5).
 - [ ] Incoming calls: announce the caller by name, "answer?" — later.
 
-**Exit test:** "Mitra, call mom" → confirmation → ringing within 5 s → two-way
+**Exit test:** "Kino, call mom" → confirmation → ringing within 5 s → two-way
 audio through the robot with no echo reported by the far end → "hang up" ends
 it → the robot is listening again.
 
@@ -503,4 +503,4 @@ it → the robot is listening again.
 | 2026-10-10 | **Mic = USB AM-C28 array; the Stone is the speaker only** (A2DP). Supersedes the 09-20 "Stone stays as mic". The mic hears the Stone (+18 dB), so the mic stays muted while the robot talks | owner + measured |
 | 2026-10-10 | **The voice signal is not processed** — no filters, no noise reduction; only timing (end silence, lead-in) is tuned. Silero VAD marks start/end | owner |
 | 2026-10-10 | **STT = Sarvam** (Telugu or English → English); **offline fallback = Parakeet 0.6B on the Pi** (owner's voice: Sarvam 6-11 %, Parakeet 10-15 %, tiny.en ~50 % word errors). TTS unchanged | owner + measured |
-| 2026-10-10 | Wake word: undecided (Mitra or another name) — later | owner |
+| 2026-10-10 | Wake word: undecided (Kino or another name) — later | owner |

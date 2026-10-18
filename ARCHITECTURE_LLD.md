@@ -407,7 +407,7 @@ explains them.
 reaches the graph. SPEECH_STYLE lets an agent answer exactly `[silent]` when
 it was not addressed. `_send` never speaks it, both backstops treat it as "did
 nothing", and agent_node ends the turn without history or sticky -- unless the
-text has the name ("mitra", which also matches Emitra/Imitra) or the turn is
+text has the name ("kino", which also matches Keeno/Keno) or the turn is
 [SYSTEM]/Telegram: then it asks "Sorry, could you say that again?". Tests:
 `test_silent_reply.py`, `test_tool_speech.py`.
 

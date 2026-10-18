@@ -1,12 +1,26 @@
 # Mac Mini tasks — everything the robot needs from this machine
 
 **For:** the agent working on the Mac Mini, `singireddys-mac-mini.local`, user `singireddy`.
-**From:** the robot "Mitra"'s brain on the Raspberry Pi 5 (repo `~/ros2_ws`). Updated 2026-10-11
+**From:** the robot "Kino"'s brain on the Raspberry Pi 5 (repo `~/ros2_ws`). Updated 2026-10-11
 after a full test on the real robot.
 **This Mac's job:** it serves the robot's LLM and vision model (Gemma 4 12B) with llama.cpp
 `llama-server` on port 8080. The Pi calls `http://singireddys-mac-mini.local:8080`.
 
 Work through the tasks **in order**, then fill in the report at the end.
+
+## FIRST (2026-10-18): the robot is now KINO -- migrate the Mac once
+
+The LLM build, the speech app and their services were renamed for KINO
+(Knowledge Is Never Out): `~/llama.cpp-kino`, `com.kino.llama-server`,
+`kino-stt.app`, `com.kino.stt`. The Mac still has the old install, so
+`e12b5` stops with "missing ... llama.cpp-kino" until this runs once, in the
+Mac's own GUI session (it builds llama-server again, ~5-10 min, and macOS asks
+once for Speech Recognition permission for the renamed app):
+
+    cd <this repo on the Mac> && git pull && scripts/mac_mini/migrate_to_kino.sh
+
+Then `e12b5` as always. The script says which old folders to delete; then
+delete the script too (`git rm scripts/mac_mini/migrate_to_kino.sh`).
 
 ## READ FIRST, Pi 5: what the Mac did on 2026-10-11, and what you do now
 
@@ -24,7 +38,7 @@ Written by the Mac's agent for the Pi's agent. Everything below was measured on 
 
 ### What the Mac runs now
 
-- **A patched llama.cpp b9830** (`~/llama.cpp-mitra/build/bin/llama-server`). Upstream llama.cpp
+- **A patched llama.cpp b9830** (`~/llama.cpp-kino/build/bin/llama-server`). Upstream llama.cpp
   re-read every prompt shorter than 1024 tokens from scratch (Gemma's sliding window). The bug and
   the fix are in docs/mac/LLAMA_CACHE_ISSUE.md §8, and the patch is `scripts/mac_mini/llama_swa_cache.patch`.
   It is still unfixed upstream, so **a Homebrew upgrade on the Mac brings the bug back.**
@@ -88,7 +102,7 @@ Written by the Mac's agent for the Pi's agent. Everything below was measured on 
 ### How to undo (on the Mac)
 
 `e12b5 stop`, then the old way: `/opt/homebrew/bin/llama-server` with the OLD command line in the
-report below. The old LaunchAgent is `~/Library/LaunchAgents/com.mitra.llama-server.plist.bak`.
+report below. The old LaunchAgent is `~/Library/LaunchAgents/com.kino.llama-server.plist.bak`.
 
 ---
 
@@ -207,7 +221,7 @@ Steps:
 
 1. **No sleep** (owner runs it): `sudo pmset -a sleep 0 disksleep 0`. Display sleep can stay on.
 2. **Start at login and restart if it dies:** run the Task 3 command from a LaunchAgent,
-   `~/Library/LaunchAgents/com.mitra.llama-server.plist`, with `RunAtLoad` and `KeepAlive` set to
+   `~/Library/LaunchAgents/com.kino.llama-server.plist`, with `RunAtLoad` and `KeepAlive` set to
    true, and stdout/stderr going to `~/Library/Logs/llama-server.log`. Load it with
    `launchctl bootstrap gui/$(id -u) <plist>`. Stop any old copy first: port 8080 must have
    exactly one owner.
@@ -215,7 +229,7 @@ Steps:
    don't start until someone logs in. **Ask the owner** whether to use a LaunchDaemon instead
    (starts without login), or accept logging in by hand after a power cut.
 
-**Done when:** after `launchctl kickstart -k gui/$(id -u)/com.mitra.llama-server` the server comes
+**Done when:** after `launchctl kickstart -k gui/$(id -u)/com.kino.llama-server` the server comes
 back by itself, and Task 3's checks pass again.
 
 ---
@@ -282,7 +296,7 @@ TASK 3  log line for a short-prompt miss: none of the 'forcing full prompt re-pr
             verbose log: "restored context checkpoint (pos_min = 0, pos_max = 0, n_tokens = 1, n_past = 1)"
             = llama.cpp bug (pos_min >= pos_min_thold with both 0), patched -- LLAMA_CACHE_ISSUE.md §8
         KV estimate for 5 slots + --swa-full: ~20 GB at 12288/slot -> not possible; not used
-        NEW command line: ~/llama.cpp-mitra/build/bin/llama-server (b9830 + MITRA PATCH) ... --parallel 5
+        NEW command line: ~/llama.cpp-kino/build/bin/llama-server (b9830 + KINO PATCH) ... --parallel 5
             --ctx-size 81920 -ub 512 --jinja --flash-attn on --reasoning off --cache-ram 0 --metrics
             (GPU limit 13312 MB) -- scripts/mac_mini/e12b5
         total_slots: 5 (16384 each)   memory after load: server 10.8 GB

@@ -25,7 +25,7 @@ SR = 16000
 ROOT = os.path.expanduser('~/voice_lab/recordings')
 
 SENTENCES = [
-    "Mitra, go to the kitchen.",
+    "Kino, go to the kitchen.",
     "What do you see?",
     "Stop.",
     "Find the earphones on the floor and go near to it.",

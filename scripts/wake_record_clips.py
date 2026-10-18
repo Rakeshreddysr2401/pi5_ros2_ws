@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Record your own wake-word clips (and some non-wake speech) for training.
 
-    python3 scripts/wake_record_clips.py positive  --out data/mitra_pos --n 30
-    python3 scripts/wake_record_clips.py negative  --out data/mitra_neg --n 20
+    python3 scripts/wake_record_clips.py positive  --out data/kino_pos --n 30
+    python3 scripts/wake_record_clips.py negative  --out data/kino_neg --n 20
 
 Runs on any machine with a mic (laptop or the Pi): needs only numpy +
 sounddevice (pip install sounddevice numpy). Writes 16 kHz mono 16-bit WAVs,
 the format openWakeWord training and the personal verifier expect. See
 docs/voice/WAKE_WORD_INTEGRATION.md for how the clips are used.
 
-positive : say ONLY the wake word ("Mitra") once per clip, in different
+positive : say ONLY the wake word ("Kino") once per clip, in different
            tones, distances and speeds — a few whispered, a few from across
            the room, a few fast.
 negative : say anything that is NOT the wake word — names that sound

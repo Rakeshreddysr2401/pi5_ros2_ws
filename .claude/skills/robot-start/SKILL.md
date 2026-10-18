@@ -1,6 +1,6 @@
 ---
 name: robot-start
-description: Bring the whole robot (Mitra) up and prove it works — Pi5 brain + voice, Jetson perception/nav (./rover up), ESP32 wheels, Mac Mini LLM, Studio, laptop RViz. Use after a power cycle, when the user says start / bring up / wake the robot, or asks whether everything is running.
+description: Bring the whole robot (Kino) up and prove it works — Pi5 brain + voice, Jetson perception/nav (./rover up), ESP32 wheels, Mac Mini LLM, Studio, laptop RViz. Use after a power cycle, when the user says start / bring up / wake the robot, or asks whether everything is running.
 ---
 
 You are bringing the robot up. Explain each result in plain words: what is up,
@@ -69,7 +69,7 @@ Every line OK = ready. Then a no-motion live turn (answers through the speaker,
 and the replies print here):
 
 ```bash
-./scripts/say.sh "Mitra, what do you see?" --wait 60 --quiet 6
+./scripts/say.sh "Kino, what do you see?" --wait 60 --quiet 6
 ```
 
 Use `say.sh`, not `ros2 topic pub --once`: that sends before the brain has
@@ -78,7 +78,7 @@ matched it and loses about half the turns (2026-10-11). `say.sh` waits for
 
 ## Step 4 — tell the user how to use it
 
-- **Talk:** say "Mitra" in the sentence ("Mitra, come to the kitchen"). The
+- **Talk:** say "Kino" in the sentence ("Kino, come to the kitchen"). The
   acoustic wake gate is off for now; the name is matched in the transcript.
 - **Telegram:** message the bot (allowlisted users only).
 - **Studio:** on the laptop `ssh -N -L 2024:localhost:2024 rakhi24@rakhi24-desktop.local`,

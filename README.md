@@ -12,7 +12,7 @@ slot map all derive from it.
 ```
 Mac Mini  ──────  llama.cpp — Gemma multimodal GGUF, --parallel 4 (a KV slot per agent + one for one-shot vision calls)
 Jetson    ──────  ~/rover: D555 + RPLidar · fused pose · slam · nvblox · Nav2 + exact moves · VLM pixel→goal
-Laptop    ──────  the twin: the robot's hardware in Isaac Sim (mitra_sim, domain 42) · RViz (`./mitra rviz [real]`)
+Laptop    ──────  the twin: the robot's hardware in Isaac Sim (kino_sim, domain 42) · RViz (`./sim rviz [real]`)
 Pi 5      ──────  THIS REPO — LangGraph brain + STT/TTS + micro-ROS agent
 ESP32     ──────  4-wheel drive chassis, 50 Hz PID (micro-ROS over USB serial to the Pi 5)
 ```
@@ -24,7 +24,7 @@ ESP32     ──────  4-wheel drive chassis, 50 Hz PID (micro-ROS over U
 [TELEGRAM.md](TELEGRAM.md) — chat with the robot from your phone: setup + usage ·
 [docs/voice/PI5_VOICE.md](docs/voice/PI5_VOICE.md) — the Pi5 voice trio (speaker/mic owner, STT, TTS) ·
 [docs/voice/VOICE_ROADMAP.md](docs/voice/VOICE_ROADMAP.md) — the phased voice plan and what is done ·
-[docs/voice/WAKE_WORD_INTEGRATION.md](docs/voice/WAKE_WORD_INTEGRATION.md) — train and plug in the "Mitra" wake word
+[docs/voice/WAKE_WORD_INTEGRATION.md](docs/voice/WAKE_WORD_INTEGRATION.md) — train and plug in the "Kino" wake word
 
 ---
 
@@ -46,10 +46,10 @@ src/
 └── pi5_voice_pkg/     CPU-only STT + TTS on the Pi 5 itself
 scripts/               fleet.sh (whole robot) · run_*.sh (systemd entry points) · start_studio.sh · dev.sh
                        latency_replay.py · llm_cache_check.py (KV-slot PASS/FAIL) · topic_rates.py
-                       wake_*.py · train_mitra_local.py / train_rakhi_local.py (wake-word trainers, laptop)
+                       wake_*.py · train_kino_local.py / train_rakhi_local.py (wake-word trainers, laptop)
                        mic_check.sh (is the mic hearing you?) · bt_*.{sh,py} · tts_say.py
-notebooks/             train_mitra_wakeword.ipynb (the supported wake-word trainer — docs/voice/WAKE_WORD_INTEGRATION.md)
-data/test_pos|test_neg wake-word spot-check clips
+notebooks/             train_kino_wakeword.ipynb (the supported wake-word trainer — docs/voice/WAKE_WORD_INTEGRATION.md)
+data/test_neg          wake-word spot-check clips (negatives; record positives with scripts/wake_record_clips.py)
 graph_studio.py        LangGraph Studio entry point (langgraph dev)
 ```
 

@@ -5,7 +5,7 @@ is word overlap. What must hold:
   * a clear request enters its agent; anything unsure is None (never a guess);
   * "yes" / "ok" stay with whoever asked (ABSTAIN), never a pick;
   * navigate needs more certainty than the others;
-  * the robot's name ("Kino", Sarvam's "Friend") is not part of the request;
+  * the robot's name ("Kino") is not part of the request;
   * off / not loaded / no fastembed -> None, and routing is today's;
   * intent_examples never reach a prompt (KV caches untouched).
 """

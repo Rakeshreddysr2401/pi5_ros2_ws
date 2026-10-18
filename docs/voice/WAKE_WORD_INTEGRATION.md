@@ -1,13 +1,13 @@
-# Wake Word Models ("Mitra" & "Rakhi") — Train on Laptop, Deploy to Robot
+# Wake Word Models ("Kino" & "Rakhi") — Train on Laptop, Deploy to Robot
 
 **Updated 2026-09-26. Status: LIVE ON THE ROBOT.** The wake gate is ON
-(`mitra.onnx`, threshold 0.45), the robot answers **"చెప్పండి బాస్"** when you
+(then the old name's model, threshold 0.45; today `kino.onnx`), the robot answers **"చెప్పండి బాస్"** when you
 pause after its name, and nothing is transcribed or sent to a cloud STT until
 it hears that name. Day-to-day you need only:
 
 ```bash
 ./scripts/wake_switch.py               # what is active, and what models exist
-./scripts/wake_switch.py rakhi|mitra|off [--threshold X]
+./scripts/wake_switch.py rakhi|kino|off [--threshold X]
 ./scripts/wake_test.sh                 # live score bar — say the word, watch it
 ./scripts/voice_watch.sh               # the robot's own log while you call it
 ```
@@ -24,10 +24,11 @@ Two custom acoustic wake-word models are trained, verified, and committed to
    - Telugu Adversarial Negatives ("రాకీ" / rocky, "చెప్పు", "ఆగు", "సరే", "వద్దు"): **0.001 – 0.013**
    - Recommended Threshold: **0.45 – 0.55**
 
-2. **`mitra.onnx` (414 KB)** — Sanskrit/Hindi ("Mitra", "Hey Mitra", "Hi Mitra"):
-   - Positives ("Mitra", "Hey Mitra", "Hi Mitra"): **0.92 – 0.99** (median **0.98**)
-   - Adversarial Negatives ("meter", "mithun", etc.): **0.02**
-   - Recommended Threshold: **0.45 – 0.50**
+2. **`kino.onnx` (414 KB)** — "Kino" / "Hey Kino" (KINO, Knowledge Is Never Out), trained by
+   `scripts/train_kino_local.py` / `notebooks/train_kino_wakeword.ipynb`:
+   - Scores: not measured here yet (the old name's model, same recipe: positives
+     0.92 – 0.99, adversarial negatives 0.02)
+   - Threshold: **0.45** (`voice_params.yaml`)
 
 This file is the complete recipe and reference: where each piece lives, how to test
 live on your mic, how to train a personal verifier, and how the robot uses it.
@@ -39,15 +40,15 @@ live on your mic, how to train a personal verifier, and how the robot uses it.
 | File | What it is | Where it goes in this repo |
 |---|---|---|
 | `rakhi.onnx` | Telugu-specialized wake-word model (~414 KB) | `src/langrobo_ros/models/wake/rakhi.onnx` — **tracked in git** |
-| `mitra.onnx` | "Mitra" wake-word model (~414 KB) | `src/langrobo_ros/models/wake/mitra.onnx` — **tracked in git** |
-| `*_verifier.pkl` | *optional* personal verifiers (e.g. `rakhi_verifier.pkl` or `mitra_verifier.pkl`) | `src/langrobo_ros/models/wake/` — tracked |
-| your clips | `rakhi_pos/` and `rakhi_neg/` (or `mitra_pos/`) | keep outside repo; back them up — used for personal verifier fine-tuning |
+| `kino.onnx` | "Kino" wake-word model (~414 KB) | `src/langrobo_ros/models/wake/kino.onnx` — **tracked in git** |
+| `*_verifier.pkl` | *optional* personal verifiers (e.g. `rakhi_verifier.pkl` or `kino_verifier.pkl`) | `src/langrobo_ros/models/wake/` — tracked |
+| your clips | `rakhi_pos/` and `rakhi_neg/` (or `kino_pos/`) | keep outside repo; back them up — used for personal verifier fine-tuning |
 
 How the robot uses them (already implemented — nothing to code):
 
 - `pi5_voice_pkg/wake/openwakeword_detector.py` loads `wake_model_path`
   (an `.onnx`) and, if set, `wake_verifier_path` (the `.pkl`), keyed by the
-  model's file stem — so the base model **must be named `mitra.onnx`** for
+  model's file stem — so the base model **must be named `kino.onnx`** for
   the verifier to attach.
 - `stt_node` feeds it every 30 ms frame while asleep, fires when the score
   ≥ `wake_threshold`, then listens for `follow_up_window_s`. It transcribes
@@ -84,22 +85,22 @@ Torch uses the Apple GPU (MPS) on its own. The M4 Mini is also the robot's
 LLM server — train when you are not talking to the robot. If the
 synthetic-clip generator (`piper-sample-generator`) fails to install on
 macOS, do not fight it: run **Part B only** in Google Colab (the notebook is
-built for it, free GPU, ~30 min), download `mitra.onnx`, and do Parts C–E on
+built for it, free GPU, ~30 min), download `kino.onnx`, and do Parts C–E on
 the Mac.
 
-The notebook: pre-configured for "Mitra" right in this repo at
-`notebooks/train_mitra_wakeword.ipynb` (or upload to Google Colab, or use the
+The notebook: pre-configured for "Kino" right in this repo at
+`notebooks/train_kino_wakeword.ipynb` (or upload to Google Colab, or use the
 community trainer at https://colab.research.google.com/drive/1zzKpSnqVkUDD3FyZ-Yxw3grF7L0R1rlk).
 Open with `jupyter notebook`, or upload to Google Colab and click "Run all".
 
-**Mac-only shortcut:** `python3 scripts/train_mitra_local.py` (and
+**Mac-only shortcut:** `python3 scripts/train_kino_local.py` (and
 `train_rakhi_local.py` for the Telugu "Rakhi" model) skip the notebook: they
 synthesise positives and adversarial negatives with the macOS `say` voices,
 train a small head on openWakeWord features, write
 `src/langrobo_ros/models/wake/<name>.onnx`, and self-check it on one
 positive and one negative clip of their own. Quicker, fewer voices — the
 notebook stays the supported path. Either way, spot-check with the clips in `data/`:
-`python3 scripts/wake_score.py src/langrobo_ros/models/wake/mitra.onnx data/test_pos data/test_neg`.
+`python3 scripts/wake_score.py src/langrobo_ros/models/wake/kino.onnx data/test_pos data/test_neg`.
 
 **Check:** `python3 -c "import openwakeword, torch; print('ok')"` prints ok.
 
@@ -113,13 +114,13 @@ The notebook does four things, and you only change the first:
    speech voices pronounce spellings, so give the spelling that sounds right
    when an English TTS says it. Try in this order and keep the one that
    sounds like how your household says it:
-   - `mitra`  (most TTS voices: "MIT-ruh" — usually right)
-   - `mithra` (if the first comes out as "MY-tra")
-   - a list works too, e.g. `["mitra", "hey mitra"]` so both forms wake it.
+   - `kino`  (most TTS voices: "KEE-no" — usually right)
+   - `keeno` (if the first comes out as "KY-no")
+   - a list works too, e.g. `["kino", "hey kino"]` so both forms wake it.
 
    The notebook also takes **adversarial/negative phrases** — words that
-   sound close and must NOT wake it. Give it: `mithun, meter, mitali, mitten,
-   metro, nitro`. This is what stops "meter" waking the robot.
+   sound close and must NOT wake it. Give it: `keen, kimono, casino, chino,
+   kenny, keynote`. This is what stops "casino" waking the robot.
 2. **Generate samples.** It synthesises thousands of clips of the phrase
    with the piper TTS voices, at random speeds/pitches, and mixes in room
    echoes and background noise. Defaults are fine; if you have time, raise
@@ -127,10 +128,10 @@ The notebook does four things, and you only change the first:
 3. **Train.** Uses pre-computed features of many hours of "not the wake
    word" speech that the notebook downloads (a few GB, once). Defaults are
    fine.
-4. **Export.** You get `mitra.onnx` (and a `.tflite` you can ignore).
+4. **Export.** You get `kino.onnx` (and a `.tflite` you can ignore).
 
 **Do not skip the adversarial phrases** — the difference between a model
-that wakes on "Mitra" and one that also wakes on "meter" is exactly that
+that wakes on "Kino" and one that also wakes on "meter" is exactly that
 list.
 
 **Check:** the notebook's own test cell reports accuracy/false-positive
@@ -150,12 +151,12 @@ cd ~/ros2_ws              # or wherever this repo is checked out on the laptop
 source ~/oww/bin/activate
 
 # 30 clips of just the word. Vary: normal, soft, from across the room, fast,
-# with the TV on. It counts down and says GO; say "Mitra" once.
-python3 scripts/wake_record_clips.py positive --out ~/wake_data/mitra_pos --n 30
+# with the TV on. It counts down and says GO; say "Kino" once.
+python3 scripts/wake_record_clips.py positive --out ~/wake_data/kino_pos --n 30
 
 # 20 clips of anything ELSE: similar-sounding names ("Mithun", "meter"),
 # ordinary sentences, someone else in the house talking.
-python3 scripts/wake_record_clips.py negative --out ~/wake_data/mitra_neg --n 20
+python3 scripts/wake_record_clips.py negative --out ~/wake_data/kino_neg --n 20
 ```
 
 Tips: hold the laptop where the robot's speaker will be relative to you
@@ -163,7 +164,7 @@ Tips: hold the laptop where the robot's speaker will be relative to you
 record a few positives too — the robot should answer them as well. If a
 clip is too quiet the script says so and skips it.
 
-**Check:** `ls ~/wake_data/mitra_pos | wc -l` ≥ 25.
+**Check:** `ls ~/wake_data/kino_pos | wc -l` ≥ 25.
 
 ---
 
@@ -171,7 +172,7 @@ clip is too quiet the script says so and skips it.
 
 1. **Test against recorded clips:**
    ```bash
-   python3 scripts/wake_score.py src/langrobo_ros/models/wake/mitra.onnx ~/wake_data/mitra_pos ~/wake_data/mitra_neg
+   python3 scripts/wake_score.py src/langrobo_ros/models/wake/kino.onnx ~/wake_data/kino_pos ~/wake_data/kino_neg
    ```
 
    It prints the peak score per clip and a summary. What you want:
@@ -182,9 +183,9 @@ clip is too quiet the script says so and skips it.
 
 2. **Test live on microphone (watch the score bar in real time):**
    ```bash
-   python3 scripts/wake_live_score.py src/langrobo_ros/models/wake/mitra.onnx --threshold 0.5
+   python3 scripts/wake_live_score.py src/langrobo_ros/models/wake/kino.onnx --threshold 0.5
    ```
-   Speak "Mitra" into your laptop mic and watch the live visual score meter react.
+   Speak "Kino" into your laptop mic and watch the live visual score meter react.
 
 If positives score low (median under ~0.4): the TTS spelling did not match
 how you say it — go back to Part B with the other spelling. If negatives
@@ -202,19 +203,19 @@ things.
 Run the verifier training script (takes ~5–10s locally on Mac):
 ```bash
 python3 scripts/wake_train_verifier.py \
-    --model src/langrobo_ros/models/wake/mitra.onnx \
-    --pos ~/wake_data/mitra_pos \
-    --neg ~/wake_data/mitra_neg \
-    --out src/langrobo_ros/models/wake/mitra_verifier.pkl
+    --model src/langrobo_ros/models/wake/kino.onnx \
+    --pos ~/wake_data/kino_pos \
+    --neg ~/wake_data/kino_neg \
+    --out src/langrobo_ros/models/wake/kino_verifier.pkl
 ```
 
 Re-score WITH the verifier (clip score and live mic):
 ```bash
-python3 scripts/wake_score.py src/langrobo_ros/models/wake/mitra.onnx ~/wake_data/mitra_pos ~/wake_data/mitra_neg \
-        --verifier src/langrobo_ros/models/wake/mitra_verifier.pkl
+python3 scripts/wake_score.py src/langrobo_ros/models/wake/kino.onnx ~/wake_data/kino_pos ~/wake_data/kino_neg \
+        --verifier src/langrobo_ros/models/wake/kino_verifier.pkl
 
-python3 scripts/wake_live_score.py src/langrobo_ros/models/wake/mitra.onnx \
-        --verifier src/langrobo_ros/models/wake/mitra_verifier.pkl
+python3 scripts/wake_live_score.py src/langrobo_ros/models/wake/kino.onnx \
+        --verifier src/langrobo_ros/models/wake/kino_verifier.pkl
 ```
 
 (The function takes **lists of file paths**, despite its docstring saying
@@ -228,39 +229,39 @@ more positives from everyone who should be able to wake the robot.
 
 1. **Copy the files** (from the laptop, over ssh):
    ```bash
-   scp mitra.onnx            rakhi24@rakhi24-desktop.local:~/ros2_ws/src/langrobo_ros/models/wake/
-   scp mitra_verifier.pkl    rakhi24@rakhi24-desktop.local:~/ros2_ws/src/langrobo_ros/models/wake/   # if made
+   scp kino.onnx            rakhi24@rakhi24-desktop.local:~/ros2_ws/src/langrobo_ros/models/wake/
+   scp kino_verifier.pkl    rakhi24@rakhi24-desktop.local:~/ros2_ws/src/langrobo_ros/models/wake/   # if made
    ```
-   Keep the name `mitra.onnx` — the verifier is keyed by that stem.
+   Keep the name `kino.onnx` — the verifier is keyed by that stem.
 
 2. **Switch to it in one command** (edits the config and restarts the
    service for you):
    ```bash
    ./scripts/wake_switch.py                 # what is active now + what models exist
-   ./scripts/wake_switch.py mitra           # wake on "Mitra"
+   ./scripts/wake_switch.py kino           # wake on "Kino"
    ./scripts/wake_switch.py rakhi           # wake on "Rakhi" (Telugu-trained)
    ./scripts/wake_switch.py off             # no wake word (transcribe everything)
-   ./scripts/wake_switch.py mitra --threshold 0.5
+   ./scripts/wake_switch.py kino --threshold 0.5
    ```
    Any `.onnx` in `models/wake/` is a valid choice. Switching the wake word
    does NOT change what the robot calls itself when it speaks — that is the
    persona in `langrobo_core/prompts.py`.
 
    Watch a call live: `./scripts/voice_watch.sh` (the robot's own log) or
-   `python3 scripts/wake_live_score.py src/langrobo_ros/models/wake/mitra.onnx
+   `python3 scripts/wake_live_score.py src/langrobo_ros/models/wake/kino.onnx
    --threshold 0.45` (a live score bar as you speak).
 
    Or by hand — **edit `src/pi5_voice_pkg/config/voice_params.yaml`**, `pi5_stt_node`
    section — these five lines are the whole switch:
    ```yaml
    wake_detector: openwakeword          # was transcript_alias (gate OFF)
-   wake_model_path: /home/rakhi24/ros2_ws/src/langrobo_ros/models/wake/mitra.onnx
+   wake_model_path: /home/rakhi24/ros2_ws/src/langrobo_ros/models/wake/kino.onnx
    wake_threshold: 0.5                  # start at the value Part D suggested
-   wake_verifier_path: /home/rakhi24/ros2_ws/src/langrobo_ros/models/wake/mitra_verifier.pkl   # or "" without one
+   wake_verifier_path: /home/rakhi24/ros2_ws/src/langrobo_ros/models/wake/kino_verifier.pkl   # or "" without one
    require_wake: true                   # only matters in transcript_alias mode, but set it: nothing forwards without the name
    ```
    `wake_word: hey_jarvis` can stay — `wake_model_path` wins when set.
-   `wake_aliases: ["mitra", "hey mitra"]` are already there (the transcript
+   `wake_aliases: ["kino", "hey kino"]` are already there (the transcript
    fallback if the model ever fails to load).
 
 3. **Restart voice and read the log:**
@@ -268,14 +269,14 @@ more positives from everyone who should be able to wake the robot.
    systemctl --user restart langrobo-voice
    journalctl --user -u langrobo-voice -f -o cat | grep -E "wake|diag|command"
    ```
-   You must see `wake_detector = openwakeword ('.../mitra.onnx')`. If you see
+   You must see `wake_detector = openwakeword ('.../sim.onnx')`. If you see
    `transcript_alias` instead, the model failed to load and the line just
    before says why (path, bad file) — it degraded on purpose, fix and
    restart.
 
 4. **Tune the threshold on the real mic.** While asleep the node logs
    `[diag] asleep peak_wake_score=0.xx` every 10 s (`diag_log_period_s`).
-   Say "Mitra" a few times from where you normally stand and watch the peak;
+   Say "Kino" a few times from where you normally stand and watch the peak;
    stay quiet and watch the floor. Set `wake_threshold` clearly below your
    peaks and above the floor (the "hey jarvis" stand-in needed 0.35 through
    the Stone's mic — expect something similar; the Stone's 8 kHz mic is
@@ -283,9 +284,9 @@ more positives from everyone who should be able to wake the robot.
 
 5. **Commit:**
    ```bash
-   git add src/langrobo_ros/models/wake/mitra.onnx src/langrobo_ros/models/wake/mitra_verifier.pkl \
+   git add src/langrobo_ros/models/wake/kino.onnx src/langrobo_ros/models/wake/kino_verifier.pkl \
            src/pi5_voice_pkg/config/voice_params.yaml
-   git commit -m "Mitra wake word: trained model + gate on"
+   git commit -m "Kino wake word: trained model + gate on"
    ```
 
 ---
@@ -296,9 +297,9 @@ Do this on the robot, with the Stone, in the real room:
 
 | Test | Pass |
 |---|---|
-| Say "Mitra" 20 times at conversational volume from 2 m | ≥ 18 wake (`wake word ... detected — listening` in the log) |
+| Say "Kino" 20 times at conversational volume from 2 m | ≥ 18 wake (`wake word ... detected — listening` in the log) |
 | 30 min of TV / conversation without the name | 0 wakes, and `ros2 topic echo /voice/stt_meta` shows **nothing** (no transcription at all) |
-| "Mitra, what time is it" | answered; then "and the date" **without** the name, inside `follow_up_window_s` → answered |
+| "Kino, what time is it" | answered; then "and the date" **without** the name, inside `follow_up_window_s` → answered |
 | Someone says "meter" / "Mithun" | no wake |
 
 Record the numbers in VOICE_ROADMAP.md Phase 1 and tick the boxes. After
@@ -316,15 +317,15 @@ piece.
 - **Never fires but scored well on the laptop:** the Stone is 8 kHz
   narrowband (CVSD) and the laptop mic is wideband; record 20 positives
   **through the Stone** (`python3 scripts/wake_record_clips.py positive
-  --device pipewire --out ~/wake_data/mitra_pos_stone` on the Pi, with
+  --device pipewire --out ~/wake_data/kino_pos_stone` on the Pi, with
   `langrobo-voice` stopped so the mic is free) and retrain the verifier /
   add them to training.
-- **Wakes on other people's "Mitra" when you don't want it to:** that is
+- **Wakes on other people's "Kino" when you don't want it to:** that is
   what the verifier is for (Part E). If you DO want everyone to wake it,
   don't use one.
 - **Different speaker/mic later (Buds, a new speaker):** re-run Part F step
   4 — the threshold is per mic. The model itself does not change.
 - **Model loads but `wake_verifier_path` errors:** the base file is not
-  named `mitra.onnx`, or the `.pkl` was trained against a different
-  `mitra.onnx` — retrain the verifier (Part E) against the exact model you
+  named `kino.onnx`, or the `.pkl` was trained against a different
+  `kino.onnx` — retrain the verifier (Part E) against the exact model you
   copied.

@@ -3,12 +3,12 @@
 
     ./scripts/wake_switch.py              # what is active now
     ./scripts/wake_switch.py rakhi        # wake on "Rakhi" (Telugu-trained)
-    ./scripts/wake_switch.py mitra        # wake on "Mitra"
+    ./scripts/wake_switch.py kino        # wake on "Kino"
     ./scripts/wake_switch.py off          # no acoustic gate; still needs the
                                           # name IN THE TEXT to answer
     ./scripts/wake_switch.py open         # answer everything it hears (noisy
                                           # rooms will start conversations)
-    ./scripts/wake_switch.py mitra --threshold 0.5     # also set the threshold
+    ./scripts/wake_switch.py kino --threshold 0.5     # also set the threshold
 
 Edits the three lines in voice_params.yaml that pick the model (path, name,
 and the transcript-fallback aliases), then restarts langrobo-voice and shows

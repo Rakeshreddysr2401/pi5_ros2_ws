@@ -8,19 +8,18 @@ Unlike the large TTS/STT models (Kokoro, Whisper) which are gigabytes and downlo
 |---|---|---|---|
 | `kino.onnx` | ~414 KB | "Hey Kino" / "Kino" | **Active.** Trained for "Hey Kino" (Knowledge Is Never Out) with Indian English, Telugu, US, and UK voices + conversational negative suppression. |
 | `rakhi.onnx` | ~414 KB | "Rakhi" / "రాఖీ" / "Hey Rakhi" | Trained with native Telugu (`Geeta te_IN`), Indian English, and Telugu household negatives ("రాకీ", "చెప్పు", "ఆగు", etc.). |
-| `mitra.onnx` | ~414 KB | "Mitra" / "Hey Mitra" | Trained with Indian & international voices for "Mitra". |
 | `*_verifier.pkl` | ~50 KB | Personal verifier | *(Optional)* Personal voice verifier trained on the owner's voice clips. |
 
 ## How the Robot Uses Them
 
-- `pi5_voice_pkg/wake/openwakeword_detector.py` loads `wake_model_path` (`rakhi.onnx` or `mitra.onnx`).
-- When `wake_verifier_path` is provided, it attaches the verifier (keyed by the file stem `rakhi` or `mitra`).
+- `pi5_voice_pkg/wake/openwakeword_detector.py` loads `wake_model_path` (`rakhi.onnx` or `kino.onnx`).
+- When `wake_verifier_path` is provided, it attaches the verifier (keyed by the file stem `rakhi` or `kino`).
 - Enabled via `src/pi5_voice_pkg/config/voice_params.yaml`:
   ```yaml
   pi5_stt_node:
     ros__parameters:
       wake_detector: openwakeword
-      # Choose either rakhi.onnx or mitra.onnx:
+      # Choose either rakhi.onnx or kino.onnx:
       wake_model_path: /home/rakhi24/ros2_ws/src/langrobo_ros/models/wake/rakhi.onnx
       wake_threshold: 0.5
       wake_verifier_path: ""   # or path to rakhi_verifier.pkl

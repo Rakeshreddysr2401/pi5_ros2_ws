@@ -1,6 +1,6 @@
 ---
 name: robot-stop
-description: Stop the robot (Mitra) safely — halt motion now, park the body while keeping chat/voice alive, or shut everything down before power-off. Use when the user says stop, park, shut down, power off, or turn the robot off.
+description: Stop the robot (Kino) safely — halt motion now, park the body while keeping chat/voice alive, or shut everything down before power-off. Use when the user says stop, park, shut down, power off, or turn the robot off.
 ---
 
 Pick the smallest stop that does what the user asked, and say in plain words

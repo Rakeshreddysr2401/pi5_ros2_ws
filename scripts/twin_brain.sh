@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# twin_brain.sh — a SECOND brain, for the Mitra twin. The real one is untouched.
+# twin_brain.sh — a SECOND brain, for the Kino twin. The real one is untouched.
 #
 #   ./scripts/twin_brain.sh up | down | status | logs [lines]
 #   ./scripts/twin_brain.sh say "go near the chair"     # talk to it, print its replies
 #   ./scripts/twin_brain.sh listen [seconds]            # just print what it says
 #   ./scripts/twin_brain.sh manual on|off               # the twin's own teleop switch
 #
-# The twin (github mitra_sim) is the robot's hardware simulated in Isaac Sim on
+# The twin (github kino_sim) is the robot's hardware simulated in Isaac Sim on
 # the laptop; the Jetson runs the rover's own whole stack on it, both on ROS
-# domain 42 (MITRA_DOMAIN). This runs the SAME agent_node, unchanged, on that domain:
+# domain 42 (TWIN_DOMAIN). This runs the SAME agent_node, unchanged, on that domain:
 #
 #   - ROS_DOMAIN_ID=42: it hears only the twin; its /cmd_vel, /reach and
 #     /goal_exec reach only the twin. Domain 0 -- the real robot, the real
@@ -19,14 +19,14 @@
 #     (the mic and speaker belong to the real one); talk to it with `say`.
 #   - its teleop switch is a file (manual on|off), never the real phone page.
 #   - health API on :8092 (the real brain has :8090, teleop :8091).
-#   - LangSmith traces (when on) go to the project "mitra-twin".
+#   - LangSmith traces (when on) go to the project "kino-twin".
 #
 # It shares the Mac mini's llama.cpp slots with the real brain: while you use
 # the twin, the real brain's caches go cold (its next reply is slower).
 #
 # Whole twin at once (laptop world + Jetson stack + this): fleet.sh twin.
 set -u
-DOMAIN="${MITRA_DOMAIN:-42}"
+DOMAIN="${TWIN_DOMAIN:-42}"
 [ "$DOMAIN" = "0" ] && { echo "refusing: domain 0 is the REAL robot's" >&2; exit 1; }
 STATE="${TWIN_STATE_DIR:-$HOME/.langrobo_twin}"
 PIDF="$STATE/brain.pid"
@@ -57,7 +57,7 @@ up)
     export LANGROBO_HEALTH_PORT=8092
     export LANGROBO_TELEOP_MODE_URL="file://$MODE"
     export LANGROBO_WARM_ALL=0                  # do not evict the real brain's caches at start
-    export LANGSMITH_PROJECT=mitra-twin LANGCHAIN_PROJECT=mitra-twin
+    export LANGSMITH_PROJECT=kino-twin LANGCHAIN_PROJECT=kino-twin
     setsid ros2 launch langrobo_ros brain_launch.py provider:=llamacpp \
         start_micro_ros:=false > "$LOG" 2>&1 < /dev/null &
     echo $! > "$PIDF"

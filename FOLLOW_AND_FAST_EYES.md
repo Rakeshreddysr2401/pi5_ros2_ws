@@ -38,7 +38,7 @@ Roadmap page for people: https://claude.ai/artifact/E7o4XrtZ93i6b4wVCLTope
 
 | They say | Channel | What happens | Where it is decided |
 |---|---|---|---|
-| "Mitra, follow me" / "come with me" / "follow" | voice | Follow the person nearest the middle of the view at 1.0 m until told to stop, lost, blocked or 10 min | `follow_person(mode="follow")` → Jetson follow_node |
+| "Kino, follow me" / "come with me" / "follow" | voice | Follow the person nearest the middle of the view at 1.0 m until told to stop, lost, blocked or 10 min | `follow_person(mode="follow")` → Jetson follow_node |
 | "come here" / "come to me" / "come closer to me" | voice | Drive to ~1.0 m from the person in view, face them, stop, report | `follow_person(mode="come")` (= follow with `stop_at_gap`) |
 | "stop" / "wait" / "stay there" / anything else | voice | Wheels stop at once (every utterance already does), the follow is cancelled, nothing extra said for the cancel | agent_node `_on_user_input` → `cancel_navigation` → `/follow/cancel` |
 | "follow me" with nobody in view | voice | Says it can't see anyone and to stand in front of it. Does NOT spin around looking | Jetson `nobody` result → tool's own reply (it waits for the start) |
@@ -100,7 +100,7 @@ Roadmap page for people: https://claude.ai/artifact/E7o4XrtZ93i6b4wVCLTope
 2. Dry run, real robot, virtual person: commands on `/follow/cmd_vel_dry`.
 3. Floor, virtual person, slow: a turn-only case, then a ~0.5 m approach in
    open space; obstacle stop checked against a real object.
-4. Brain end to end, nobody in view: "Mitra, follow me" → "I can't see anyone".
+4. Brain end to end, nobody in view: "Kino, follow me" → "I can't see anyone".
 5. With the owner: real follow, come-to-me, lost, blocked. Only then is the
    switch proposed for default-on.
 

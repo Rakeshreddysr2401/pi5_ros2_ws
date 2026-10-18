@@ -149,7 +149,7 @@ def main():
         "Kino", "Keeno", "Keyno", "Keno", "Kina",
         # "Hey" + other words (must isolate Kino)
         "Hey", "Hey there", "Hey you", "Hey man", "Hey friend", "Hey bro",
-        "Hey buddy", "Hey Google", "Hey Siri", "Hey Alexa", "Hey Jarvis", "Hey Mitra",
+        "Hey buddy", "Hey Google", "Hey Siri", "Hey Alexa", "Hey Jarvis",
         "Hi there", "Hello there",
         # Near-homophones & rhymes (-ino, key-)
         "keynote", "casino", "kimono", "cappuccino", "quinoa", "kilo",

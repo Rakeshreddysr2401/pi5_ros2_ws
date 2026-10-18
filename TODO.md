@@ -3,7 +3,7 @@
 ## LATER — RViz on the new laptop (noted 2026-10-18)
 
 The sim laptop is new (user `chotesh`, 192.168.1.9, DHCP) and runs the twin in
-**Isaac Sim**: `~/mitra_sim` there, branch `isaac` --
+**Isaac Sim**: `~/kino_sim` there, branch `isaac` --
 README.md / CLAUDE.md / docs/STATUS.md in it. The full twin was verified
 2026-10-18 (`TWIN=1 ./rover up`: every gate OK; home_real scenario 4/4 reached).
 
@@ -11,14 +11,14 @@ RViz is NOT set up on that laptop yet (no ROS there). To finish it:
 
 1. On the laptop, in a terminal (needs sudo): install `ros-jazzy-desktop`
    (the ROS 2 apt repo for Ubuntu 24.04 "noble", then `sudo apt install ros-jazzy-desktop`).
-2. Then on the laptop: `cd ~/mitra_sim && ./mitra rviz` (the twin, domain 42) or
-   `./mitra rviz real` (the real robot, domain 0). Both fetch the layout from the
+2. Then on the laptop: `cd ~/kino_sim && ./sim rviz` (the twin, domain 42) or
+   `./sim rviz real` (the real robot, domain 0). Both fetch the layout from the
    Jetson (`~/rover/phase2/rviz/rover_live.rviz`) every time; the twin window adds
    the true world and the rover's true outline (green). Built, but untested
    until ROS is installed.
 3. `TWIN=1 ./rover view` on the Jetson still pushes RViz over ssh to
    `rakhi24@<laptop>` and fails on the new laptop (no ssh server, other user).
-   Harmless inside `up`; use `./mitra rviz` instead, or decide to install an
+   Harmless inside `up`; use `./sim rviz` instead, or decide to install an
    ssh server on the laptop.
 
 (`scripts/fleet.sh twin` no longer needs the laptop over ssh: it finds the
@@ -229,8 +229,8 @@ token-joining in `_run()` produces correctly-spaced text — that logic is
 unverified. Delete this section once one real Telugu utterance round-trips
 correctly through at least one cloud provider (not the fallback).
 confirm `/voice/user_input` gets a clean transcript. Delete this section
-once that's done and the wake_aliases list (`mitra`/`hey mitra` —
-config/voice_params.yaml; the robot was renamed Mitra 2026-09-20) has been
+once that's done and the wake_aliases list (`kino`/`hey kino` —
+config/voice_params.yaml; the robot was renamed KINO 2026-09-20) has been
 tuned against a few real tries.
 
 ## OUTSTANDING 2026-07-10: Mac Mini llama.cpp returns "Compute error" on EVERY request

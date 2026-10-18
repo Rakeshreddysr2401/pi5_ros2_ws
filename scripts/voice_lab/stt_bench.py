@@ -1,4 +1,4 @@
-"""Score one English STT model on make_clips.py's clips: WER, "Mitra" hits, seconds a clip.
+"""Score one English STT model on make_clips.py's clips: WER, "Kino" hits, seconds a clip.
     THREADS=2 python3 stt_bench.py CLIPS_DIR MODELS_DIR fw:tiny.en
     ... moonshine-base-en-int8 | nemo-parakeet-tdt-0.6b-v2-int8   (sherpa-onnx dirs in MODELS_DIR)
 Clips are mixed with the recorded room noise at 20 dB ("near") and 5 dB ("far")."""
@@ -6,7 +6,7 @@ import glob, json, os, re, sys, time, resource
 import numpy as np
 sys.path.insert(0, os.path.dirname(__file__)); from phrases import PHRASES
 CLIPS, DL, THREADS = sys.argv[1], sys.argv[2], int(os.environ.get('THREADS', 2))
-NUM = {'90': 'ninety', '1': 'one', '10': 'ten', 'metre': 'meter', 'mithra': 'mitra', 'mittra': 'mitra'}
+NUM = {'90': 'ninety', '1': 'one', '10': 'ten', 'metre': 'meter', 'keeno': 'kino', 'keno': 'kino', 'kinno': 'kino'}
 
 def norm(t):
     t = re.sub(r"[^\w' ]", ' ', t.lower())
@@ -26,7 +26,7 @@ def make(name):
         m = WhisperModel(name[3:], device='cpu', compute_type='int8', cpu_threads=THREADS,
                          download_root=os.path.expanduser('~/ros2_ws/src/langrobo_ros/models/whisper'))
         return lambda pcm: ' '.join(s.text for s in m.transcribe(
-            pcm, language='en', beam_size=1, hotwords='Mitra', condition_on_previous_text=False)[0])
+            pcm, language='en', beam_size=1, hotwords='Kino', condition_on_previous_text=False)[0])
     sys.path.insert(0, os.path.expanduser('~/ros2_ws/src/pi5_voice_pkg'))
     from pi5_voice_pkg.stt_providers.local_sherpa import LocalSherpaProvider
     p = LocalSherpaProvider(f'{DL}/sherpa-onnx-{name}', THREADS)
@@ -48,8 +48,8 @@ for cond, snr in (('near', 20), ('far', 5)):
         pcm = (pcm * 0.3 / max(1e-6, np.abs(pcm).max())).astype(np.float32)
         t = time.time(); hyp = run(pcm); secs += time.time() - t; audio += len(pcm) / 16000
         e, n_ = wer(ref, hyp); E += e; N += n_
-        if 'mitra' in ref.lower():
-            names_tot += 1; names += 'mitra' in norm(hyp)
+        if 'kino' in ref.lower():
+            names_tot += 1; names += 'kino' in norm(hyp)
         if e: misses.append(f'{os.path.basename(f)[:-4]}: {hyp.strip()!r}')
     res[cond] = dict(wer=round(E / N * 100, 1), name=f'{names}/{names_tot}',
                      s_per_clip=round(secs / len(files), 2), rtf=round(secs / audio, 3), misses=misses[:12])
