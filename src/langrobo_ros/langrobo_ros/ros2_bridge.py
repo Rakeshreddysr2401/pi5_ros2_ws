@@ -73,7 +73,14 @@ class ROS2Bridge:
         # once their stamped epoch matches the live one; see above.
         from langrobo_core.services.config import state_path   # LANGROBO_STATE_DIR (the twin's own)
         self._locations_file = state_path("locations.json")
-        self._saved_locations: dict = {}   # {name: (x, y, yaw_deg, origin_epoch)}
+        self._saved_locations: dict = {}   # {name: (x, y, yaw_deg, origin_epoch[, home])}
+        # home = {"room": id, "map": [x, y, yaw_deg]}: the same spot in the saved
+        # room's map frame, when the Jetson announced one (/home/room). That is
+        # what lets a place survive a power cycle: odom restarts at 0 every
+        # boot, the room's map frame does not (rover phase2/tools/relocalize.py
+        # finds the rover in it at start-up). 2026-10-18, real robot: every
+        # saved place was dropped at each power cycle as "a different origin".
+        self._room = None                  # the live /home/room: {"id", "frame", "state"}
         try:
             with open(self._locations_file) as f:
                 raw = json.load(f)
@@ -81,7 +88,7 @@ class ROS2Bridge:
                 # 4 fields = post-epoch format. 3 = a file from before this
                 # existed; treat as unstamped so it never gets reloaded silently
                 # (it may well be from a now-gone odom origin).
-                self._saved_locations[k] = tuple(v) if len(v) == 4 else (*v, None)
+                self._saved_locations[k] = tuple(v) if len(v) in (4, 5) else (*v, None)
         except FileNotFoundError:
             pass
         except Exception as e:
@@ -92,6 +99,9 @@ class ROS2Bridge:
         # before the first /fusion/status message arrives.
 
         node.create_subscription(String, "/fusion/status", self._on_fusion_status, 10)
+        from rclpy.qos import DurabilityPolicy as _D, QoSProfile as _Q
+        node.create_subscription(String, "/home/room", self._on_home_room,
+                                 _Q(depth=1, durability=_D.TRANSIENT_LOCAL))
 
         # TF buffer for get_current_pose() (NAV_FRAME -> base_link)
         from tf2_ros import Buffer, TransformListener
@@ -393,7 +403,59 @@ class ROS2Bridge:
         self._pixel_snapshot_pub.publish(msg)
 
     def get_known_locations(self) -> dict:
-        return self._known_locations
+        # Places from an earlier boot of the SAME room come back through the
+        # room's map frame, re-projected into this session's odom NOW (SLAM's
+        # map -> odom moves a few cm as it corrects, so never cache it).
+        back = {}
+        if self._room:
+            for k, v in self._saved_locations.items():
+                if k in self._known_locations or len(v) < 5 or not v[4]:
+                    continue
+                home = v[4]
+                if home.get("room") == self._room.get("id"):
+                    p = self._map_to_odom(*home["map"])
+                    if p is not None:
+                        back[k] = p
+        return {**self._known_locations, **back} if back else self._known_locations
+
+    def _on_home_room(self, msg) -> None:
+        try:
+            room = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError):
+            return
+        if room.get("id") and room != self._room:
+            self._room = room
+            n = sum(1 for v in self._saved_locations.values()
+                    if len(v) >= 5 and v[4] and v[4].get("room") == room["id"])
+            self._node.get_logger().info(
+                f"home room {room['id']} ({room.get('state')}): {n} saved place(s) belong to it")
+
+    def _tf_pose(self, parent: str, child: str):
+        import rclpy.time
+        try:
+            t = self._tf_buffer.lookup_transform(parent, child, rclpy.time.Time())
+        except Exception:
+            return None
+        q = t.transform.rotation
+        return (t.transform.translation.x, t.transform.translation.y,
+                math.degrees(math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))))
+
+    def _map_to_odom(self, x: float, y: float, yaw_deg: float):
+        """A map-frame pose -> NAV_FRAME (odom) through the live map -> odom transform."""
+        t = self._tf_pose(self.NAV_FRAME, "map")
+        if t is None:
+            return None
+        tx, ty, tyaw = t
+        c, s = math.cos(math.radians(tyaw)), math.sin(math.radians(tyaw))
+        return (tx + c * x - s * y, ty + s * x + c * y, (yaw_deg + tyaw + 180.0) % 360.0 - 180.0)
+
+    def _odom_to_map(self, x: float, y: float, yaw_deg: float):
+        t = self._tf_pose("map", self.NAV_FRAME)
+        if t is None:
+            return None
+        tx, ty, tyaw = t
+        c, s = math.cos(math.radians(tyaw)), math.sin(math.radians(tyaw))
+        return (tx + c * x - s * y, ty + s * x + c * y, (yaw_deg + tyaw + 180.0) % 360.0 - 180.0)
 
     def _rebuild_known_locations(self) -> None:
         """Recompute _known_locations from config + only the saved locations
@@ -450,7 +512,12 @@ class ROS2Bridge:
         origin is still the live one -- see _rebuild_known_locations. Usable
         immediately either way, for the rest of the current session."""
         self._known_locations[name] = (x, y, yaw_deg)
-        self._saved_locations[name] = (x, y, yaw_deg, self._origin_epoch)
+        home = None
+        if self._room:
+            m = self._odom_to_map(x, y, yaw_deg)
+            if m is not None:
+                home = {"room": self._room["id"], "map": [round(v, 3) for v in m]}
+        self._saved_locations[name] = (x, y, yaw_deg, self._origin_epoch, home)
         os.makedirs(os.path.dirname(self._locations_file), exist_ok=True)
         # Atomic, like object memory: a power cut mid-write left a truncated
         # file, which the next boot could not read -- every saved place gone.
