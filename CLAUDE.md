@@ -270,7 +270,9 @@ that moves wheels).
 ## Working on the Jetson from here
 
 Passwordless SSH: `ssh rakhi24@rakhi-jetson.local`. The live repo is **`~/rover`**
-(branch `rover-v1.1.8`, container `rover`, image `orin-nav:1.1`); read its
+(branch `rover-v1.1.15-find-follow`, container `rover`, image `orin-nav:1.2` by default since
+2026-10-18 — Isaac ROS 4.6 cuVSLAM, `VO=isaac`; proven on the twin only, the real-robot run
+(ISAAC_ROS_4_6_UPGRADE.md step F) is pending; `IMAGE=orin-nav:1.1 ./rover up` rolls back); read its
 README.md, STARTUP.md (power-on → working), OPERATIONS.md and OPEN_ISSUES.md before
 editing. Its rules: the image has no Dockerfile and must never be modified; nodes are
 host files bind-mounted read-only, so edit on the host and restart the layer
@@ -348,9 +350,9 @@ no longer exist.
 ## The twin (kino_sim) — test the real robot's code on a simulated robot
 
 The twin is the robot's HARDWARE simulated, nothing else: since 2026-10-18 in
-**Isaac Sim 5.1** on the new laptop (user `chotesh`, 192.168.1.9, DHCP, RTX
+**Isaac Sim 6.2** (5.1 retired 2026-10-18) on the new laptop (user `chotesh`, 192.168.1.9, DHCP, RTX
 4050). Repo github.com/Rakeshreddysr2401/kino_sim (private),
-laptop `~/kino_sim` (branch `isaac`). The laptop simulates the D555, the C1
+laptop `~/kino_sim` (branch `main`). The laptop simulates the D555, the C1
 and the ESP32 + encoders with the rover's measured body, noise and wheel
 response; the Jetson runs the rover's WHOLE, unchanged stack on it
 (`TWIN=1 ./rover up`: cuVSLAM, fusion2, slam_toolbox, nvblox, nav2, reach,

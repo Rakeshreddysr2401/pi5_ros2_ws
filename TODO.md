@@ -20,7 +20,16 @@
   everything committed and pushed. The throwaway container `isaac46_test` was
   removed; the last plain one was `--rm`.
 
-### 2. Isaac ROS 4.6 test (paused until item 1 is fixed)
+### 2. Isaac ROS 4.6 — twin PASSED on `orin-nav:1.2`; the real robot is next (step F)
+- **Status 2026-10-18 evening** (rover `c530fbe`, ISAAC_ROS_4_6_UPGRADE.md §5-6):
+  `orin-nav:1.2` (1.1 + Isaac ROS 4.6, cuVSLAM as `VO=isaac`) is built, and
+  `./rover` now DEFAULTS to it — for the real robot too. Twin: every gate OK,
+  `home_real` 4/4. Not yet run on the real robot; until it has, a cold
+  `fleet.sh rover` starts the real body on an image only the twin has driven.
+  Roll back with `IMAGE=orin-nav:1.1 ./rover up`. Keep 1.1 until step F passes.
+- The board's stability gate (§0 / item 1) is still open: the boot before
+  21:37 ended at 18:17 with no shutdown and no kernel error — the same
+  power-cut signature.
 - 4.6.0 (2026-08-18) adds official Jetson Orin + JetPack 7.2 support and builds
   cuVSLAM from source for aarch64, so the packaged `isaac_ros_visual_slam` may
   finally run on the Orin and could replace the pyCuVSLAM wheel in `vo_node`.
