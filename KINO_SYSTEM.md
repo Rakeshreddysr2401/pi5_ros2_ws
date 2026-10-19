@@ -125,8 +125,9 @@ cd ~/kino_sim && ./sim up home_real     # ~1 min; add follow=true for an Isaac w
   off at 21:24 on 2026-10-19. Needs a 5 V / 5 A supply (Pi 5 `TODO.md` item 0).
 - The robot drives over a 1 cm tablet on the floor (below the lidar; rover
   `OPEN_ISSUES.md` #3).
-- The twin's cuVSLAM loses itself in turns, and its stereo reaches the Jetson at
-  17-24 Hz, not 30 (laptop `docs/STATUS.md`, gap 1).
+- The twin's cuVSLAM once lost itself in turns (2026-10-19, a degraded twin process);
+  not reproduced since: if VO goes wild, `./sim vocheck`, restart the twin (laptop
+  `docs/STATUS.md`, gap 1).
 - Owner to-dos: rename GitHub `mitra_sim` → `kino_sim` (then update remotes); run
   `scripts/mac_mini/migrate_to_kino.sh` (in the Pi 5's `~/ros2_ws`) on the Mac; restart `langrobo-brain` on the
   Pi 5 (sudo); install the sonar service (Pi 5 `TODO.md` 0b); delete `orin-nav:1.1`
