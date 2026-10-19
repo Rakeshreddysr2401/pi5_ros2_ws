@@ -10,6 +10,7 @@ cd "$(dirname "$0")/.."
 
 sudo cp src/langrobo_ros/systemd/langrobo-microros.service  /etc/systemd/system/
 sudo cp src/langrobo_ros/systemd/langrobo-brain.service     /etc/systemd/system/
+sudo cp src/langrobo_ros/systemd/langrobo-sonar.service     /etc/systemd/system/
 # Retire the Fast DDS discovery server (langrobo-discovery): the fleet is plain
 # multicast since 2026-07-16 (NETWORKING.md) and nothing used it.
 if [ -e /etc/systemd/system/langrobo-discovery.service ]; then
@@ -17,8 +18,8 @@ if [ -e /etc/systemd/system/langrobo-discovery.service ]; then
     sudo rm -f /etc/systemd/system/langrobo-discovery.service
 fi
 sudo systemctl daemon-reload
-sudo systemctl enable --now langrobo-microros langrobo-brain
-systemctl --no-pager status langrobo-microros langrobo-brain || true
+sudo systemctl enable --now langrobo-microros langrobo-brain langrobo-sonar
+systemctl --no-pager status langrobo-microros langrobo-brain langrobo-sonar || true
 
 # Voice is a USER unit (PipeWire lives in the user session). Lingering makes
 # the user session — and so this unit — start at boot without a login.

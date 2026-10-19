@@ -1,0 +1,14 @@
+[Unit]
+Description=LangRobo front sonars (Pi5 <- sonar ESP32 USB serial -> /sonar/left, /sonar/right)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=rakhi24
+ExecStart=/home/rakhi24/ros2_ws/scripts/run_sonar.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
