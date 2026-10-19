@@ -2,19 +2,24 @@
 
 ## NOW — open items, 2026-10-18 (most urgent first)
 
-### 0. Front ultrasonic sensors (owner fitting them, 2026-10-19)
-- On a SECOND, new ESP32 (not the wheels' board), USB to this Pi 5: sensor 1
-  TRIG **GPIO5** / ECHO **GPIO19**, sensor 2 TRIG **GPIO18** / ECHO **GPIO21**; each
-  ECHO through **1 kΩ series + 2 kΩ to GND** (the HC-SR04's echo is 5 V, the ESP32's
-  pins 3.3 V); VCC 5 V, common GND.
-- Two ESP32s on USB: they share one by-id name (CP2102 ..._0001). DONE 2026-10-19:
-  the wheels' agent opens its board by USB SOCKET (`run_microros.sh`, by-path
-  `...usb-0:2:1.0`): keep the wheels' board in that socket, plug the sonar board
-  into any OTHER one. Takes effect at the next service start (reboot / restart).
-- Then: sonar firmware (alternate pings, one serial line per reading), a Pi 5 node
-  -> `/sonar/left` + `/sonar/right` (`sensor_msgs/Range`), the twin (kino_sim) first,
-  then nav2 / reach on the Jetson.
-- Owner to give: model, which is left / right, height above the floor, offsets, aim.
+### 0. This Pi 5 is UNDER-POWERED (found 2026-10-19 night) -- most urgent
+- The kernel log says "Undervoltage detected!" again and again: 16:35, 17:38, 21:24 --
+  the minute it dropped off the network -- and 21:26 after it came back
+  (`journalctl -k | grep -i voltage`). It now feeds two ESP32s over USB (wheels + sonar).
+- Fix (owner): the official 27 W USB-C supply (5 V / 5 A) or an equal 5 V 5 A source.
+  Below that the Pi 5 also caps its USB ports' current; every brown-out drops the
+  wheels' link, the sonars and the brain.
+
+### 0b. Front ultrasonic sensors -- BUILT 2026-10-19
+- Hardware: two HC-SR04-type sensors (run at 3.3 V, no dividers needed there) on their
+  OWN ESP32 in USB socket `usb-0:1:1.0` (keep the wheels' ESP32 in `usb-0:2:1.0`: the
+  two CP2102 boards share one by-id name; run_microros.sh uses by-path).
+- Firmware: MicroPython 1.24 + `~/rover/phase1/firmware/sonar/main.py` (update over USB
+  with `upload_main.py`). Node: `scripts/sonar_node.py` -> `/sonar/left`, `/sonar/right`.
+- OWNER, once: `sudo cp src/langrobo_ros/systemd/langrobo-sonar.service /etc/systemd/system/`
+  `&& sudo systemctl daemon-reload && sudo systemctl enable langrobo-sonar` -- until then
+  the node is started by hand and does not survive a reboot.
+- Owner to confirm: S1 (TRIG GPIO5) is the LEFT one; both point straight ahead, level.
 
 ### 1. The Jetson stops answering a few minutes after boot (since the power change)
 - Before today's power-source change it ran 3 h+ without trouble. Since then it
