@@ -3,14 +3,16 @@
 ## NOW — open items, 2026-10-18 (most urgent first)
 
 ### 0. Front ultrasonic sensors (owner fitting them, 2026-10-19)
-- Wiring (the ESP32 talks micro-ROS to this Pi 5 over USB): left TRIG **GPIO16** /
-  ECHO **GPIO17**, right TRIG **GPIO14** / ECHO **GPIO4**; each ECHO through
-  **1 kΩ series + 2 kΩ to GND** (the HC-SR04's echo is 5 V, the ESP32's pins 3.3 V);
-  VCC 5 V, common GND. NOT 5/18/19/21: those are the motor drivers' pins.
-- Then: firmware (alternate pings, `/sonar/left` + `/sonar/right`, `sensor_msgs/Range`),
-  flash (`~/rover/phase1/firmware/FLASHING.md`), check the topics here with the agent
-  up, add them to the twin (kino_sim) and to nav2 / reach on the Jetson.
-- Owner to give: model, height above the floor, left/right offsets, aim angle.
+- On a SECOND, new ESP32 (not the wheels' board), USB to this Pi 5: sensor 1
+  TRIG **GPIO5** / ECHO **GPIO19**, sensor 2 TRIG **GPIO18** / ECHO **GPIO21**; each
+  ECHO through **1 kΩ series + 2 kΩ to GND** (the HC-SR04's echo is 5 V, the ESP32's
+  pins 3.3 V); VCC 5 V, common GND.
+- Two ESP32s on USB: ttyUSB0/1 can swap at boot -> the wheels' micro-ROS agent must
+  use `/dev/serial/by-id/...` (or a udev rule); check both IDs once plugged in.
+- Then: sonar firmware (alternate pings, one serial line per reading), a Pi 5 node
+  -> `/sonar/left` + `/sonar/right` (`sensor_msgs/Range`), the twin (kino_sim) first,
+  then nav2 / reach on the Jetson.
+- Owner to give: model, which is left / right, height above the floor, offsets, aim.
 
 ### 1. The Jetson stops answering a few minutes after boot (since the power change)
 - Before today's power-source change it ran 3 h+ without trouble. Since then it
