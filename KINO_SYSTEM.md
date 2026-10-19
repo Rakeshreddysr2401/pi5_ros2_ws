@@ -39,6 +39,7 @@ navigation and agents are tested there before they reach the real robot.
 | Intel RealSense **D555** | PoE, own subnet (192.168.11.55), to the Jetson | stereo IR 896x504 @30 (emitter OFF, passive), depth, colour 448x252 @15, IMU 200 Hz (the gyro is used) |
 | Slamtec **RPLidar C1** | USB on the Jetson | 360° scans, 10 Hz, 720 beams: the pose reference |
 | **ESP32** (firmware v2) | USB serial to the Pi 5 (`/dev/ttyUSB0`, 115200), micro-ROS | 4-wheel PID at 50 Hz, encoders, `/cmd_vel` with a 500 ms watchdog, `/wheel_state`, `/wheel_ticks` |
+| 2× **HC-SR04** ultrasonic (PLANNED 2026-10-19) | on the ESP32: left TRIG GPIO16 / ECHO GPIO17, right TRIG GPIO14 / ECHO GPIO4, each ECHO via a 1 kΩ / 2 kΩ divider (5 V → 3.3 V); 5 V + common GND | front, bumper height: `/sonar/left`, `/sonar/right` (`sensor_msgs/Range`) once the firmware has them. NOT GPIO 5/18/19/21 — those drive the motors. Pin map and plan: `~/rover/phase1/firmware/HARDWARE.md` §2b |
 | Pi 5 speaker + mic | the Pi 5 | voice (STT/TTS, wake word "Kino") |
 
 ## 3. Start and stop

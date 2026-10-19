@@ -2,6 +2,16 @@
 
 ## NOW — open items, 2026-10-18 (most urgent first)
 
+### 0. Front ultrasonic sensors (owner fitting them, 2026-10-19)
+- Wiring (the ESP32 talks micro-ROS to this Pi 5 over USB): left TRIG **GPIO16** /
+  ECHO **GPIO17**, right TRIG **GPIO14** / ECHO **GPIO4**; each ECHO through
+  **1 kΩ series + 2 kΩ to GND** (the HC-SR04's echo is 5 V, the ESP32's pins 3.3 V);
+  VCC 5 V, common GND. NOT 5/18/19/21: those are the motor drivers' pins.
+- Then: firmware (alternate pings, `/sonar/left` + `/sonar/right`, `sensor_msgs/Range`),
+  flash (`~/rover/phase1/firmware/FLASHING.md`), check the topics here with the agent
+  up, add them to the twin (kino_sim) and to nav2 / reach on the Jetson.
+- Owner to give: model, height above the floor, left/right offsets, aim angle.
+
 ### 1. The Jetson stops answering a few minutes after boot (since the power change)
 - Before today's power-source change it ran 3 h+ without trouble. Since then it
   went down 3 times: ~9 min, ~2 min, ~1.5 min after boot, each time while doing
