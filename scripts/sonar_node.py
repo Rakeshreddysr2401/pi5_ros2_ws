@@ -15,7 +15,8 @@ The board is opened by its USB SOCKET (by-path): it shares the wheels' board's
 by-id name (both CP2102 ..._0001), and the wheels' agent owns that one. Opened
 with DTR/RTS low so the ESP32 is neither reset nor put in its bootloader. A
 lost board (unplugged, rebooting) is re-opened every 2 s; readings stop, the
-topics go quiet, nothing else is touched -- the wheels never depend on this.
+topics say +inf (no echo) at 10 Hz meanwhile, nothing else is touched -- the wheels
+never depend on this.
 """
 import json
 import math
@@ -30,7 +31,7 @@ from std_msgs.msg import String
 
 PORT = os.environ.get('SONAR_DEV', '/dev/serial/by-path/platform-xhci-hcd.0-usb-0:1:1.0-port0')
 LEFT_IS_S1 = os.environ.get('SONAR_LEFT_IS_S1', '1') == '1'
-FOV, RMIN, RMAX = 0.26, 0.02, 4.0                  # params.yaml sonar.fov / min_range / max_range
+FOV, RMIN, RMAX = 0.52, 0.02, 4.0                  # params.yaml sonar.fov / min_range / max_range
 
 
 class SonarNode(Node):
@@ -64,6 +65,12 @@ class SonarNode(Node):
 
     def poll(self):
         if self.ser is None:
+            # board missing: say "no echo" for both at ~10 Hz, so a last close reading
+            # never lingers in nav2's collision monitor (it does not time sonars out)
+            if time.time() - getattr(self, 'last_none', 0.0) >= 0.1:
+                self.last_none = time.time()
+                for k in ('S1', 'S2'):
+                    self.publish(k, math.inf)
             if time.time() >= self.next_open:
                 self.open()
             return
@@ -89,15 +96,18 @@ class SonarNode(Node):
             mm = int(parts[1])
         except ValueError:
             return
-        m = Range()
-        m.header.stamp = self.get_clock().now().to_msg()
-        m.header.frame_id = self.frame[parts[0]]
-        m.radiation_type = Range.ULTRASOUND
-        m.field_of_view, m.min_range, m.max_range = FOV, RMIN, RMAX
-        m.range = math.inf if mm < 0 else max(RMIN, mm / 1000.0)
-        self.pub[parts[0]].publish(m)
+        self.publish(parts[0], math.inf if mm < 0 else max(RMIN, mm / 1000.0))
         self.count[parts[0]] += 1
         self.last[parts[0]] = time.time()
+
+    def publish(self, key, metres):
+        m = Range()
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.header.frame_id = self.frame[key]
+        m.radiation_type = Range.ULTRASOUND
+        m.field_of_view, m.min_range, m.max_range = FOV, RMIN, RMAX
+        m.range = metres
+        self.pub[key].publish(m)
 
     def status(self):
         now = time.time()
