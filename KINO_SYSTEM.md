@@ -3,7 +3,7 @@
 > **The same file is in all three repos:** Jetson `~/rover/KINO_SYSTEM.md`, Pi 5
 > `~/ros2_ws/KINO_SYSTEM.md`, laptop `~/kino_sim/KINO_SYSTEM.md`. If you change it,
 > copy it to the other two (`diff` between them must be empty). Last checked
-> 2026-10-18.
+> 2026-10-19 (night).
 
 **KINO** (Knowledge Is Never Out) is a home robot you talk to: "Kino, go near
 the bottle and tell me what's on it". It understands the request, finds the
@@ -38,7 +38,7 @@ navigation and agents are tested there before they reach the real robot.
 |---|---|---|
 | Intel RealSense **D555** | PoE, own subnet (192.168.11.55), to the Jetson | stereo IR 896x504 @30 (emitter OFF, passive), depth, colour 448x252 @15, IMU 200 Hz (the gyro is used) |
 | Slamtec **RPLidar C1** | USB on the Jetson | 360° scans, 10 Hz, 720 beams: the pose reference |
-| **ESP32** (firmware v2) | USB serial to the Pi 5 (`/dev/ttyUSB0`, 115200), micro-ROS | 4-wheel PID at 50 Hz, encoders, `/cmd_vel` with a 500 ms watchdog, `/wheel_state`, `/wheel_ticks` |
+| **ESP32** (firmware v2) | USB serial to the Pi 5, socket `usb-0:2:1.0` (run_microros.sh opens it by-path), 115200, micro-ROS | 4-wheel PID at 50 Hz, encoders, `/cmd_vel` with a 500 ms watchdog, `/wheel_state`, `/wheel_ticks` |
 | 2× **HC-SR04** ultrasonic (front corners, 6.5 cm up, 28 cm apart; built 2026-10-19) | their OWN ESP32 (MicroPython, `~/rover/phase1/firmware/sonar/`) on USB socket `usb-0:1:1.0` (the wheels' ESP32 stays in `usb-0:2:1.0`: both CP2102 boards share one by-id) | `scripts/sonar_node.py` (service langrobo-sonar) -> `/sonar/left`, `/sonar/right` (`sensor_msgs/Range`, frames sonar_left / sonar_right, fov 0.52 rad), `/sonar/status`; +inf while the board is missing. Used by nav2's collision monitor and by reach / goal_exec (~/rover NAV_PLAN.md) |
 | Pi 5 speaker + mic | the Pi 5 | voice (STT/TTS, wake word "Kino") |
 
@@ -104,7 +104,7 @@ cd ~/kino_sim && ./sim up home_real     # ~1 min; add follow=true for an Isaac w
 |---|---|---|
 | Jetson `~/rover` | `STARTUP.md` (after a power-on: all boxes, in order, what good looks like), `SYSTEM_OVERVIEW.md` (how it all fits, the topic contract), `OPEN_ISSUES.md` (what is open) | `OPERATIONS.md` (the runbook: calibration, diagnosis), `ARCHITECTURE.md`, `NAV_GUIDE.md`, `LOCALIZATION.md`, `ISAAC_ROS_4_6_UPGRADE.md`, `docker/README.md` (the images) |
 | Pi 5 `~/ros2_ws` | `README.md`, `HOW_IT_WORKS.md`, `TODO.md` (open items at the top) | `ARCHITECTURE_LLD.md`, `OPERATIONS.md` (systemd, health API), `NETWORKING.md`, `INTEGRATION_GAPS.md`, `TELEGRAM.md`, `MAC_MINI_TASKS.md`, `docs/voice/` |
-| Laptop `~/kino_sim` | `README.md`, `CLAUDE.md` (rules for the twin) | `docs/STATUS.md` (latest results), `docs/VERSIONS.md` (exact versions), `docs/PLAN_SIM6.md` |
+| Laptop `~/kino_sim` | `README.md`, `CLAUDE.md` (rules for the twin), `docs/STATUS.md` (where things stand, sim-real gaps) | `docs/IMPROVEMENT_LOOP.md` (the method), `docs/PLAN_AGENTS_NAV.md` (the plan), `docs/VERSIONS.md` (exact versions) |
 
 ## 6. Versions (2026-10-18)
 
@@ -116,14 +116,18 @@ cd ~/kino_sim && ./sim up home_real     # ~1 min; add follow=true for an Isaac w
 
 ## 7. Known problems right now
 
-- **The Jetson freezes** and drops off WiFi (five times on 2026-10-18, after a
-  power-source change). The journal is persistent: after a reboot, read
-  `journalctl -b -1` for the minutes before the freeze.
+- **The Jetson stops dead every few hours**: 2026-10-18 five times; 2026-10-19 at 12:07,
+  16:30 and 21:46. The second before, `~/netwatch` shows nothing wrong (input 5.09 V
+  at ~1.2 A, 53 °C, load ~2, WiFi -38 dBm) and the journal just ends: a power cut or a
+  hard hang, not overheating or overload. After a reboot read `journalctl -b -1` and
+  the newest `~/netwatch/*.log` (named 1970... until the clock syncs).
+- **The Pi 5 is under-powered**: "Undervoltage detected!" in its kernel log; it dropped
+  off at 21:24 on 2026-10-19. Needs a 5 V / 5 A supply (Pi 5 `TODO.md` item 0).
 - The robot drives over a 1 cm tablet on the floor (below the lidar; rover
-  `OPEN_ISSUES.md` #3). The door pass in the twin's `home_real` is tight
-  (0.2-1.2 cm).
-- The twin's stereo camera reaches 20-25 Hz, not 30 (WiFi laptop → router →
-  Jetson ~6 MB/s; a wired laptop would help).
+  `OPEN_ISSUES.md` #3).
+- The twin's cuVSLAM loses itself in turns, and its stereo reaches the Jetson at
+  17-24 Hz, not 30 (laptop `docs/STATUS.md`, gap 1).
 - Owner to-dos: rename GitHub `mitra_sim` → `kino_sim` (then update remotes); run
   `scripts/mac_mini/migrate_to_kino.sh` (in the Pi 5's `~/ros2_ws`) on the Mac; restart `langrobo-brain` on the
-  Pi 5 (sudo); delete `orin-nav:1.1` after one more real-robot run on 1.2.
+  Pi 5 (sudo); install the sonar service (Pi 5 `TODO.md` 0b); delete `orin-nav:1.1`
+  (58 GB; the real robot has run on 1.2 since 2026-10-18).
