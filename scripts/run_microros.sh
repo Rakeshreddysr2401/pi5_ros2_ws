@@ -12,8 +12,15 @@
 
 set -eo pipefail
 TRANSPORT="${1:-serial}"
-# by-id survives replugging and a second USB-serial adapter taking ttyUSB0.
-ESP32_DEV=/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+# The wheels' ESP32 by the USB SOCKET it is in, not by-id (2026-10-19): the
+# front-sonar ESP32 (a second board, same CP2102 chip) has the SAME by-id
+# (...CP2102..._0001: a generic serial number), so with both plugged in by-id
+# could open the sonar board and the wheels would never connect. by-path names
+# the physical socket: keep the wheels' board in THIS one (it has been since
+# 2026-10-12), the sonar board in any other. Moved: this path is missing and the
+# service says so -- `ls -l /dev/serial/by-path/` shows the new one.
+# ESP32_DEV=... in the environment overrides it.
+ESP32_DEV="${ESP32_DEV:-/dev/serial/by-path/platform-xhci-hcd.0-usb-0:2:1.0-port0}"
 SERIAL_DEV="${2:-$ESP32_DEV}"
 UDP_PORT="${2:-8888}"
 
@@ -42,7 +49,8 @@ export LD_LIBRARY_PATH="$HOME/.local/xrce-agent-3/lib:${LD_LIBRARY_PATH:-}"
 AGENT="$HOME/.local/xrce-agent-3/bin/MicroXRCEAgent"
 case "$TRANSPORT" in
     serial)
-        [ -e "$SERIAL_DEV" ] || { echo "ESP32 not on USB: $SERIAL_DEV missing" >&2; exit 1; }
+        [ -e "$SERIAL_DEV" ] || { echo "wheels' ESP32 not in its USB socket: $SERIAL_DEV missing" \
+            "(moved to another socket? ls -l /dev/serial/by-path/)" >&2; exit 1; }
         # Reset the ESP32 first (RTS -> EN, DTR high keeps it out of the
         # bootloader). Without this a restarted agent never reconnects: when an
         # agent goes away mid-session the board sits re-sending heartbeats for
