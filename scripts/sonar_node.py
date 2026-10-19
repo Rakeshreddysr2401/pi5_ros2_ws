@@ -16,7 +16,9 @@ by-id name (both CP2102 ..._0001), and the wheels' agent owns that one. Opened
 with DTR/RTS low so the ESP32 is neither reset nor put in its bootloader. A
 lost board (unplugged, rebooting) is re-opened every 2 s; readings stop, the
 topics say +inf (no echo) at 10 Hz meanwhile, nothing else is touched -- the wheels
-never depend on this.
+never depend on this. A board that opens but stays SILENT (2026-10-19: started in the
+Pi's first minute after boot, open, 0 lines for minutes, while a restart read 15 Hz)
+counts as lost after SILENT_S without a line.
 """
 import json
 import math
@@ -32,6 +34,7 @@ from std_msgs.msg import String
 PORT = os.environ.get('SONAR_DEV', '/dev/serial/by-path/platform-xhci-hcd.0-usb-0:1:1.0-port0')
 LEFT_IS_S1 = os.environ.get('SONAR_LEFT_IS_S1', '1') == '1'
 FOV, RMIN, RMAX = 0.52, 0.02, 4.0                  # params.yaml sonar.fov / min_range / max_range
+SILENT_S = 1.0                                     # open but no line this long -> close, re-open (it sends ~30/s)
 
 
 class SonarNode(Node):
@@ -46,6 +49,7 @@ class SonarNode(Node):
         self.count = {'S1': 0, 'S2': 0}
         self.last = {'S1': 0.0, 'S2': 0.0}
         self.version = ''
+        self.opened = self.last_line = 0.0
         self.create_timer(0.01, self.poll)
         self.create_timer(1.0, self.status)
 
@@ -56,7 +60,7 @@ class SonarNode(Node):
             s.dtr = False
             s.rts = False
             s.open()
-            self.ser, self.buf = s, b''
+            self.ser, self.buf, self.opened = s, b'', time.time()
             self.get_logger().info(f'sonar board open: {PORT}')
         except (serial.SerialException, OSError) as e:
             self.ser = None
@@ -84,8 +88,15 @@ class SonarNode(Node):
         while b'\n' in self.buf:
             line, self.buf = self.buf.split(b'\n', 1)
             self.on_line(line.decode(errors='replace').strip())
+        if time.time() - max(self.opened, self.last_line) > SILENT_S:
+            self.get_logger().warning(f'sonar board open but silent for {SILENT_S:.0f} s: re-opening',
+                                      throttle_duration_sec=30)
+            self.ser.close()
+            self.ser = None
+            self.next_open = time.time() + 0.5
 
     def on_line(self, line):
+        self.last_line = time.time()
         if line.startswith('#'):
             self.version = line[1:].strip()
             return
