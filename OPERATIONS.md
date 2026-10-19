@@ -1,0 +1,284 @@
+
+# LangRobo — Operations
+
+Deploy, run, observe, and troubleshoot the Pi5 brain.
+
+---
+
+## Run modes
+
+| mode | command | what runs |
+|---|---|---|
+| Production | `systemctl start langrobo-brain langrobo-microros` | the brain + micro-ROS agent, 24/7, auto-restart, JSON logs |
+| Foreground | `ros2 launch langrobo_ros brain_launch.py` | the same, in your terminal |
+| Dev (Studio) | `./scripts/dev.sh` | micro-ROS + `langgraph dev` on :2024 — **draws the graph**, and lets you step a turn node by node |
+| Voice | `systemctl --user status langrobo-voice` (user unit, starts at boot; foreground: `./scripts/run_voice.sh`) | speaker/mic owner + CPU-only STT + TTS on the Pi 5 (see docs/voice/PI5_VOICE.md) |
+| Studio, brain live | `./scripts/start_studio.sh` | inspect the graph **while `agent_node` keeps running** — see the caveat below |
+
+**Never run two brains at once** — both drive `/cmd_vel` and the micro-ROS agent on the ESP32's serial port.
+
+The llama.cpp server on the Mac Mini is started with **`e12b5`** (`--jinja --parallel 5`, see
+"Mac Mini LLM server" below): one KV-cache slot per agent (chat, local_agent, navigate), slot 4
+for the voice "is this for me?" check (idle since that filter went off, 2026-10-12), plus slot 3 for
+photo questions (`ask_photos`, search views, locate, the arrival check), so they never
+overwrite local_agent's cached conversation and photos. With fewer slots the
+agents share and evict each other's cached prompt prefix, which
+costs ~18-50s of re-prefill per turn. agent_node probes the server at boot and
+logs `KV slot map (one per agent): {...}` — or a warning naming the shortfall.
+See ARCHITECTURE_LLD.md §4.1.
+
+### Studio against a live brain (`start_studio.sh`)
+
+`dev.sh` is the right tool when the brain is **stopped** and Studio owns the
+robot. `start_studio.sh` is the deliberate exception: the brain stays up and
+Studio attaches beside it, for inspecting the graph on a running robot.
+
+| | `dev.sh` | `start_studio.sh` |
+|---|---|---|
+| micro-ROS agent | starts one only if `langrobo-microros` is not running | none — assumes one is up |
+| discovery | plain SUBNET (it runs `start_studio.sh`) | plain SUBNET, matching a running `agent_node` |
+| written for | brain stopped | brain running |
+
+**It knowingly breaks the "never two modes at once" rule above, for `/cmd_vel`
+only.** With `agent_node` up you get `/studio_bridge` beside it and two
+publishers that can both command the wheels. It does not touch micro-ROS, so
+there is no conflict on the ESP32's serial port. A `navigate` turn typed into the Studio browser
+box **moves the real robot** — a human watches, and MANUAL on the teleop is the
+stop. Since 2026-10-04 such a drive reports back into the Studio thread that
+started it (arrival, failure and its reason, the "on arrival" errand) --
+`graph_studio.py` registers the nav-done callback and posts
+`movement.nav_report` as a new run. Before, the report was thrown away.
+
+One thing it gets right that is easy to get wrong by hand:
+
+- **No `set -u`.** ROS's `setup.bash` references unset variables and aborts the
+  script the instant it is sourced — silently, if stderr is going to /dev/null.
+
+Start it detached and poll; it takes 30-60 s:
+
+```bash
+setsid nohup ./scripts/start_studio.sh > /tmp/langgraph_dev.log 2>&1 < /dev/null &
+curl -s http://127.0.0.1:2024/ok        # {"ok":true} when ready
+```
+
+Reach the UI by tunnelling from the machine with the browser, then opening
+Studio against `127.0.0.1` — an HTTPS page cannot call `http://<pi5-ip>:2024`,
+browsers block it as mixed content with no visible error:
+
+```bash
+ssh -N -L 2024:localhost:2024 rakhi24@192.168.1.16
+# then: https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024
+```
+
+Stop it with `pkill -f "langgrap[h] dev"`. **The brackets are not a typo** —
+`pkill -f "langgraph dev"` matches its own command line over ssh and kills its
+own session: exit 255, no output, nothing killed.
+
+
+## Health API
+
+In-process FastAPI on port **8090** (`LANGROBO_HEALTH_PORT`).
+
+```bash
+curl -s localhost:8090/health                                          # liveness (no auth)
+curl -s -H "Authorization: Bearer $LANGROBO_API_TOKEN" localhost:8090/status | jq
+curl -s -H "Authorization: Bearer $LANGROBO_API_TOKEN" localhost:8090/metrics  # Prometheus text
+```
+
+`/status` reports: LLM primary health + fallback state, Telegram channel
+state, sticky agent, last-turn timestamp/duration, camera frame age, robot
+body, queued system/Telegram events, the odom origin epoch, whether a drive is
+running, and the old photo survey's counters (`photo_survey`: off by design
+since 2026-10-02 -- the robot's memory is the photo log, `ask_photos`;
+`LANGROBO_PHOTO_SURVEY=1` brings the object list back). Without `LANGROBO_API_TOKEN` the API binds
+localhost-only; a LAN bind without a token is refused at startup (fail-fast).
+
+## .env reference
+
+`agent_node` loads `~/ros2_ws/.env` itself (`LANGROBO_ENV_FILE` overrides).
+LLM provider/model live in `src/langrobo_ros/config/agent_params.yaml` (KV slots
+in `registry.py`), not here.
+
+| Variable | Purpose |
+|---|---|
+| `LANGROBO_API_TOKEN` | Bearer token for /status + /metrics (empty → localhost only) |
+| `LANGROBO_HEALTH_PORT` / `_HOST` | Health API bind (default 8090) |
+| `LANGROBO_FALLBACK_PROVIDER/MODEL/API_KEY_ENV/BASE_URL` | Cloud LLM fallback — arms when key exists |
+| `LANGROBO_TRACING` | LangSmith opt-in; without it tracing vars are scrubbed (kills stale-key 403 spam) |
+| `LANGROBO_LOG_JSON` | `false` → human-readable log lines |
+| `OPENAI/ANTHROPIC/GOOGLE_API_KEY` | Cloud provider keys (referenced by name) |
+| `TAVILY_API_KEY` | Web search in chat (absent → feature off) |
+| `LANGROBO_TELEGRAM_TOKEN` | Bot token from @BotFather (absent → channel off) |
+| `LANGROBO_TELEGRAM_ALLOWLIST` | `chat_id:Name:role,…` — roles `owner`/`family`/`guest`; channel stays off while empty (bot never talks to strangers) |
+| `LANGROBO_QUIET_HOURS` | `HH:MM-HH:MM` — proactive pings queue in this window; replies to a person always send |
+| `STUDIO_PROVIDER/MODEL/BASE_URL/MAX_TOKENS` | `langgraph dev` only |
+| `LANGROBO_NAV_FRAME` | Frame for goals, TF pose reads and detections (default `odom` — this rover has no map frame) |
+| `LANGROBO_STANDOFF_M` | How far short of an object the robot parks (default 0.45). The Jetson's `pixel_to_goal.py` reads the SAME variable — export it on both machines or the two halves disagree |
+| `LANGROBO_PAN_TILT` | `1` once pan/tilt servos are actually fitted (default off — the ESP32 has no servo subscriptions) |
+| `LANGROBO_LINEAR_VEL_MS` / `_PHYSICAL_VEL_MS` / `_ANGULAR_VEL_RS` / `_STEADY_ANGULAR_VEL` | Drive calibration, tunable without a rebuild — see INTEGRATION_GAPS.md §3 |
+
+Robot state files: `~/.langrobo/` — `locations.json` (spots saved with
+`save_location`), `telegram_offset` (exactly-once inbound across restarts),
+`telegram_deferred.json` (quiet-hours queue). Back this directory up; delete a
+file to reset that memory.
+
+`locations.json` entries are stamped with the odom origin's `origin_epoch`
+(from `/fusion/status`, 2026-09-10). The rover has no persistent map, so a
+restart of the Jetson's pose layer — container restart, `./rover pose`,
+a cuVSLAM divergence recovery — starts a new origin, and every location
+stamped with the old one is silently dropped from `get_known_locations()`
+(`ros2_bridge.py:_rebuild_known_locations`) rather than served against
+coordinates that no longer mean anything. The file itself is untouched;
+re-run `save_location` to make a spot usable again this session.
+
+## Telegram channel
+
+Full setup + usage guide: **TELEGRAM.md**. Short version: create a bot with
+**@BotFather**, get each member's chat_id from **@userinfobot**, fill the two
+`.env` keys, restart the brain. Each member must message the bot once
+(Telegram forbids bots from initiating chats).
+Role capabilities live in `langrobo_core/services/permissions.py`
+(owner = everything; family = chat/relay/remind — no camera, no driving,
+no orders; voice turns act as owner until speaker ID exists).
+
+Behavior: long-polls `getUpdates` (works behind NAT, no public IP); the
+update offset persists in `~/.langrobo/telegram_offset` so restarts neither
+replay nor drop messages — texts sent while the robot was off are answered at
+boot. Inbound is rate-limited to 10 msg/min per sender. `/status` shows the
+`telegram` block (`polling`, `last_poll_age_s`, `last_error`) and
+`queued_telegram_messages`. Privileged sends are auditable:
+`journalctl -u langrobo-brain -o cat | grep "AUDIT telegram"`.
+
+## LangSmith tracing
+
+Off by default. Turn it on with **both** `LANGROBO_TRACING=true` and a
+`LANGSMITH_API_KEY` in `.env` (either alone → `services/config.sanitize_tracing_env`
+scrubs the tracing vars, which is what keeps a stale key from spamming a 403 on
+every LLM call). `LANGCHAIN_PROJECT` names the project in the UI. Restart the
+brain to pick it up.
+
+What a turn looks like in the UI:
+
+| | |
+|---|---|
+| Run name | `turn:voice` / `turn:telegram` / `turn:system` |
+| Tags | `channel:<voice\|telegram\|system>`, `entry:<agent>` |
+| Tree | `turn_entry → <agent> → <agent>_tools → …`, one child chat-model run per LLM call, tool runs underneath |
+| Metadata | `trace_id`, `channel`, `entry_agent`, `sticky_agent`, `llm_provider`, `llm_base_url`, `llm_primary_available`, `llm_fallback`; Telegram turns add `sender_name`/`sender_role`/`telegram_photo`; voice turns add `stt_*` (provider, `fell_back`, latency, RTF) |
+| Sibling runs | `tts:<provider>` — one per synthesised sentence, carrying the same `trace_id` |
+
+`trace_id` is the join key across all three observability surfaces for one turn:
+the LangSmith runs, `journalctl -u langrobo-brain -f -o cat` (every JSON log line
+carries it), and the `/diag/timing` waterfall (`scripts/latency_replay.py`).
+
+Useful filters (Filters → Metadata in the UI picks key/value from a dropdown;
+the raw query equivalents are below):
+
+| Question | Raw filter |
+|---|---|
+| Only turns that came in over Telegram | `has(tags, "channel:telegram")` |
+| Turns the Mac Mini missed, answered by the cloud fallback | `and(eq(metadata_key, "llm_primary_available"), eq(metadata_value, "false"))` |
+| Turns where cloud STT failed and local Whisper silently took over (no Telugu→English translation on those) | `and(eq(metadata_key, "stt_fell_back"), eq(metadata_value, "true"))` |
+| Every leg of one turn — STT metadata, the LLM run, each spoken sentence | `and(eq(metadata_key, "trace_id"), eq(metadata_value, "<id>"))` |
+| Hide the KV-cache prefills (`cache_warm:chat` / `cache_warm:local_agent` — full prompt, no answer) | `-has(tags, "cache_warm")` |
+
+Cost: LangSmith batches uploads on a background thread, so the turn path does not
+wait on the network. It does ship conversation content (prompts, replies, camera
+images that entered the context) to LangSmith — leave it off unless you are
+debugging.
+
+## Deploy checklist (Pi5 + Jetson protocol change)
+
+1. Pi5: `colcon build --symlink-install` + `pip3 install --break-system-packages -r requirements.txt`
+2. Mac Mini llama.cpp up: **`e12b5`** in a Mac terminal (`e12b5 status` must say 5 slots x 16384):
+   `curl http://singireddys-mac-mini.local:8080/v1/models` must report
+   `"multimodal"` in capabilities (mmproj loaded) for look().
+3. `sudo systemctl restart langrobo-brain` → `curl localhost:8090/health`
+4. Check the boot log for `KV slot map (one per agent)` — a warning there
+   means the server has fewer slots than agents and every turn will pay
+   re-prefill. Fix the server, not the brain.
+5. Jetson: `./rover nav && ./rover vlm` in the perception repo. Without
+   `./rover vlm` there is no camera frame for `look()` and no depth grounding
+   for `approach_described_object`.
+6. Latency: `python3 scripts/latency_replay.py` — first-audio budget ≤2s warm.
+7. Clocks: Pi5↔Jetson must be chrony-peered (replay flags negative deltas otherwise).
+
+## Mac Mini LLM server
+
+**After every power-on, in a terminal on the Mac: `e12b5`** (owner, 2026-10-11: nothing autostarts).
+It asks the Mac password once, then runs a patched llama-server under launchd (restarted if it
+crashes); `e12b5 stop | status | log`. Source: `scripts/mac_mini/e12b5` (symlinked to
+`~/.local/bin/e12b5` on the Mac); every flag's reason is in its header.
+
+```bash
+# what e12b5 runs (GPU limit raised to 13312 MB first: sudo sysctl iogpu.wired_limit_mb=13312)
+~/llama.cpp-kino/build/bin/llama-server -m gemma-4-12B-it-Q4_K_M.gguf --mmproj mmproj-gemma-4-12B-it-Q8_0.gguf \
+    --host 0.0.0.0 --port 8080 -ngl 99 --parallel 5 --ctx-size 81920 -ub 512 \
+    --jinja --flash-attn on --reasoning off --cache-ram 0 --metrics
+```
+
+- **Patched llama.cpp** (`~/llama.cpp-kino`, b9830 + `scripts/mac_mini/llama_swa_cache.patch`,
+  rebuilt by `scripts/mac_mini/build_llama_kino.sh`): upstream re-reads every prompt shorter than
+  Gemma's 1024-token sliding window from scratch (photo questions 9-15 s instead of ~1 s).
+  docs/mac/LLAMA_CACHE_ISSUE.md §8. Homebrew's `llama-server` is the unpatched fallback.
+- **GPU limit 13 GB** of the 16: 5 slots at `-ub 512` don't fit macOS's default ~10.7 GB. The
+  server holds 10.8 GB (7.4 model + 3.4 cache, all reserved at start -- it doesn't grow).
+  Without the raise `e12b5` falls back to 5 x 12288 at `-ub 256` (smaller rewind margin, ~160).
+- **Screen off / locked / Terminal closed: still serving** (tested 2026-10-11, 0.9 s answer with the
+  display asleep): launchd owns the process and its `caffeinate -is` blocks system sleep. It stops
+  only on a power cut/reboot or a logout of the Mac user -- then `e12b5` again.
+- **No `--swa-full`**: on Gemma 4 it costs ~320 KB/token/slot -- ~20 GB for 5 x 12288. Not needed.
+- `--parallel 5` — one KV slot per agent, pinned by the brain: 0 chat,
+  1 local_agent, 2 navigate, 4 the voice "is this for me?" check (idle since 2026-10-12), and 3 = the vision-tool slot: photo questions, search views, locate, the arrival check (with fewer,
+  locate uses slot 1, and the boot log says so). The map is `registry.SLOTS`, declared
+  beside the agents; agent_node probes this server's real slot count at boot
+  and warns if it is smaller. See ARCHITECTURE_LLD.md §4.1.
+- `--jinja` — required for grammar-forced handover + streamed tool calls.
+- Prompt cache + context checkpoints give cross-restart KV reuse; slot pinning
+  is insurance on top.
+- **Reach it by mDNS name only, never a pinned IP** — DHCP moved the Mac
+  (.7 → .3, observed 2026-07-19); `singireddys-mac-mini.local` kept resolving.
+- **Outage signature** (2026-07-19, 16:26–17:28): every LLM call fails with
+  `APIConnectionError` and the journal shows "Primary LLM marked down for 60s",
+  while the network itself is fine. Cause = the Mac asleep
+  or llama-server not running. Brain self-recovers when the server returns —
+  no restart needed. Sleep is off on the Mac (`pmset sleep 0`); after a power cut
+  the server stays down until someone runs `e12b5` there.
+
+## Troubleshooting
+
+| Symptom | Likely cause → fix |
+|---|---|
+| Spoken "my brain server is offline" | Mac Mini down/unreachable → check server, or arm `LANGROBO_FALLBACK_*` |
+| Every turn slow (~20s before speech) | KV cache cold: the server started without `--parallel 5` (`e12b5 status`; `scripts/llm_cache_check.py`) (agents share slots and evict each other — the boot log says so), a clock in a prompt, or a mid-history mutation. See ARCHITECTURE_LLD.md §4 |
+| First reply after a change of agent slow (15-27 s; e.g. the turn after a vision question) | A slot's cache was lost. `python3 scripts/llm_cache_check.py` says PASS/FAIL in ~2 min (FAILED 2026-09-27, PASS since 2026-10-01). With PASS, set `LANGROBO_WARM_ALL=1` (on since 2026-10-01). Still slow on photo questions: a rewind > ~480 tokens drops the cache (CLAUDE.md rule 2), or the Mac runs unpatched Homebrew llama.cpp (prompts < 1024 tokens never cached: run `docs/mac/LLAMA_CACHE_ISSUE.md` §6's check) |
+| "I cannot see right now" | Frame >10s stale or absent. That topic is published by `phase4/nodes/image_bridge.py` **in the perception repo** — start it with `./rover vlm` on the Jetson. It also skips encoding entirely when nothing is subscribed, so check the brain is up before blaming the Jetson |
+| Vision turn slow (~60s end-to-end) | Measured 2026-07-19: router call ~43s + vision call ~16s on the Mac, sequential. `local_agent` is sticky, so the FOLLOW-UP question about the same scene skips the router; the first one still pays it |
+| Tool calls flaky / early stops | GGUF chat template mislabels control tokens → suspect the quant, and check the server has `--jinja` |
+| "I couldn't measure how far it is: ..." | `pixel_to_goal.py` isn't running on the Jetson (`./rover vlm`), or depth had a hole at that pixel — the sentence after the colon says which (`approach.DEPTH_FAIL_HELP`). "...no longer in view" = the photo's depth had expired and a fresh photo did not show it: it moved (a person walking off). "I drove over to where I saw..." first = the drive there did happen |
+| ESP32 not moving | `langrobo-microros` unit down, or ESP32 USB cable out (`ls /dev/serial/by-id/`), or rakhi24 not in `dialout` → `systemctl status langrobo-microros`, then power-cycle ESP32 |
+| DDS discovery fails Pi5↔Jetson | `ROS_DOMAIN_ID` mismatch, or a stray `ROS_DISCOVERY_SERVER` in the environment. **Prod is plain multicast since 2026-07-16** (the D555 is a raw DDS participant that discovery-server clients cannot see) — every prod script unsets `ROS_DISCOVERY_SERVER`; the old `langrobo-discovery` server is removed (NETWORKING.md). A client still pointed at a discovery server goes silently invisible to the Jetson |
+
+## Pi5 system record
+
+This machine (`rakhi24-desktop`) is headless (SSH only). The desktop GUI and
+unused daemons (cups, bluetooth, ModemManager, GUI stack) were disabled
+2026-07-02 to free RAM/CPU. Do **not** disable: `NetworkManager`,
+`wpa_supplicant`, `ssh`, `avahi-daemon` (mDNS hostname), `pipewire*` (audio),
+`dbus`/`polkit`. Reverse any change with `sudo systemctl enable --now <unit>`.
+
+## Known trade-offs (accepted)
+
+- Wake-word attention window (15s) can answer room chatter right after the
+  robot speaks — real fix is gaze attention (P2 face recognition).
+- Stop-spotter can miss a soft "stop" during the robot's own speech — real fix
+  is AEC hardware (P1 mic array).
+- `approach_described_object` costs a VLM round-trip (~10-40s) per look, and
+  a search sweep is up to five of them. The cheap alternative — a detector
+  streaming object positions the brain can look up in microseconds — needs
+  `/vision/detections_3d`, which nothing on the rover publishes yet
+  (INTEGRATION_GAPS.md §1).
+- The robot sees nothing below 10 cm, above 24 cm, outside 87°, or **downward
+  at all** — there is no drop-off detection. Autonomous runs need a human
+  watching. (Measured in the rover repo; it is a property of the D555 mount,
+  not of this code.)

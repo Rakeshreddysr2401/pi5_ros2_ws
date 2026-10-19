@@ -1,0 +1,783 @@
+import logging
+import math
+import os
+import time
+from typing import Annotated
+
+from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
+
+from ..utils import pose_stamp
+from . import _bridge
+
+logger = logging.getLogger(__name__)
+
+# ── Fine-movement Twist parameters (direct /cmd_vel, bypasses Nav2) ──────────
+#
+# UNITS. rover_firmware_v2.ino runs a closed-loop PI controller on each SIDE's
+# measured wheel velocity in SI m/s: it computes wL/wR = vx -/+ wz*0.34/2 and
+# PID-tracks them against the encoders. /cmd_vel is therefore genuinely SI — a command
+# of 0.20 m/s produces ~0.20 m/s, not "some PWM fraction".
+#
+# The constants here previously encoded the OPPOSITE assumption, inherited from
+# an older open-loop firmware: 0.28 m/s "= ~93% PWM" and a claimed physical
+# speed of 0.60 m/s. Against the closed-loop firmware that made every distance
+# wrong by the ratio of the two — move_robot("F:20") computed
+# 0.20/0.60 = 0.33 s of drive, which at the ACTUAL 0.28 m/s covers 9 cm, not
+# 20 cm. The rover repo measures the truth directly (OPERATIONS.md §2, the
+# teleop speed table): "forward / back | 0.20 m/s | 20 cm/s".
+#
+# TURN RATE — read this before changing it. The rover repo has measured this
+# chassis twice and the two numbers disagree, on purpose:
+#   * OPERATIONS.md §2  — a 2.0 rad/s pivot puts each wheel at 34 cm/s, which
+#     is OVER cuVSLAM's tracking limit: "expect jumps".
+#   * teleop_web.py     — at 2.0 rad/s (≈47% duty) the four tyres cannot break
+#     loose sideways at all, so a pivot command turns into a forward/backward
+#     CURVE. That is how an operator drove 10.7 m of "room loop" inside a 1.8 m
+#     box (2026-08-22). Teleop's fix was to raise its pivot to 5.0 rad/s, just
+#     under the 5.06 rad/s full authority, where both wheels reach opposite
+#     full duty and it pivots cleanly.
+# 2.8 rad/s sat in the worst band between the two: fast enough to disturb
+# cuVSLAM, too slow to actually pivot. The default now matches teleop's
+# proven-clean pivot, because a turn that silently curves is unbounded error
+# while a VO jump is at least visible in vo_z.
+#
+# EVERY value below is env-overridable so it can be re-calibrated on the robot
+# without a rebuild (logs/calibrate_rotation.py and `./rover compare` in the
+# rover repo produce the numbers).
+def _envf(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+# Commanded linear velocity, m/s. Keep at/below the rover's 0.22 m/s cap.
+_LINEAR_VEL_MS = _envf("LANGROBO_LINEAR_VEL_MS", 0.20)
+# Physical speed achieved at that command. Equal to the command because the
+# firmware closed-loop tracks it; re-measure with a tape if the PID is retuned.
+_PHYSICAL_VEL_MS = _envf("LANGROBO_PHYSICAL_VEL_MS", 0.20)
+# Commanded yaw rate, rad/s. 5.0 = teleop's clean pivot (see above).
+_ANGULAR_VEL_RS = _envf("LANGROBO_ANGULAR_VEL_RS", 5.0)
+# Yaw rate actually achieved at that command. Defaults to the command: the
+# firmware tracks WHEEL velocity exactly, and the wheel→yaw conversion is only
+# exact with no sideways scrub — which is precisely the regime a full-duty
+# pivot is chosen for. MEASURE IT (logs/calibrate_rotation.py) and set
+# LANGROBO_STEADY_ANGULAR_VEL if turns overshoot or undershoot.
+_STEADY_STATE_ANGULAR_VEL = _envf("LANGROBO_STEADY_ANGULAR_VEL", _ANGULAR_VEL_RS)
+_TURN_STARTUP_DELAY = _envf("LANGROBO_TURN_STARTUP_S", 0.0)  # ramp-up offset, s
+_CMD_BUFFER = 0.2    # extra sleep after each command (seconds)
+
+
+# ── Pan/tilt camera head — OFF by default, because it does not exist ────────
+#
+# set_pan_tilt() publishes /servo_pan and /servo_tilt. Nothing subscribes:
+# rover_firmware_v2.ino declares three subscriptions (/cmd_vel, /pid_gains,
+# /reset_odom) and no servos at all, and the micro-ROS entity caps are the
+# reason it is that short. So every head movement was a no-op that still cost
+# real time — ensure_head_centred() slept 0.8s and approach.py's search swept
+# three pan angles at 1.6s each, ~5.6s of dead air before every single
+# approach_object call, on hardware that cannot move.
+#
+# Set LANGROBO_PAN_TILT=1 once servos are wired and the firmware subscribes.
+# While it is off the pose-corruption problem the sweep guards against cannot
+# happen either — a head that never moves never skews the base pose.
+PAN_TILT_ENABLED = os.environ.get("LANGROBO_PAN_TILT", "0").strip().lower() not in (
+    "", "0", "false", "no", "off")
+
+
+# Camera-head recovery: vSLAM tracks the CAMERA and absorbs a head pan as
+# apparent base rotation (the camera is rigidly mounted, so vSLAM cannot tell
+# a panned head from a turned robot),
+# so while the head is off-centre the robot's own map pose reads rotated.
+# Anything that reads get_current_pose or sends a map goal must go through
+# ensure_head_centred first: re-centre the servos, then give the servo travel
+# + a few vSLAM frames to re-track before trusting the pose.
+_RECENTER_SETTLE_S = 0.8
+
+
+def ensure_head_centred(bridge) -> None:
+    """Re-centre the camera head (if panned/tilted) and wait for the base
+    pose to become trustworthy again. No-op when already centred, and no-op
+    entirely when there is no pan/tilt hardware (see PAN_TILT_ENABLED)."""
+    if not PAN_TILT_ENABLED:
+        return
+    pan, tilt = bridge.get_pan_tilt()
+    if abs(pan) > 1.0 or abs(tilt) > 1.0:
+        bridge.set_pan_tilt(0.0, 0.0)
+        time.sleep(_RECENTER_SETTLE_S)
+
+
+def _duration(cmd: str, val: float) -> float:
+    if cmd in ("F", "B"):
+        return (val / 100.0) / _PHYSICAL_VEL_MS   # cm → m
+    if cmd in ("L", "R"):
+        return (math.radians(val) / _STEADY_STATE_ANGULAR_VEL) + _TURN_STARTUP_DELAY
+    return 0.0
+
+
+def _drive_for_duration(bridge, twist, dur: float) -> bool:
+    """Publish twist periodically to feed the watchdog, with millisecond-precise stop timing.
+
+    Returns True if the move completed, False if it was interrupted (e.g. the user
+    spoke a new command / "stop"). Always leaves the wheels stopped.
+    """
+    from geometry_msgs.msg import Twist
+    start = time.time()
+    end = start + dur
+    last_pub = 0.0
+    interrupted = False
+    while True:
+        now = time.time()
+        if now >= end:
+            break
+        if bridge.motion_interrupted():
+            interrupted = True
+            break
+        # Publish at 20 Hz (every 50ms) to keep the watchdog fed
+        if now - last_pub >= 0.05:
+            bridge.publish_twist(twist)
+            last_pub = now
+        time.sleep(0.005)
+    bridge.publish_twist(Twist())
+    time.sleep(_CMD_BUFFER)
+    return not interrupted
+
+
+# ── Exact moves on the Jetson (rover repo INTELLIGENCE_PLAN.md B1) ──────────
+#
+# Every turn and short move now goes to the Jetson's goal_exec
+# (bridge.turn_by / drive_by): closed on fusion2's pose, outline-checked
+# against the LiDAR and depth before and during the move, refused with a
+# reason when something is in the way. The timed twist above is only the
+# FALLBACK for when goal_exec is not running (and Studio / tests, where the
+# StubBridge answers "unavailable"). Graded 2026-09-24, the timed 5 rad/s turn
+# slid 31-68 cm per 90 deg and once stalled 23 deg short while reporting done.
+_TURN_PIECE_DEG = 170.0   # goal_exec turns the short way round: longer turns go in pieces
+_DRIVE_PIECE_M = 1.0      # goal_exec hands anything past 1.5 m (with its runway) to nav2
+_TURN_DONE_DEG = 2.0      # goal_exec's own turn tolerance
+_DRIVE_DONE_M = 0.02
+
+
+def exact_turn(bridge, degrees: float) -> dict | None:
+    """Turn `degrees` (+ left) on goal_exec, in pieces of at most
+    _TURN_PIECE_DEG, each piece re-aimed on the MEASURED turn so far.
+    None = goal_exec unavailable before anything moved (fall back).
+    Otherwise the last piece's result, with turned_deg / moved_cm totalled."""
+    turned = moved = 0.0
+    res = None
+    for _ in range(4):                      # 360 deg is three pieces; one spare
+        left = degrees - turned
+        if abs(left) <= _TURN_DONE_DEG:
+            break
+        res = bridge.turn_by(max(-_TURN_PIECE_DEG, min(_TURN_PIECE_DEG, left)))
+        if res.get("result") == "unavailable" and turned == 0.0:
+            return None
+        turned += res.get("turned_deg", 0.0)
+        moved += res.get("moved_cm", 0.0)
+        if not res.get("ok"):
+            break
+    res = dict(res or {"ok": True, "result": "reached", "why": "already facing that way"})
+    res["turned_deg"], res["moved_cm"] = round(turned, 1), round(moved, 1)
+    return res
+
+
+def exact_drive(bridge, metres: float) -> dict | None:
+    """Drive straight `metres` (+ forward) on goal_exec, in pieces of at most
+    _DRIVE_PIECE_M. None = unavailable before anything moved (fall back)."""
+    done = 0.0
+    res = None
+    sign = 1.0 if metres >= 0 else -1.0
+    for _ in range(8):
+        left = abs(metres) - done
+        if left <= _DRIVE_DONE_M:
+            break
+        piece = min(_DRIVE_PIECE_M, left)
+        res = bridge.drive_by(sign * piece)
+        if res.get("result") == "unavailable" and done == 0.0:
+            return None
+        done += res.get("moved_cm", piece * 100.0) / 100.0
+        if not res.get("ok"):
+            break
+    res = dict(res or {"ok": True, "result": "reached", "why": ""})
+    res["moved_cm"] = round(done * 100.0, 1)
+    return res
+
+
+def turn_robot(bridge, degrees: float) -> tuple[bool, str]:
+    """Turn by `degrees` (+ left): exact on goal_exec, else the timed fallback.
+    (True, "") when done; (False, why) when it did not complete -- "interrupted"
+    means a new command stopped it."""
+    res = exact_turn(bridge, degrees)
+    if res is not None:
+        if res["ok"]:
+            return True, ""
+        if res["result"] == "interrupted":
+            return False, "interrupted"
+        return False, f"{res['result']}: {res.get('why', '')}".rstrip(": ")
+    from geometry_msgs.msg import Twist
+    twist = Twist()
+    twist.angular.z = math.copysign(_ANGULAR_VEL_RS, degrees)
+    if _drive_for_duration(bridge, twist, _duration("L", abs(degrees))):
+        return True, ""
+    return False, "interrupted"
+
+
+def _measured(cmd: str, res: dict) -> str:
+    """'L:90' -> 'L:90 (turned +89.4 deg, slid 5 cm)': what the pose says."""
+    if cmd in ("L", "R"):
+        return f"turned {res.get('turned_deg', 0.0):+.0f} deg, slid {res.get('moved_cm', 0.0):.0f} cm"
+    return f"moved {res.get('moved_cm', 0.0):.0f} cm"
+
+
+_TIMED_NOTE = (" (Timed and open-loop: the Jetson's exact-move node is not "
+               "running, so distances and angles are approximate.)")
+
+
+# How many steps one move_robot call may carry. A sequence runs BLIND -- nothing
+# re-plans between steps -- so this is a safety bound, not a parser limit. Real
+# requests ("forward, left, forward") are two to four steps.
+_MAX_SEQUENCE_STEPS = 6
+
+
+def _parse_step(step: str) -> tuple[str, float]:
+    """One 'F:60' -> ('F', 60.0). Raises ValueError with a message worth showing.
+
+    Every rejection here used to be a silent success. An unknown direction left
+    the Twist at zero, `dur` at 0.0, and returned "Movement done" for a move that
+    never happened. A negative value made `_duration()` negative, which skipped
+    the timed drive and published a twist NOBODY EVER STOPPED -- the wheels ran
+    on until the 500 ms watchdog caught them.
+    """
+    parts = step.strip().upper().split(":")
+    cmd = parts[0].strip()
+    if cmd not in ("F", "B", "L", "R", "S"):
+        raise ValueError(f"unknown direction {cmd!r} in {step.strip()!r}")
+    if cmd == "S":
+        return cmd, 0.0
+    if len(parts) < 2 or not parts[1].strip():
+        raise ValueError(f"{cmd} needs a value, e.g. {cmd}:20")
+    try:
+        val = float(parts[1])
+    except ValueError:
+        raise ValueError(f"{parts[1].strip()!r} is not a number in {step.strip()!r}")
+    if val < 0:
+        raise ValueError(
+            f"negative value in {step.strip()!r} -- use B: to go back, R: to turn right")
+    return cmd, val
+
+
+def _label(cmd: str, val: float) -> str:
+    return cmd if cmd == "S" else f"{cmd}:{val:g}"
+
+
+# Appended to every tool result that MOVED the robot.
+#
+# WHY THIS IS A STRING AND NOT A HISTORY EDIT. The obvious fix -- strip stale
+# images when the base moves -- breaks the APPEND-ONLY cache invariant at the
+# top of utils/message_utils.py: an image present in turn N and gone in turn N+1
+# diverges the cached prompt prefix and re-prefills everything after it. (The
+# cost is the text that REMAINS after the removed image, so removing the newest
+# frame is cheaper than 86e0b08 claimed and removing one with another image
+# after it is far worse -- but it is unmeasured on this stack, and stamping is
+# free, so it stays untried. PERCEPTION_STATE.md in the rover repo has the
+# reasoning.)
+#
+# THIS NOTE IS THE SECOND SIGNAL, NOT THE FIRST. On its own it lost: it is one
+# sentence in a ToolMessage, written during a `navigate` turn, competing with a
+# numbered rule in local_agent's own system prompt telling it not to look again.
+# The first signal is now the pose stamp on the frame itself and on every user
+# turn (utils/pose_stamp) -- data the model compares rather than an instruction
+# it has to obey. This note stays because it is nearly free and it reaches the
+# model at the exact moment the movement is reported.
+_VIEW_STALE_NOTE = (
+    " The robot has MOVED, so the camera view has changed: any photo earlier in "
+    "this conversation shows where it used to be. Do not answer questions about "
+    "the surroundings from it -- call look() for a fresh view first."
+)
+
+
+def view_stale_note() -> str:
+    """_VIEW_STALE_NOTE, plus the measured displacement when it is knowable.
+
+    A number the model can check against the frame's own stamp is worth more
+    than an adjective: "0.90 m and 180 degrees from where that photo was taken"
+    lines up with the pose in the label, and "the view has changed" does not.
+
+    Degrades to the bare sentence whenever the distance cannot be measured --
+    no look() yet this conversation, or TF has no odom->base_link fix. It never
+    returns "", so a move always says something about the view.
+    """
+    last, _ = pose_stamp.last_view()
+    if last is None:
+        return _VIEW_STALE_NOTE
+    try:
+        now = _bridge.get().get_current_pose()
+    except Exception:
+        # A tool result must not fail because telemetry did. The note is the
+        # point; the measurement is a bonus.
+        return _VIEW_STALE_NOTE
+    moved = pose_stamp.describe_delta(last, now)
+    if not moved:
+        return _VIEW_STALE_NOTE
+    return (_VIEW_STALE_NOTE +
+            f" It is now {moved} from where that photo was taken.")
+
+
+def _moved(steps: list) -> bool:
+    """True if any step actually drove the base. A lone 'S' moves nothing."""
+    return any(cmd != "S" for cmd, _ in steps)
+
+
+def _report_partial(labels: list, at: int, why: str, moved: bool = True) -> str:
+    """One honest sentence about a sequence that did not finish.
+
+    The bug this exists for: move_robot ran step 1 of "forward 60, left, forward
+    30", the model said "I have moved forward sixty centimetres", and nothing
+    anywhere mentioned the two steps that never happened.
+    """
+    done = ", ".join(labels[:at]) if at else "nothing"
+    rest = ", ".join(labels[at:])
+    msg = (f"Movement {why} {labels[at]} -- completed: {done}; "
+           f"did NOT run: {rest}. The robot is stopped.")
+    # `moved` comes from the caller, which knows the parsed steps. It is NOT
+    # `at > 0`: a sequence interrupted DURING its first step still drove the
+    # base part of the way, and "completed: nothing" would have hidden that.
+    return msg + (view_stale_note() if moved else "")
+
+
+@tool
+def move_robot(command: str,
+               state: Annotated[dict | None, InjectedState] = None) -> str:
+    """Exact turns and short straight moves, closed on the measured pose.
+
+    Use for fine adjustments - aligning, nudging, turning by an angle.
+    Do NOT use for room-to-room navigation - use navigate_to_pose() instead.
+
+    Format - DIRECTION:VALUE  or  'S' to stop:
+      F:20   forward 20 cm
+      B:10   backward 10 cm
+      L:90   rotate left 90 degrees
+      R:45   rotate right 45 degrees
+      S      stop immediately
+
+    For several movements, put them ALL in ONE call, comma-separated. They run
+    in order, and the reply says exactly which ones completed:
+      F:60,L:90,F:30   forward 60 cm, then turn left 90 deg, then forward 30 cm
+    """
+    bridge = _bridge.get()
+
+    raw = [s for s in command.split(",") if s.strip()]
+    if not raw:
+        return "No movement command given -- expected e.g. F:20, or F:60,L:90,F:30."
+    if len(raw) > _MAX_SEQUENCE_STEPS:
+        return (f"Too many steps ({len(raw)}) -- {_MAX_SEQUENCE_STEPS} is the most "
+                f"one command may carry, because a sequence runs without looking. "
+                f"Nothing was moved; send fewer steps.")
+
+    # Parse the WHOLE sequence before moving anything. A bad step 3 must not
+    # leave the robot stopped halfway through a move the user believes never
+    # started.
+    try:
+        steps = [_parse_step(s) for s in raw]
+    except ValueError as e:
+        return f"Bad movement command ({e}). Nothing was moved."
+
+    # MANUAL zeroes /cmd_vel at 10 Hz: an exact move then stalls against it
+    # and a timed one reports "done" having gone nowhere. A pure stop ("S")
+    # is what MANUAL does anyway, so only a step that moves is refused.
+    if any(c != "S" for c, _ in steps):
+        refusal = blocked_by_role(state) or blocked_by_manual()
+        if refusal:
+            return refusal
+
+    labels = [_label(c, v) for c, v in steps]
+    bridge.clear_motion_stop()   # this is a deliberate move - start with a clean slate
+
+    from geometry_msgs.msg import Twist
+    measured = []                # what the pose says each exact step did
+    timed = False
+    for i, (cmd, val) in enumerate(steps):
+        # Exact first (goal_exec on the Jetson); None = not running -> timed.
+        res = None
+        if cmd in ("L", "R"):
+            res = exact_turn(bridge, val if cmd == "L" else -val)
+        elif cmd in ("F", "B"):
+            res = exact_drive(bridge, (val if cmd == "F" else -val) / 100.0)
+        if res is not None:
+            if res["ok"]:
+                measured.append(f"{labels[i]} ({_measured(cmd, res)})")
+                continue
+            if res["result"] == "interrupted":
+                return _report_partial(labels, i, "interrupted during",
+                                       moved=_moved(steps[:i + 1]))
+            # Refused (something in the way), stalled, pose unsure...: say
+            # which, why, and how far it got -- then stop the sequence, since
+            # every later step was planned from where this one should have ended.
+            return _report_partial(
+                labels, i, f"{res['result']} ({res.get('why', '')}; {_measured(cmd, res)}) at",
+                moved=_moved(steps[:i]) or res.get("moved_cm", 0) > 1
+                or abs(res.get("turned_deg", 0)) > 2)
+
+        timed = timed or cmd != "S"
+        twist = Twist()
+        if cmd == "F":
+            twist.linear.x = _LINEAR_VEL_MS
+        elif cmd == "B":
+            twist.linear.x = -_LINEAR_VEL_MS
+        elif cmd == "L":
+            twist.angular.z = _ANGULAR_VEL_RS
+        elif cmd == "R":
+            twist.angular.z = -_ANGULAR_VEL_RS
+        elif cmd == "S":
+            pass  # zero Twist = stop
+
+        dur = _duration(cmd, val)
+        if dur > 0:
+            if not _drive_for_duration(bridge, twist, dur):
+                # Name what did NOT happen. Reporting only the finished steps is
+                # exactly how a truncated sequence reads as a completed one.
+                return _report_partial(labels, i, "interrupted during",
+                                       moved=_moved(steps[:i + 1]))
+        else:
+            bridge.publish_twist(twist)
+
+        if cmd == "S" and i + 1 < len(steps):
+            # An explicit stop ends the sequence. Carrying on would be the exact
+            # opposite of what the word means.
+            return _report_partial(labels, i + 1, "stopped before",
+                                   moved=_moved(steps[:i + 1]))
+
+    out = "Movement done: " + ", ".join(labels)
+    if measured:
+        out += ". Measured: " + ", ".join(measured) + "."
+    if timed:
+        out += _TIMED_NOTE
+    return out + (view_stale_note() if _moved(steps) else "")
+
+
+# Origin of the most recent navigate_to_pose request. The Nav2 result lands
+# minutes later as a [SYSTEM] turn whose default reply sink is the speaker;
+# when the request came from Telegram the completion report must be routed
+# back to that chat instead — agent_node._on_nav_done reads this to build
+# the routing hint (same pattern as errand-reply forwarding).
+_last_nav_requester: dict | None = None
+
+
+def get_last_nav_requester() -> dict | None:
+    return _last_nav_requester
+
+
+def remember_requester(state: dict | None, then: str = "", target: str = "") -> None:
+    """Who asked for the drive that is starting, and what to do when it ends
+    ("then": "tell the user what is on the box"), and -- for a drive to an
+    object -- what it is ("target"), so arrival can check it is really there.
+    The role travels too: the arrival turn acts as the person who asked.
+    One drive at a time: a new one replaces the old requester and its errand."""
+    global _last_nav_requester
+    state = state or {}
+    _last_nav_requester = {
+        "channel": state.get("channel") or "voice",
+        "sender": state.get("sender_name") or "voice",
+        "role": state.get("sender_role"),
+        "then": (then or "").strip() or None,
+        "target": (target or "").strip() or None,
+        # The LangGraph thread that asked: Studio posts the arrival report back
+        # into it (graph_studio.py). None under agent_node, which has one history.
+        "thread_id": _current_thread_id(),
+    }
+
+
+def _current_thread_id() -> str | None:
+    try:
+        from langgraph.config import get_config
+        return (get_config().get("configurable") or {}).get("thread_id")
+    except Exception:            # outside a graph run (tests, a bare call)
+        return None
+
+
+def nav_report(success: bool, message: str) -> dict:
+    """The [SYSTEM] turn that reports a finished drive, for whichever process
+    ran it -- agent_node queues it, Studio posts it into the asking thread.
+
+    {"text", "check": (target, index) | None -- run approach.arrival_check for
+    target and insert its sentence at index, "quiet", "sender": (name, role) |
+    None, "requester", "photo_note"}.
+
+    A system turn replies to the speaker by default; when the navigation was
+    requested over Telegram the report belongs in that chat, so the turn
+    carries an explicit routing instruction."""
+    status = "Navigation succeeded" if success else "Navigation failed"
+    req = get_last_nav_requester() or {}
+    telegram = req.get("channel") == "telegram"
+    routing = ""
+    if telegram:
+        routing = (f" (This navigation was requested by {req.get('sender')} "
+                   f"over Telegram — send this report to them with "
+                   f"send_telegram_message instead of saying it aloud.)")
+    # A photo asked for mid-drive is sent HERE, by code, on arrival (and
+    # dropped on failure); the note stops the model sending a second one.
+    from .telegram import send_pending_photo
+    photo_note = send_pending_photo(success)
+    if photo_note:
+        routing += f" ({photo_note})"
+    # Is the object really there? approach.arrival_check, one fresh photo,
+    # 5-15 s -- run by the caller when it processes the turn, not here: run
+    # in the nav callback it held the report back, and a message that came in
+    # meanwhile was answered first (Telegram 2026-10-02).
+    check = req.get("target") if success else None
+    # The errand that came with the drive ("...and tell me what is on it").
+    task_note = arrival_task_note(success, message)
+    head = f"[SYSTEM] {status}: {message}"
+    return {
+        "text": f"{head}{task_note}{routing}",
+        "check": (check, len(head)) if check else None,
+        # Routed to Telegram = QUIET: the report goes to the phone, and nothing
+        # of this turn reaches the speaker (2026-09-27).
+        "quiet": telegram,
+        "sender": (req.get("sender"), req.get("role")) if telegram else None,
+        "requester": req,
+        "photo_note": photo_note,
+    }
+
+
+def arrival_task_note(success: bool, message: str) -> str:
+    """The errand of the drive that just ended, as text for its [SYSTEM]
+    report -- "" if it had none. Used once: a second report never repeats it.
+
+    Before this, "go to the box and tell me what is on it" lost its second
+    half: the drive starts in the background, the turn ends, and the arrival
+    turn knew only "I've arrived" (2026-10-02). Now:
+      arrived    -> do it now (it is the user's request, not a new one)
+      failed     -> say it was NOT done -- never pretend
+      cancelled  -> nothing: a new command stopped the drive, the user moved on
+    """
+    req = _last_nav_requester or {}
+    then = (req.get("then") or "").strip()
+    if not then:
+        return ""
+    req["then"] = None
+    if success:
+        return (f" You were asked to do this on arrival: {then}. Do it now -- it is "
+                f"part of the user's request, not a new one.")
+    if "cancelled" in (message or "").lower():
+        return ""
+    return (f" You were also asked to do this on arrival: {then}. It was NOT done, "
+            f"because you did not get there -- say so.")
+
+
+# ── Teleop MANUAL guard ─────────────────────────────────────────────────────
+#
+# teleop_web.py holds a MANUAL/AUTO switch. In MANUAL it publishes zeros to
+# /cmd_vel at 10 Hz, which cancel out everything Nav2 sends: the rover sits
+# still, Nav2 eventually aborts, and it looks exactly like a controller or
+# planner fault. On 2026-09-10 a user left it in MANUAL, asked the robot to
+# drive, got "On my way", and nothing moved -- and the model then claimed it
+# had "switched back to automatic mode", which it cannot do and did not do.
+#
+# So: read the switch before promising to drive, and never claim to have
+# changed it. Only the phone page or /mode?manual=off can change it.
+_TELEOP_MODE_URL = os.environ.get("LANGROBO_TELEOP_MODE_URL",
+                                  "http://127.0.0.1:8091/mode")
+_TELEOP_TIMEOUT_S = 0.7    # a slow teleop must never stall a conversation turn
+
+
+def teleop_is_manual() -> bool | None:
+    """True if teleop holds MANUAL, False if AUTO, None if it cannot be read.
+
+    None is deliberately distinct from False: "the switch says AUTO" and "I
+    could not find the switch" must not lead to the same message."""
+    try:
+        import json as _json
+        import urllib.request
+        with urllib.request.urlopen(_TELEOP_MODE_URL,
+                                    timeout=_TELEOP_TIMEOUT_S) as r:
+            return bool(_json.load(r).get("manual"))
+    except Exception:
+        return None
+
+
+_MANUAL_REFUSAL = (
+    "I can't drive right now — the teleop switch is in MANUAL, so it is "
+    "publishing stop commands that cancel everything Nav2 sends. Nothing I do "
+    "can override that and I cannot change the switch myself. Set it to AUTO "
+    "on the teleop page (the phone page on port 8091), then ask me again."
+)
+
+
+class ManualWatch:
+    """Stops the brain's motion the moment the teleop switch goes to MANUAL.
+
+    blocked_by_manual() is checked once, when a tool starts. Flipping MANUAL
+    MID-move is how a person grabs control, and nothing told the brain: a
+    6-step scan or an 8-view search kept issuing turns against teleop's
+    zeros, and a reach drive retried against them for up to 5 minutes, then
+    reported a failure instead of "stopped" (2026-09-27: a "look around"
+    turn went ~120 deg before MANUAL stopped it, and the brain never knew).
+    On the edge INTO manual this does what a new utterance does: cancel the
+    drive and interrupt the blocking tool. agent_node polls it on a thread.
+    """
+
+    def __init__(self, bridge, probe=None):
+        self._bridge = bridge
+        self._probe = probe or teleop_is_manual
+        self._last = None
+
+    def poll(self) -> bool:
+        """One look at the switch. True when it has just gone to MANUAL (and
+        the motion was stopped). Unreadable teleop is not a change."""
+        now = self._probe()
+        if now is None:
+            return False
+        edge = now is True and self._last is False
+        self._last = now
+        if edge:
+            self._bridge.cancel_navigation()
+            self._bridge.request_motion_stop()
+        return edge
+
+
+def blocked_by_role(state: dict | None) -> str | None:
+    """The refusal if this turn's sender may not drive, else None.
+
+    permissions.CAP_MOVE existed and nothing checked it: any allowlisted
+    Telegram member -- family, guest -- could send the robot around the house.
+    Enforced here, in the tools, like every capability (a prompt can be
+    talked round). Voice and Studio turns carry no role and act as the owner
+    (permissions.VOICE_ROLE). Stopping is never refused -- callers skip this
+    for a pure stop."""
+    from ..services import permissions
+    state = state or {}
+    role = state.get("sender_role") or permissions.VOICE_ROLE
+    if permissions.has_capability(role, permissions.CAP_MOVE):
+        return None
+    who = state.get("sender_name") or "this sender"
+    logger.info("AUDIT capability=move sender=%s role=%s outcome=denied", who, role)
+    return (f"Permission denied: {who} ({role}) is not allowed to move the robot. "
+            f"Politely refuse; stopping it is always allowed, and the owner can "
+            f"ask for the move.")
+
+
+def blocked_by_manual() -> str | None:
+    """The refusal message if teleop is in MANUAL, else None.
+
+    Unreachable teleop returns None -- driving is allowed. A teleop that is
+    down is not publishing the zeros that cause the problem, so refusing then
+    would ground the robot for the wrong reason."""
+    return _MANUAL_REFUSAL if teleop_is_manual() is True else None
+
+
+@tool
+def navigate_to_pose(location: str,
+                     state: Annotated[dict, InjectedState],
+                     then: str = "") -> str:
+    """Send the robot to a saved named location. Nav2 plans the route and
+    avoids obstacles on the way.
+
+    then: what to do on ARRIVAL, if the user asked for more than the drive
+    ("go to the kitchen and tell me what is on the table" -> then="tell the
+    user what is on the table"). It is done automatically when the robot gets
+    there; do not do it now. Leave empty for a plain drive.
+
+    Use for places saved with save_location (e.g. 'kitchen', once someone has
+    saved it there). Call list_saved_locations if you are not sure a name
+    exists. For something the user describes rather than names ("the red
+    bottle"), use approach_described_object instead.
+
+    Returns immediately — the robot drives in the background. A system message
+    arrives when it gets there, or fails."""
+    refusal = blocked_by_role(state) or blocked_by_manual()
+    if refusal:
+        return refusal
+
+    bridge = _bridge.get()
+    ensure_head_centred(bridge)   # a panned head skews Nav2's start pose
+
+    known = bridge.get_known_locations()
+    loc = location.lower().strip()
+
+    if loc not in known:
+        if not known:
+            return (f"I don't know where '{location}' is: no places are saved yet. "
+                    f"Drive me there and say 'save this location as {loc}'.")
+        return f"Unknown location '{location}'. Available: {', '.join(known.keys())}"
+
+    remember_requester(state, then)
+
+    x, y, yaw_deg = known[loc]
+    bridge.start_nav_to_pose(x, y, yaw_deg, label=loc)
+    return (f"Navigation started: heading to '{location}' ({x:.1f}, {y:.1f}). "
+            f"I will report when I arrive." + view_stale_note())
+
+
+@tool
+def save_location(name: str,
+                  state: Annotated[dict | None, InjectedState] = None) -> str:
+    """Save the robot's CURRENT position under a name, so the user can send the
+    robot back later with navigate_to_pose(name). Use when the user says
+    "remember this spot as X", "save this location as the charging dock", etc.
+
+    Good for the rest of this power-on. It's written to disk and reloaded on
+    a restart too, but only stays usable if the robot's odom origin is still
+    the same one it was saved under — a container restart, a re-run of the
+    pose layer, or a cuVSLAM divergence recovery all start a fresh origin,
+    which silently retires every location saved before it (list_saved_locations
+    will just stop naming it). Re-save it once that happens.
+
+    name: short lowercase identifier, e.g. 'table_5' or 'charging_dock'."""
+    refusal = blocked_by_role(state)      # it changes where the robot can be sent
+    if refusal:
+        return refusal
+    bridge = _bridge.get()
+    ensure_head_centred(bridge)   # a panned head would save a rotated pose
+    pose = bridge.get_current_pose()
+    if pose is None:
+        return ("I can't determine my position right now — localisation isn't "
+                "giving me a fix, so I can't save this spot.")
+    x, y, yaw = pose
+    key = name.lower().strip().replace(" ", "_")
+    bridge.add_known_location(key, round(x, 2), round(y, 2), round(yaw, 1))
+    return (f"Saved my current position ({x:.2f}, {y:.2f}, facing {yaw:.0f}°) as "
+            f"'{key}'. Say the word and I can navigate back to it anytime.")
+
+
+# The mono visual-servoing approach (navigate_to_visible_object) lived here.
+# It drove the wheels off the Jetson target_node's /vision/target_result, which
+# nothing on this rover publishes, so it could only ever hold still for 6s and
+# report a dead camera. approach_described_object in tools/approach.py replaces
+# it with the VLM + real depth, and unlike the servo loop it goes through Nav2,
+# so it avoids obstacles instead of driving straight at the target.
+
+
+_PAN_MIN_DEG, _PAN_MAX_DEG = -90.0, 90.0
+_TILT_MIN_DEG, _TILT_MAX_DEG = -30.0, 30.0
+
+
+@tool
+def point_camera(pan_deg: float = 0.0, tilt_deg: float = 0.0,
+                 state: Annotated[dict | None, InjectedState] = None) -> str:
+    """Point the robot's camera using its pan-tilt mount (2 servos).
+
+    pan_deg: horizontal angle, -90 (full left) .. 90 (full right), 0 = forward.
+    tilt_deg: vertical angle, -30 (down) .. 30 (up), 0 = level.
+
+    Use for "look left/right/up/down", "look at the door", or to sweep the
+    camera without moving the wheels. Drives the ESP32 pan/tilt servos
+    (/servo_pan, /servo_tilt); if the mount isn't installed yet nothing moves —
+    say so rather than claiming it worked."""
+    refusal = blocked_by_role(state)
+    if refusal:
+        return refusal
+    if not PAN_TILT_ENABLED:
+        # Say so instead of reporting a move that physically cannot happen —
+        # the docstring already promises this, but the code used to claim
+        # success regardless (see PAN_TILT_ENABLED for why nothing listens).
+        return ("I don't have a pan-tilt camera mount fitted, so I can't turn "
+                "my head. Tell the user, and offer to turn the whole robot "
+                "instead.")
+    pan = max(_PAN_MIN_DEG, min(_PAN_MAX_DEG, pan_deg))
+    tilt = max(_TILT_MIN_DEG, min(_TILT_MAX_DEG, tilt_deg))
+    clamped = (pan != pan_deg) or (tilt != tilt_deg)
+    _bridge.get().set_pan_tilt(pan, tilt)
+    note = " (clamped to valid range)" if clamped else ""
+    return f"Camera pointed: pan={pan:.0f}°, tilt={tilt:.0f}°{note}"

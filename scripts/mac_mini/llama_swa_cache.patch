@@ -1,0 +1,16 @@
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index bb1c236..452467f 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -3285,7 +3285,10 @@ private:
+                                     SLT_WRN(slot, "%s\n", st1.str().c_str());
+                                 }
+ 
+-                                if (pos_min >= pos_min_thold) {
++                                // KINO PATCH: pos_min == 0 = the slot still holds every position from 0 (nothing slid out of
++                                // the SWA window), so the cache is usable as-is. Upstream `>=` sent every prompt shorter than
++                                // n_swa (1024 on Gemma) to the checkpoint search, which restored a 1-token checkpoint.
++                                if (pos_min > 0 && pos_min >= pos_min_thold) {
+                                     // search for a context checkpoint
+                                     const auto it = std::find_if(
+                                         slot.prompt.checkpoints.rbegin(),

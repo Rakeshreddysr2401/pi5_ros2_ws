@@ -1,0 +1,102 @@
+# Telegram Channel — Setup & Usage Guide
+
+Chat with Kino from anywhere: text or photos in, text or photos back, from
+the same brain that answers voice in the living room. This is the household
+setup guide; the turn walkthrough is HOW_IT_WORKS.md §4b, the internals
+`services/telegram.py` + `tools/telegram.py`, and the env reference OPERATIONS.md.
+
+Your phone number is never involved — it only logs you into the Telegram app.
+The robot connects as a **bot** with its own token.
+
+## Setup (once, ~5 minutes)
+
+
+1. **Create the bot**: in Telegram, chat with **@BotFather** → `/newbot` →
+   pick a display name (`Kino`) and a unique username ending in `bot`
+   (`RakhiHomeBot`). BotFather returns a **token** (`7123456789:AAHfQx…`).
+   Treat it like a password — anyone holding it can impersonate the bot.
+2. **Get each member's chat_id**: everyone messages **@userinfobot** once and
+   notes the `Id` it replies with.
+3. **Unlock the chat**: everyone opens the bot's chat and sends it one
+   message ("hi"). Telegram forbids bots from initiating conversations —
+   one message unlocks replies forever. Skip this and the robot's sends fail.
+4. **Configure** `.env` on the Pi5 (`~/ros2_ws/.env`):
+
+   ```bash
+   LANGROBO_TELEGRAM_TOKEN=7123456789:AAHfQx...
+   LANGROBO_TELEGRAM_ALLOWLIST=1234567890:Rakesh:owner,9876543210:Mom:family
+   # optional — hold proactive pings overnight:
+   LANGROBO_QUIET_HOURS=23:00-07:00
+   ```
+
+5. **Restart**: `colcon build --symlink-install && sudo systemctl restart langrobo-brain`,
+   then check `curl -s localhost:8090/status | jq .telegram` → `"polling": true`.
+
+The channel stays completely off until BOTH token and allowlist are set.
+Anyone not on the allowlist is ignored silently — the bot never talks to
+strangers, even though its username is publicly searchable.
+
+## Roles — who may do what
+
+| Capability | owner | family | guest |
+|---|---|---|---|
+| Chat, questions, web search | ✅ | ✅ | ✅ |
+| Relay messages ("tell Rakesh…") | ✅ | ✅ | ❌ |
+| Request camera photos | ✅ | ❌ | ❌ |
+| Move the robot | ✅ | ❌ | ❌ |
+| Stop the robot ("stop", `S`) | ✅ | ✅ | ✅ |
+
+The four capabilities are the whole set — `services/permissions.py` is 40
+lines and is the only place they are defined. Announce-aloud, home watch,
+document ingest and food ordering were capabilities of agents this build no
+longer has.
+
+Checks are enforced inside the tools (`langrobo_core/services/permissions.py`),
+not just prompts — a refusal offers to ask the owner instead. Voice has no
+speaker identity yet, so spoken commands act as owner. Every privileged send
+is logged: `journalctl -u langrobo-brain -o cat | grep "AUDIT telegram"`.
+
+**Moving was not enforced until 2026-09-29.** `CAP_MOVE` was defined and no
+tool checked it, so any allowlisted member could drive the robot. Now every
+tool that moves it -- `move_robot`, `navigate_to_pose`,
+`approach_described_object`, `scan_surroundings`, `save_location`,
+`point_camera` -- refuses a sender without it (`movement.blocked_by_role`;
+refusals log `AUDIT capability=move`). A pure stop is never refused.
+
+Still open, the owner's call: asking "what do you see?" is chat, not a photo,
+so family and guests get the camera's view **described in words**.
+
+## What you can do
+
+- **Chat from anywhere** — "is anyone home?", "what's the weather?" Same
+  agents, same tools as voice.
+- **Get a photo** — "send me a pic of the room" (owner only; taken from where
+  the robot currently stands — ask it to drive somewhere first if you want a
+  different view). "me", "Boss" or "the owner" as the recipient is whoever
+  asked (by voice or Studio: the one owner). An unknown name comes back as
+  "NOT sent", never as a sent photo (2026-10-04).
+- **Send a photo** — attach a picture (+ optional caption question); the
+  multimodal model actually sees it.
+- **Relay by voice** — say "Kino, tell Mom I'll be late" → lands on Mom's
+  phone as a Telegram message.
+- **Drive it** — "go to the kitchen", "go to the red bottle" (owner only).
+  The reply comes back immediately; **arrival is reported to your chat later**,
+  because the brain remembers which channel asked for the drive.
+- **Proactive pings** — navigation arrival and failure reach your phone the
+  same way; during quiet hours they queue and send afterwards (direct replies
+  to you are never held).
+
+## Limits & troubleshooting
+
+- Texts are answered one at a time behind voice turns — the person in the
+  room always wins. Flooding is capped at 10 messages/min per sender.
+- Messages sent while the robot was off are answered at boot (the getUpdates
+  offset persists in `~/.langrobo/telegram_offset`).
+- Voice notes, stickers, documents → "I can only read text and photos for now."
+- Bot never replies? Check allowlist chat_id, confirm you messaged the bot
+  once, then `jq .telegram` on `/status` — `last_error` says what's wrong.
+- Replies say "Telegram isn't set up"? Token or allowlist missing/malformed —
+  the startup log's `Settings:` line shows `telegram=off` vs member count.
+- Only ONE poller may run per token: if you also start the brain elsewhere
+  (e.g. a second Pi or a tinkering session), the two steal each other's
+  updates. Studio (`langgraph dev`) is safe — it sends but never polls.

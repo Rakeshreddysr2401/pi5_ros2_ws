@@ -1,0 +1,1309 @@
+"""Agent node — thin ROS2 entry point.
+
+Responsibilities (and nothing more):
+  1. Declare / read ROS2 parameters
+  2. Create ROS2Bridge and wire all subscriptions
+  3. Inject bridge + LLM config + services into langrobo_core
+  4. Build the LangGraph graph
+  5. Run a worker thread that drains the input queue and invokes the graph
+  6. Manage conversation history and multimodal user messages
+
+Everything else (graph, agents, tools, services) is langrobo_core — pure
+Python, no rclpy — so it runs and tests on any machine.
+"""
+
+import json
+import os
+import time
+import threading
+from contextlib import contextmanager
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Bool, String
+
+from dotenv import load_dotenv
+
+# Before ANY langrobo_core import: some settings are read when a module is
+# imported (tools/web.py builds tavily_search only if TAVILY_API_KEY is set
+# then). Loaded only in __init__, the key arrived after the tools were built,
+# and web search was silently off in every systemd run (found 2026-10-02).
+# __init__ loads it again (same file; already-set values are kept).
+load_dotenv(os.path.expanduser(os.getenv("LANGROBO_ENV_FILE", "~/ros2_ws/.env")))
+
+from langrobo_core.services import config as config_service
+from langrobo_core.services import health as health_service
+from langrobo_core.services import llm as llm_module
+from langrobo_core.services import metrics
+from langrobo_core.services import telegram as telegram_service
+from langrobo_core.services.logging import new_trace, setup_logging
+from langrobo_core.tools import _bridge as bridge_module
+from langrobo_core import registry
+from langrobo_core.services import jev
+from langrobo_core import routing as intent_routing
+from langrobo_core.services import embedder
+from langrobo_core.services import memory as memory_store
+from langrobo_core.graph import build_graph
+from langrobo_core.utils import timing
+from langrobo_core.utils import pose_stamp
+from langrobo_core.utils.history import trim_history
+from langrobo_core.utils.utterance import join_utterances, looks_incomplete
+from langrobo_core.utils.speech_stream import SPEECH_ABANDON, SpeechStreamHandler, is_silent
+from langrobo_core.utils import addressing, tool_speech
+from langrobo_core.tools import MOTION_TOOL_NAMES
+from langrobo_core.utils.stop_words import keeps_moving
+
+# A warm turn speaks within ~1.5s; 6s means the LLM is cold or unreachable.
+SLOW_TURN_CUE_S = 6.0
+
+from .ros2_bridge import ROS2Bridge
+
+
+class AgentNode(Node):
+
+    def __init__(self):
+        super().__init__("agent_node")
+
+        # ── Environment + services config (fail fast on malformed values) ──
+        load_dotenv(os.path.expanduser(os.getenv("LANGROBO_ENV_FILE", "~/ros2_ws/.env")))
+        config_service.sanitize_tracing_env()
+        settings = config_service.load_settings()
+        setup_logging(json_format=settings.log_json)
+
+        # ── Parameters ────────────────────────────────────────────────────
+        self.declare_parameter("provider",   "llamacpp")
+        self.declare_parameter("model",      "default")
+        self.declare_parameter("api_key_env", "")
+        self.declare_parameter("base_url",   "http://singireddys-mac-mini.local:8080/v1")
+        # Same values as agent_params.yaml (which explains them), so a node
+        # started without that file is not the one with a ~5 min runaway cap.
+        self.declare_parameter("max_tokens", 600)
+        self.declare_parameter("history_turns", 12)
+        # A natural mid-thought pause outlasts the VAD's 600ms end-silence, so
+        # one sentence arrives as two utterances. Within this window a second
+        # utterance CONTINUES the first instead of replacing it — replacing
+        # silently discarded the first half ("I want you to" + "go to the
+        # kitchen" reached the graph as just "go to the kitchen"). 0 disables.
+        self.declare_parameter("utterance_merge_window_s", 1.2)
+        self.declare_parameter("use_vision",  True)
+        # Stream sentence chunks to TTS as the LLM generates (needs a llama.cpp
+        # build that streams tool calls). Set False to publish one full reply
+        # per turn — the wire protocol (chunks + end marker) stays the same.
+        self.declare_parameter("stream_speech", True)
+        # Per-agent llama.cpp KV slots are NOT parameters — they are declared
+        # next to their agent in registry.py (registry.SLOTS). See that file's
+        # header for why one slot per agent is the whole latency design.
+        # Only the multimodal model name stays a parameter: it is the one
+        # setting that depends on which GGUF the server actually loaded.
+        self.declare_parameter("local_agent_model", "")
+
+        provider      = self.get_parameter("provider").value
+        model         = self.get_parameter("model").value
+        api_key_env   = self.get_parameter("api_key_env").value
+        base_url      = self.get_parameter("base_url").value
+        max_tokens    = self.get_parameter("max_tokens").value
+        # History stores raw message objects (incl. captured image blocks),
+        # not turn-pairs, so allow extra room for tool-call / image messages.
+        self._max_history    = self.get_parameter("history_turns").value * 4
+        self._merge_window   = float(self.get_parameter("utterance_merge_window_s").value)
+        self._use_vision     = self.get_parameter("use_vision").value
+        local_agent_model    = self.get_parameter("local_agent_model").value
+        self._stream_speech  = self.get_parameter("stream_speech").value
+
+        api_key = os.environ.get(api_key_env, "") if api_key_env else "none"
+        # The launch file's Mac-Mini base_url default must not poison a cloud
+        # provider switch (provider:=openai with the default base_url left in).
+        if provider == "openai" and "singireddys-mac-mini" in base_url:
+            base_url = ""
+
+        # ── llama.cpp KV-cache slots, one per agent ────────────────────────
+        # Each agent has a different ~1-2k token system prompt. A server run
+        # with --parallel N holds N independent KV caches; pin each agent to
+        # its own and its prefix stays resident, so a turn prefills only the
+        # new tokens. Share a slot and every call evicts the other agent's
+        # prefix — ~18-50s of re-prefill per turn on the 12B model.
+        #
+        # The map lives in registry.py, beside the agents it describes. All
+        # that happens here is making it fit the server we actually got: ask
+        # how many slots it has and wrap with modulo. Fewer slots than agents
+        # just means some agents share again — it never breaks, it only costs.
+        # A failed probe leaves the map alone (the server may still be booting).
+        slots = dict(registry.SLOTS)
+        # The server the fleet expects (e12b5): the agents' slots, the
+        # vision-tool slot (tools/survey.py) and the voice filter's slot 4
+        # (pi5_voice_pkg/relevance.py) -- --parallel 5.
+        from langrobo_core.tools import survey as _survey
+        need = max(len(slots), _survey.VISION_TOOL_SLOT + 1) + 1
+        total = None
+        if provider == "llamacpp":
+            total = self._probe_total_slots(base_url)
+            if total and total < len(slots):
+                slots = {name: idx % total for name, idx in slots.items()}
+                self.get_logger().warning(
+                    f"llama.cpp reports {total} slots for {len(registry.SLOTS)} "
+                    f"agents — they will share and evict each other's prompt "
+                    f"prefix. Start the server with "
+                    f"--parallel {need}. Slot map: {slots}")
+            else:
+                self.get_logger().info(f"KV slot map (one per agent): {slots}")
+
+        # One-shot vision calls (search views, locate, the photo survey) have
+        # their own slot, so local_agent's keeps its conversation and photos.
+        want = _survey.VISION_TOOL_SLOT
+        got = _survey.fit_slot(total, slots.get("local_agent"))
+        if got is None:
+            self.get_logger().warning(
+                f"llama.cpp has {total} slots, no vision-tool slot ({want}): the "
+                f"photo survey is OFF, and locate/search run on local_agent's slot, "
+                f"evicting its cached photos. Start the server with --parallel {want + 1}.")
+        else:
+            self.get_logger().info(f"vision-tool slot {got} (search, locate, photo survey)")
+
+        agent_overrides = {name: {"slot": slot} for name, slot in slots.items()}
+        # local_agent may run a different GGUF than the text agents.
+        if local_agent_model:
+            agent_overrides["local_agent"]["model"] = local_agent_model
+
+        # ── Named map locations (navigate_to_pose targets) ────────────────
+        # Only the ones saved on the robot ("save this location as X" ->
+        # ~/.langrobo/locations.json, served only under the odom origin they
+        # were saved in). No configured defaults: odom starts at zero wherever
+        # the robot boots, so fixed coordinates -- the four placeholder rooms
+        # that used to be here -- were a different spot every power-on, and
+        # were served with no origin check at all.
+        known_locations: dict = {}
+
+        # ── Inject config into the core ───────────────────────────────────
+        self._bridge = ROS2Bridge(self, known_locations=known_locations, use_vision=self._use_vision)
+        bridge_module.init(self._bridge)
+        timing.set_sink(self._bridge.publish_timing)
+        self._timing_handler = timing.TimingCallbackHandler()
+        llm_module.configure(provider, model, base_url, api_key, max_tokens,
+                             agent_overrides,
+                             streaming=self._stream_speech)
+        llm_module.configure_fallback(settings.fallback)
+        self._telegram = telegram_service.init(settings.telegram)
+
+        # Register navigation completion callback
+        self._bridge.register_nav_done_callback(self._on_nav_done)
+        self._warn_if_competing_bridge()
+        # Let pure-zone tools inject [SYSTEM] turns into the worker queue.
+        self._bridge.register_system_turn_callback(self._enqueue_system)
+        # Background photo survey (every photo -> object memory) waits while
+        # a turn is running: the Mac runs one model and the turn comes first.
+        _survey.set_busy_probe(lambda: self._turn_active or self._user_pending is not None)
+        # Teleop flipped to MANUAL mid-move = a person taking control: stop
+        # whatever the brain is driving, as a new utterance does.
+        threading.Thread(target=self._watch_manual, daemon=True, name="manual_watch").start()
+        # Timers, alarms, reminders (langrobo_core.services.alarms): this process
+        # rings them. Studio's tools may add items to the same file, never ring.
+        self._stop_heard_at = -1e9
+        # A cloud voice that falls back is announced once (services/voice_health.py).
+        from langrobo_core.services.voice_health import FallbackNotices
+        self._fallback_notices = FallbackNotices()
+        threading.Thread(target=self._alarm_loop, daemon=True, name="alarms").start()
+
+        # ── Build graph ───────────────────────────────────────────────────
+        self._graph   = build_graph()
+        self._history: list = []
+        self._history_lock = threading.Lock()
+        # Background KV-cache warmer (boot + after history trims) — at most one.
+        self._warm_thread: threading.Thread | None = None
+
+        # Sticky routing: the agent left active at the end of the previous turn.
+        # turn_entry re-enters it directly only if it is STICKY_ELIGIBLE;
+        # [SYSTEM] events always start fresh at chat.
+        self._sticky_agent: str | None = None
+        # Last /voice/stt_meta, with the wall clock it arrived — stapled onto the
+        # next voice turn's trace. Stale ones are dropped: a Telegram turn (or a
+        # turn minutes later) must not inherit an old utterance's STT cost.
+        self._stt_meta: tuple[float, dict] | None = None
+        # The trace id of the turn in flight, readable from the ROS spin thread
+        # (new_trace()'s contextvar is worker-thread-local, so /voice/tts_meta
+        # arriving on the spin thread cannot see it).
+        self._trace_for_tts: str | None = None
+        self._last_turn_ts: float | None = None
+        # When the robot last SPOKE a reply aloud: a sentence soon after is the
+        # person answering it (utils/addressing.py FOLLOW_UP_S).
+        self._last_spoke_ts: float | None = None
+
+        # ── Input queue ───────────────────────────────────────────────────
+        # _user_pending:     latest user message (replaced by newer ones)
+        # _system_pending:   FIFO of system events (nav arrival/failure) —
+        #                    never dropped, never clobber each other
+        # _telegram_pending: FIFO of TelegramInbound — never dropped; drained
+        #                    after voice (the person in the room comes first)
+        # _input_event:      wakes the worker when anything is pending
+        self._queue_lock     = threading.Lock()
+        self._user_pending:   str | None = None
+        self._user_pending_at: float = 0.0
+        self._system_pending: list[tuple] = []   # (text, quiet, sender (name, role) | None, check)
+        self._telegram_pending: list = []
+        self._input_event    = threading.Event()
+        # Barge-in: set when a NEW user utterance arrives while a turn is
+        # still running — the worker aborts the in-flight turn at the next
+        # graph step so the new utterance is answered instead of the stale one.
+        # (stt_node mutes the mic while the robot speaks -- no AEC on the Pi 5 --
+        # so this fires on input queued while the turn was thinking.)
+        self._turn_interrupt = threading.Event()
+        self._turn_active    = False
+        # True while the running turn's last step is a call to a movement tool
+        # still executing (MOTION_TOOL_NAMES): _on_user_input's motion gate.
+        self._turn_moving    = False
+        # Channel of the in-flight turn. Barge-in only applies to voice turns —
+        # a spoken answer goes stale when the user speaks over it, but a
+        # Telegram reply doesn't; new voice input queues behind it instead.
+        self._turn_channel   = "voice"
+
+        # ── Startup readiness gate ────────────────────────────────────────
+        self._ready_event = threading.Event()
+
+        # ── Publishers ────────────────────────────────────────────────────
+        self._pub_thinking = self.create_publisher(Bool, "/brain/thinking", 1)
+
+        # ── Subscribers ───────────────────────────────────────────────────
+        self.create_subscription(String, "/voice/user_input", self._on_user_input, 10)
+        # Stop word spotted by stt_node: it halts speech itself; here it is a
+        # safety word — halt the wheels too.
+        self.create_subscription(String, "/voice/tts_stop", self._on_tts_stop, 10)
+        # Voice-pipeline cost telemetry from pi5_voice_pkg (input and output
+        # legs). Purely observational — nothing in the turn path depends on
+        # these arriving, so a voice stack without them changes nothing.
+        self.create_subscription(String, "/voice/stt_meta", self._on_stt_meta, 10)
+        self.create_subscription(String, "/voice/tts_meta", self._on_tts_meta, 10)
+
+        # Vision inputs (camera frame, target result, 3D detections) are
+        # subscribed by ROS2Bridge itself — it owns the caches they fill, so
+        # every owner of a bridge gets them, not just this node. See the
+        # "Vision inputs" block in ros2_bridge.py.
+        if self._use_vision:
+            self.get_logger().info(
+                "Vision enabled — /camera/color/image_raw/compressed")
+
+        # ── Health/status/metrics API (in-process, daemon thread) ─────────
+        health_service.start_health_api(settings.health, extra_status=self._runtime_status)
+
+        # ── Worker + startup threads ──────────────────────────────────────
+        threading.Thread(target=self._startup_check, daemon=True).start()
+        # The sentence embedder (memory search + entry classifier) loads in
+        # the background; until it is ready memory searches by words and
+        # turns route as before (LANGROBO_INTENT_ROUTING).
+        embedder.start_loading()
+        intent_routing.start_loading()
+        threading.Thread(target=self._worker_loop,   daemon=True).start()
+
+        # ── Telegram inbound (long-poll daemon → worker queue) ────────────
+        # No-op when the channel is unconfigured. Messages sent while the
+        # brain was down arrive now (persisted getUpdates offset).
+        self._telegram.start_polling(self._on_telegram_inbound)
+
+        self.get_logger().info(
+            f"Agent starting — provider: {provider}, base_url: {base_url}, "
+            f"vision: {self._use_vision}"
+        )
+
+    MANUAL_POLL_S = 0.5
+
+    def _watch_manual(self) -> None:
+        """Poll the teleop switch; on the edge into MANUAL, stop the motion
+        (movement.ManualWatch). Localhost HTTP, 0.7 s timeout: cheap."""
+        from langrobo_core.tools.movement import ManualWatch
+        watch = ManualWatch(self._bridge)
+        while True:
+            try:
+                if watch.poll():
+                    self.get_logger().warning(
+                        "teleop switched to MANUAL -- stopped the brain's drive/move")
+            except Exception as e:                # the watcher must never die
+                self.get_logger().debug(f"manual watch: {e}")
+            time.sleep(self.MANUAL_POLL_S)
+
+    # ── Health API status hook (any thread) ───────────────────────────────
+
+    def _runtime_status(self) -> dict:
+        with self._queue_lock:
+            queued_system = len(self._system_pending)
+            queued_telegram = len(self._telegram_pending)
+            user_pending = self._user_pending is not None
+        return {
+            "sticky_agent": self._sticky_agent,
+            "last_turn_ts": self._last_turn_ts,
+            "camera_frame_age_s": self._bridge.frame_age(),
+            "queued_system_events": queued_system,
+            "queued_telegram_messages": queued_telegram,
+            "user_input_pending": user_pending,
+            "telegram": self._telegram.status(),
+            "odom_origin_epoch": self._bridge.get_origin_epoch(),
+            "navigating": self._bridge.navigation_active(),
+            **self._perception_status(),
+            "jev": jev.status(),
+            "intent": intent_routing.status(),
+            "memory": {"facts": self._memory_count(), "embedder": embedder.status()},
+        }
+
+    @staticmethod
+    def _memory_count():
+        try:
+            return memory_store.count()
+        except Exception as e:                    # a broken db must not break /status
+            return f"error: {e}"
+
+    def _perception_status(self) -> dict:
+        """What the robot has seen: the photo survey's progress and how many
+        objects object memory can serve right now. Never fails /status."""
+        out = {}
+        try:
+            from langrobo_core.tools import survey
+            out["photo_survey"] = survey.status()
+        except Exception as e:
+            out["photo_survey"] = {"error": str(e)}
+        try:
+            from langrobo_core.services import object_memory
+            out["objects_remembered"] = len(
+                object_memory.recall("", self._bridge.get_origin_epoch()))
+        except Exception as e:
+            out["objects_remembered"] = f"error: {e}"
+        return out
+
+    # ── Degraded voice: say so ────────────────────────────────────────────
+
+    def _fallback_notice(self, leg: str, meta: dict) -> None:
+        """Sarvam (or any cloud voice) fell back to the local English one:
+        tell the owner, once per 6 h, after any reply in progress."""
+        text = self._fallback_notices.check(leg, meta, time.time())
+        if not text:
+            return
+        self.get_logger().warning(f"voice degraded ({leg}): {meta.get('fallback_reason', '')[:120]}")
+
+        def speak():
+            end = time.monotonic() + 30.0
+            while self._turn_active and time.monotonic() < end:
+                time.sleep(0.5)
+            time.sleep(1.0)
+            self._bridge.publish_speech(text)
+
+        threading.Thread(target=speak, daemon=True, name="fallback_notice").start()
+
+    # ── Timers, alarms, reminders ─────────────────────────────────────────
+
+    ALARM_RINGS = {"timer": 2, "alarm": 2, "reminder": 1}
+    ALARM_REPEAT_S = 10.0       # between the two rings; a "stop" in between ends it
+    ALARM_WAIT_TURN_S = 30.0    # let a reply in progress finish first, at most this long
+
+    def _alarm_loop(self) -> None:
+        """Speak what is due, once a second. Never raises: a broken alarms
+        file costs a log line, not the brain (CLAUDE.md #5)."""
+        from langrobo_core.services import alarms
+        while rclpy.ok():
+            time.sleep(1.0)
+            try:
+                due = alarms.pop_due()
+            except Exception as e:
+                self.get_logger().warning(f"alarms: could not read the list ({e})")
+                continue
+            for item in due:
+                end = time.monotonic() + self.ALARM_WAIT_TURN_S
+                while self._turn_active and time.monotonic() < end:
+                    time.sleep(0.5)
+                text = alarms.announcement(item)
+                self.get_logger().info(f"ringing {item['kind']} {item.get('label')!r}: {text}")
+                started = time.monotonic()
+                for n in range(self.ALARM_RINGS.get(item["kind"], 1)):
+                    if n:
+                        time.sleep(self.ALARM_REPEAT_S)
+                        if self._stop_heard_at > started:
+                            break                       # "stop" said: no second ring
+                    self._bridge.publish_speech(text)
+
+    # ── Startup readiness check ───────────────────────────────────────────
+
+    def _startup_check(self) -> None:
+        """Announce readiness, then warm the KV cache. Nav2 is not waited for:
+        it lives on the Jetson, and a drive tool reports it if it is down."""
+        self._bridge.publish_speech("I'm ready.")
+        self.get_logger().info("Startup complete")
+        self._ready_event.set()
+        # Prefill chat's llama.cpp slot with the ~2k-token static prompt now,
+        # so the first user turn of the session doesn't pay the ~20s prefill.
+        self._start_cache_warm()
+
+    # ── Navigation done callback (background nav thread → worker) ─────────
+
+    def _warn_if_competing_bridge(self) -> None:
+        """Say so if another graph is on the bus driving the same robot.
+
+        LangGraph Studio raises /studio_bridge beside /agent_node and runs the
+        same graph on the same /cmd_vel. It takes input ONLY from the Studio
+        page -- it never subscribes to /voice/user_input and never polls
+        Telegram (graph_studio.py only configures the send side), so it cannot
+        steal a spoken or Telegram request. What it can do is drive: a
+        navigation started from Studio registers no nav-done callback and
+        finishes with nobody told. On 2026-09-10 that looked, from Telegram,
+        like reports going missing.
+
+        Advisory only, and a WARNING: the Jetson's `./rover up` starts Studio
+        on every cold boot, so this fires on healthy boots and must read as
+        information, not as a fault.
+        """
+        # NAMED, not a "*_bridge" wildcard. The first version of this check
+        # matched any node ending in _bridge and immediately fired on
+        # /image_bridge -- the Jetson's JPEG publisher, a required part of the
+        # vlm layer and no threat to anything. A warning that fires on every
+        # healthy boot is worse than no warning, because it trains you to
+        # scroll past the one time it is real. Only graph-running bridges
+        # belong here; add a name when a new one is written.
+        _COMPETING = {"studio_bridge"}
+        try:
+            others = [n for n in self.get_node_names() if n in _COMPETING]
+        except Exception:
+            return
+        if others:
+            self.get_logger().warning(
+                f"Studio is running beside this brain ({', '.join(others)}). "
+                f"Voice and Telegram still come here only; but a drive started "
+                f"FROM the Studio page reports its arrival to nobody. To drive "
+                f"from Studio, stop this brain first.")
+
+    def _on_nav_done(self, success: bool, message: str) -> None:
+        """Called by bridge when Nav2 goal finishes. Injects system message
+        (movement.nav_report -- the same report Studio posts). The worker runs
+        the arrival check as the first part of processing it, and system turns
+        go before any user turn."""
+        from langrobo_core.tools.movement import nav_report
+        rep = nav_report(success, message)
+        req = rep["requester"]
+        self.get_logger().info(
+            f"nav report queued -> channel={req.get('channel') or 'voice'} "
+            f"sender={req.get('sender') or '-'} quiet={rep['quiet']} "
+            f"photo={rep['photo_note']!r} task={req.get('then')!r}")
+        # A FAILED drive's report goes stale once a newer drive starts: on
+        # 2026-10-12 a follow ended "blocked" while "come near to me" was
+        # already being answered, and the robot said "I had to stop, something
+        # was in my way" and then "I have arrived" two seconds apart. The newer
+        # drive reports for itself; an arrival is still true, so it stays.
+        self._enqueue_system(rep["text"], check=rep["check"],
+                             quiet=rep["quiet"], sender=rep["sender"],
+                             failed_at=None if success else time.time())
+
+    # ── Two-slot queue (spin thread → worker thread) ──────────────────────
+
+    def _on_user_input(self, msg: String) -> None:
+        text = msg.data.strip()
+        if not text:
+            return
+        timing.emit("brain_receive", chars=len(text))
+        # New user input cancels any active navigation AND interrupts any blocking
+        # motion tool (visual servoing / timed drive), then replaces pending input.
+        # Except while the robot MOVES -- a background drive, or a movement tool
+        # running in the turn: people talk while a robot drives, and on
+        # 2026-10-10 "Friend." ended a follow and "Akulam." killed a search for
+        # the dining table. Then only a stop word halts it (utils/stop_words.py);
+        # the words are answered after the motion, and a new drive they ask for
+        # replaces the old one by itself.
+        moving = self._bridge.navigation_active() or self._turn_moving
+        keep = keeps_moving(moving, text)
+        if keep:
+            self.get_logger().info("moving: talk without a stop word -- the motion goes on, "
+                                   "answered after")
+        else:
+            self._bridge.cancel_navigation()
+            self._bridge.request_motion_stop()
+        # ...and shuts the robot up. The graph-level interrupt below only fires
+        # while a turn is RUNNING; measured 2026-09-26, a reply whose graph had
+        # already finished kept playing for 14-17s with nothing able to stop
+        # it, because tts_node still had synthesised sentences queued. Whoever
+        # just spoke has the floor. A no-op when nothing is playing.
+        self._bridge.publish_speech_stop()
+        with self._queue_lock:
+            now = time.monotonic()
+            if (self._user_pending is not None and self._merge_window > 0
+                    and now - self._user_pending_at <= self._merge_window):
+                # Continuation of an utterance we have not answered yet.
+                self.get_logger().info("User queue: merging continued utterance")
+                self._user_pending = f"{self._user_pending} {text}"
+            else:
+                if self._user_pending is not None:
+                    self.get_logger().warning("User queue: replacing pending message with newer input")
+                self._user_pending = text
+            self._user_pending_at = now
+            if self._turn_active and self._turn_channel == "voice" and not keep:
+                # Barge-in: abandon the in-flight turn — the user has moved on.
+                # Telegram turns are never abandoned; this input queues behind.
+                # Nor is a turn that is moving the robot, unless told to stop.
+                self._turn_interrupt.set()
+        self._input_event.set()
+
+    def _on_tts_stop(self, msg: String) -> None:
+        """Stop keyword heard during robot speech — halt the wheels.
+
+        stt_node halts TTS playback itself (instant, no round-trip); this is
+        the brain-side sweep, so "stop" is a safety word that stops the robot
+        moving and not merely one that stops it talking.
+
+        Wake-word barge-in rides the same topic tagged "[wake:…]": it only
+        halts TTS, and the user's new utterance does its own motion sweep on
+        arrival — so it must NOT trigger the stop-everything sweep here."""
+        if msg.data.startswith("[wake:") or msg.data == SPEECH_ABANDON:
+            # [wake:…] is stt_node's wake-word barge-in; SPEECH_ABANDON is
+            # this brain abandoning its own utterance. Neither is a human
+            # saying "stop", so neither may sweep the wheels — the new
+            # utterance does its own motion stop on arrival.
+            return
+        self._stop_heard_at = time.monotonic()      # silences a ringing timer/alarm too
+        self.get_logger().info(f'Stop keyword ("{msg.data}") — cancelling motion')
+        self._bridge.cancel_navigation()
+        self._bridge.request_motion_stop()
+
+    # ── Voice-pipeline telemetry (spin thread) ────────────────────────────
+
+    STT_META_MAX_AGE_S = 30.0   # older than this and it belongs to another utterance
+
+    def _on_stt_meta(self, msg: String) -> None:
+        """Cache the STT leg's cost for the voice turn that is about to arrive.
+
+        stt_node publishes this immediately before /voice/user_input, so the
+        turn that follows is (barring a dropped message) the one it describes.
+        """
+        try:
+            self._stt_meta = (time.time(), json.loads(msg.data))
+            self._fallback_notice("stt", self._stt_meta[1])
+        except Exception:
+            self.get_logger().debug("bad /voice/stt_meta payload")
+
+    def _on_tts_meta(self, msg: String) -> None:
+        """Log one synthesised sentence to LangSmith as its own run.
+
+        Not a child of the turn's graph run: sentences are synthesised while
+        the graph is still streaming (and the last ones after it ends), and
+        graph.stream() gives us no run tree to hang them off. They carry the
+        turn's trace_id instead, so filtering the LangSmith UI on that one id
+        shows the LLM run and every sentence it spoke together.
+        """
+        try:
+            meta = json.loads(msg.data)
+        except Exception:
+            self.get_logger().debug("bad /voice/tts_meta payload")
+            return
+        self._fallback_notice("tts", meta)
+        trace = self._trace_for_tts
+        with self._trace_span(
+                f"tts:{meta.get('provider', 'unknown')}",
+                inputs={"chars": meta.get("chars")},
+                metadata={"trace_id": trace, "channel": "voice", **meta},
+                tags=["channel:voice", "leg:tts"]) as span:
+            if span is not None:
+                span.end(outputs={k: meta.get(k) for k in
+                                  ("ok", "latency_ms", "audio_ms", "rtf", "fell_back")})
+
+    def _enqueue_system(self, text: str, quiet: bool = False, sender=None,
+                        check=None, failed_at=None) -> None:
+        """Enqueue a system event — fires after current graph run.
+        quiet: the turn's reply goes out by a tool (Telegram), never the speaker.
+        check: (object, index) -- run the arrival check for `object` when this
+        turn is taken and insert its sentence at `index` of the text.
+        failed_at: a failed drive's report (wall time) -- the one thing ever
+        dropped: when a newer drive has started by the time it is taken."""
+        with self._queue_lock:
+            self._system_pending.append((text, quiet, sender, check, failed_at))
+        self._input_event.set()
+
+    def _on_telegram_inbound(self, inbound) -> None:
+        """Telegram poller thread → worker queue. Never barges in on a running
+        turn and never clobbers voice input — it waits its turn in FIFO order."""
+        with self._queue_lock:
+            self._telegram_pending.append(inbound)
+        self._input_event.set()
+
+    # ── Worker loop ───────────────────────────────────────────────────────
+
+    def _worker_loop(self) -> None:
+        self._ready_event.wait()  # wait for startup check to complete
+
+        while True:
+            self._input_event.wait()
+
+            # Drain ONE item per iteration — priority: system events, then the
+            # voice user (someone is standing there), then Telegram. Nothing is
+            # discarded: whatever stays pending keeps the event armed for the
+            # next loop.
+            with self._queue_lock:
+                telegram, quiet, sender, check, failed_at = None, False, None, None, None
+                if self._system_pending:
+                    (text, quiet, sender, check, failed_at), is_system = self._system_pending.pop(0), True
+                elif self._user_pending is not None:
+                    text, is_system = self._user_pending, False
+                    self._user_pending = None
+                elif self._telegram_pending:
+                    telegram = self._telegram_pending.pop(0)
+                    text, is_system = telegram.text, False
+                else:
+                    text, is_system = None, False
+                if not (self._system_pending or self._user_pending is not None
+                        or self._telegram_pending):
+                    self._input_event.clear()
+
+            if text and failed_at is not None:
+                since = ((self._bridge.navigation_state() or {}).get("goal") or {}).get("since") or 0
+                if since > failed_at:
+                    self.get_logger().info(f"nav report dropped -- a newer drive started "
+                                           f"{since - failed_at:.1f} s after it: {text[:120]!r}")
+                    text = None
+            if text:
+                if not is_system and telegram is None:
+                    text = self._await_continuation(text)
+                if check:
+                    # The arrival check, here in the worker: anything that
+                    # arrives meanwhile waits behind this report.
+                    from langrobo_core.tools.approach import arrival_check
+                    target, at = check
+                    text = text[:at] + arrival_check(target) + text[at:]
+                self._process(text, is_system, telegram=telegram, quiet=quiet, sender=sender)
+
+    def _await_continuation(self, text: str) -> str:
+        """Hold a voice utterance that ends mid-thought and merge what follows.
+
+        Only voice: a Telegram message arrives whole, and a [SYSTEM] turn is
+        machine-written. Merging in _on_user_input alone could not work — the
+        worker empties the pending slot within milliseconds — so the wait lives
+        here, and only for a transcript that reads unfinished (dangling
+        conjunction, preposition or filler). Finished speech pays nothing.
+        """
+        if self._merge_window <= 0:
+            return text
+        # The word list says "wait for more"; a near-sure "finished" from Jev
+        # (on mode) saves the merge window. Asked only in that case.
+        if jev.mode() == "on" and looks_incomplete(text):
+            p = jev.is_finished(text)
+            if p is not None and p >= jev.min_conf():
+                self.get_logger().info(f"jev: '{text[-40:]}' is finished (p={p:.2f}) -- not waiting")
+                return text
+        deadline = time.monotonic() + self._merge_window
+        while looks_incomplete(text):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not self._input_event.wait(remaining):
+                break
+            with self._queue_lock:
+                more, self._user_pending = self._user_pending, None
+                if not (self._system_pending or self._telegram_pending):
+                    self._input_event.clear()
+                # A continuation is not a barge-in.
+                self._turn_interrupt.clear()
+            if not more:
+                break
+            text = join_utterances(text, more)
+            self.get_logger().info(f"Merged continued utterance: {text!r}")
+            deadline = time.monotonic() + self._merge_window
+        return text
+
+    # ── Telegram turn framing (worker thread) ─────────────────────────────
+
+    def _frame_telegram_turn(self, telegram, text: str) -> str:
+        """Compose the turn text for an inbound Telegram message.
+
+        The sender tag is what carries identity into the prompt, and the photo
+        note is what tells local_agent an image is genuinely in the
+        conversation — its prompt refuses to claim it can see anything without
+        one."""
+        tag = f"Telegram from {telegram.name}"
+        if telegram.photo:
+            tag += " — photo attached"
+        return f"[{tag}] {text}"
+
+    # ── LangSmith tracing helpers ─────────────────────────────────────────
+    # Tracing is opt-in (LANGROBO_TRACING=true + a key; services.config scrubs
+    # the env otherwise), so everything here is a no-op on a robot that has not
+    # opted in. See docs/voice/PI5_VOICE.md / OPERATIONS.md for what the UI then shows.
+
+    def _trace_metadata(self, trace: str, source: str, entry_agent: str,
+                        telegram=None) -> dict:
+        """Metadata attached to a traced turn — searchable in the LangSmith UI.
+
+        Lets you pull up "every telegram turn from Mom", "every turn that
+        entered at navigate", or "every turn answered while the Mac Mini was
+        down" without grepping logs. `trace_id` is the join key back to the
+        JSON logs and the /diag/timing waterfall for the same turn.
+        """
+        llm = llm_module.status()
+        md = {
+            "trace_id": trace,
+            "channel": source,                 # voice | telegram | system
+            "entry_agent": entry_agent,
+            "sticky_agent": self._sticky_agent,
+            "llm_provider": llm.get("provider"),
+            "llm_base_url": llm.get("base_url"),
+            # False → the primary (Mac Mini) is in its failure cooldown, so this
+            # turn is answered by the CLOUD fallback; the child chat-model run's
+            # model name confirms which one actually served it.
+            "llm_primary_available": llm.get("primary_available"),
+            "llm_fallback": llm.get("fallback"),
+        }
+        if telegram is not None:
+            md.update({
+                "sender_name": telegram.name,
+                "sender_role": telegram.role,
+                "telegram_photo": telegram.photo is not None,
+            })
+        elif source == "voice" and self._stt_meta is not None:
+            at, stt = self._stt_meta
+            if time.time() - at <= self.STT_META_MAX_AGE_S:
+                md.update({f"stt_{k}": v for k, v in stt.items()})
+        return md
+
+    @contextmanager
+    def _trace_span(self, name: str, inputs: dict, metadata: dict, tags=None):
+        """A standalone LangSmith run for work that never enters the graph.
+
+        Used for the TTS leg (_on_tts_meta): each spoken sentence is its own
+        run, joined to its turn by trace_id. Yields the run (call .end(outputs=...)) or None when tracing is off.
+        """
+        try:
+            from langsmith.utils import tracing_is_enabled
+            from langsmith import trace as ls_trace
+            enabled = tracing_is_enabled()
+        except Exception:       # langsmith absent or incompatible — never fatal
+            enabled = False
+        if not enabled:
+            yield None
+            return
+        try:
+            span = ls_trace(name=name, run_type="chain", inputs=inputs,
+                            metadata=metadata, tags=tags or [])
+            run = span.__enter__()
+        except Exception:
+            self.get_logger().debug(f"LangSmith span {name!r} failed to start")
+            yield None
+            return
+        # Driven by hand rather than `with`: a `with` inside a @contextmanager
+        # can't catch the caller's exception and then yield again (the generator
+        # must stop after a throw). This forwards the caller's exception to the
+        # span so it is marked as errored, re-raises it untouched, and swallows
+        # only failures of the tracing teardown itself.
+        exc_info = (None, None, None)
+        try:
+            yield run
+        except BaseException:
+            import sys
+            exc_info = sys.exc_info()
+            raise
+        finally:
+            try:
+                span.__exit__(*exc_info)
+            except Exception:
+                self.get_logger().debug(f"LangSmith span {name!r} failed to close")
+
+    # ── Graph invocation (worker thread) ──────────────────────────────────
+
+    @staticmethod
+    def _last_reply(history: list) -> str | None:
+        """The robot's last spoken text: context for Jev on follow-ups."""
+        from langchain_core.messages import AIMessage
+        for m in reversed(history):
+            if isinstance(m, AIMessage) and isinstance(m.content, str) and m.content.strip():
+                return m.content
+        return None
+
+    def _jev_outcome(self, read, actual: str | None, shadow: bool) -> None:
+        """Log Jev's pick beside the agent that actually answered. A shadow
+        read that has not come back by the end of the turn counts as nothing:
+        in `on` mode it would have been a timeout."""
+        fields = jev.record_outcome(read, actual, shadow)
+        if fields:
+            self.get_logger().info(jev.log_line({"mode": "shadow" if shadow else "on", **fields}))
+
+    def _process(self, text: str, is_system: bool = False, telegram=None,
+                 quiet: bool = False, sender=None) -> None:
+        """One turn. `telegram` (a TelegramInbound) switches the reply sink:
+        voice turns stream to TTS; telegram turns answer the sender's chat and
+        never touch the speaker. Both share the same history and graph.
+        `quiet` (a system turn whose report goes out by Telegram tool): no
+        speech, no cue, no thinking light -- the reply text is only logged.
+        `sender` (name, role): who a system turn acts for -- the person who
+        asked for the drive it reports, so its tools are gated and audited as
+        them, not as the owner's voice."""
+        from langchain_core.messages import HumanMessage
+        trace = new_trace()   # stamps every log line + timing event this turn
+        # One word for where this turn came from — used for the LangSmith run
+        # name/tags and metadata so the trace list is filterable by channel.
+        source = "system" if is_system else ("telegram" if telegram else "voice")
+        self._trace_for_tts = trace   # read by _on_tts_meta on the spin thread
+        turn_start = time.time()
+        slow_cue = None
+        metrics.inc("turns_total")
+        if is_system:
+            metrics.inc("system_turns_total")
+        if telegram:
+            metrics.inc("telegram_turns_total")
+        # Under _queue_lock: _on_user_input reads _turn_active/_turn_channel
+        # under the same lock to decide barge-in — unlocked writes here could
+        # let a new utterance miss the interrupt on a just-started turn.
+        with self._queue_lock:
+            self._turn_interrupt.clear()
+            self._turn_channel = "telegram" if telegram else "voice"
+            self._turn_active = True
+            self._turn_moving = False
+        if not telegram and not quiet:
+            # /brain/thinking drives the robot's physical "thinking" cue —
+            # meaningless (and misleading) for a phone conversation.
+            self._pub_thinking.publish(Bool(data=True))
+        try:
+            with self._history_lock:
+                history = list(self._history)
+
+            # Plain-text user turn. Camera frames enter the conversation only when
+            # local_agent calls look() — no ambient frame-stapling. Per-agent
+            # projection (langrobo_core.utils.message_utils) strips images for
+            # text agents.
+            # Telegram turns are framed with the sender so the model knows who
+            # is talking and from where — plain text, append-only, cache-safe.
+            turn_text = text
+            if telegram:
+                turn_text = self._frame_telegram_turn(telegram, text)
+
+            # Body state. A camera view in the conversation is stamped with the
+            # pose it was taken FROM; this stamps the turn with where the robot
+            # is NOW, so a photo of somewhere the robot has left is visibly of
+            # somewhere else instead of being labelled "current" forever.
+            # Returns None until a look() has happened -- before the first frame
+            # there is nothing to compare against and a pose on "what's the
+            # weather" is noise. See langrobo_core.utils.pose_stamp, including
+            # why this goes at the TAIL of the message list and never into the
+            # system prompt.
+            stamp = pose_stamp.turn_stamp(self._bridge.get_current_pose())
+            if stamp:
+                turn_text = f"{stamp} {turn_text}"
+            # ...and the clock (utils/clock_stamp.py): no tool round trip for
+            # "what time is it", and no stale time repeated from history.
+            from langrobo_core.utils.clock_stamp import turn_clock
+            turn_text = f"{turn_clock()} {turn_text}"
+
+            turn_msg = None
+            if telegram:
+                if telegram.photo:
+                    # Same shape look() uses: images ride in user-role messages
+                    # (llama.cpp honours them only there) and persist in the
+                    # shared history for follow-ups. Text agents get the
+                    # image-stripped projection and hand over to local_agent.
+                    import base64
+                    b64 = base64.b64encode(telegram.photo).decode()
+                    turn_msg = HumanMessage(content=[
+                        {"type": "text", "text": turn_text},
+                        {"type": "image_url",
+                         "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                    ])
+                self._telegram.send_typing(telegram.chat_id)
+
+            messages = history + [turn_msg or HumanMessage(content=turn_text)]
+
+            # Sticky routing: re-enter the previous agent for a user follow-up.
+            # turn_entry enforces which agents are sticky-eligible and defaults
+            # everything else to chat (the single-call common path).
+            #
+            # [SYSTEM] events go to chat too, and do NOT inherit stickiness: a
+            # proactive announcement must not be answered by whichever agent
+            # the user happened to leave active. They used to enter at a
+            # dedicated router, which for the one [SYSTEM] producer this build
+            # has (navigation arrival) meant a whole extra LLM call to reach
+            # the only sensible destination.
+            incoming_agent = "chat" if is_system else (self._sticky_agent or "chat")
+
+            # Jev (langrobo_core.services.jev): a fast cloud decision model.
+            # on: a confident pick of agent enters it directly (saves chat's
+            # handover call) and its vision read backs up the vision-question
+            # check. shadow: asked in the background, changes nothing, logged
+            # against what actually happened. [SYSTEM] turns are never asked.
+            jev_read, jev_shadow, jev_mode = None, None, jev.mode()
+            jev_acted = False
+            if not is_system and jev_mode != "off":
+                args = (text, registry.AGENTS, self._sticky_agent,
+                        self._last_reply(history))
+                if jev_mode == "on":
+                    jev_read = jev.read_turn(*args)
+                    incoming_agent, jev_acted = jev.entry_for(jev_read, incoming_agent)
+                    if jev_acted:
+                        self.get_logger().info(
+                            f"jev: entering {incoming_agent} directly "
+                            f"(conf {jev_read.route_conf:.2f}, {jev_read.latency_ms} ms)")
+                else:
+                    jev_shadow = {}
+                    threading.Thread(
+                        target=lambda: jev_shadow.setdefault("read", jev.read_turn(*args)),
+                        daemon=True, name="jev_shadow").start()
+
+            # Entry classifier (langrobo_core.routing, ~15 ms on the Pi): a
+            # confident pick enters that agent directly -- the chat call that
+            # would only have handed over (median 3.0 s) never happens. No pick
+            # -> the rule above. Jev, when it acted, keeps the turn.
+            intent_pick, intent_acted = None, False
+            if not is_system and not jev_acted and intent_routing.mode() != "off":
+                intent_pick = intent_routing.classify(text)
+                if intent_routing.mode() == "on":
+                    incoming_agent, intent_acted = intent_routing.entry_for(
+                        intent_pick, incoming_agent)
+                    if intent_acted:
+                        self.get_logger().info(
+                            f"intent: entering {incoming_agent} directly "
+                            f"(score {intent_pick.score:.2f}, margin {intent_pick.margin:.2f})")
+
+            self.get_logger().info(
+                f"Invoking graph with input: {text} (entry={incoming_agent}, "
+                f"channel={self._turn_channel}, trace={trace})")
+            timing.emit("graph_start", entry=incoming_agent, system=is_system, trace=trace)
+
+            # Fresh handler per turn: streams sentence chunks to TTS while the
+            # LLM generates. Pre-tool text ("Let me check.") is spoken as the
+            # tool runs; the turn's utterance is closed with the EOU marker below.
+            # Telegram turns don't stream — the reply goes out whole as one
+            # phone message, and nothing may reach the speaker.
+            speech_stream = (
+                SpeechStreamHandler(self._bridge.publish_speech_chunk)
+                if self._stream_speech and not telegram and not quiet else None
+            )
+            callbacks = [self._timing_handler] + ([speech_stream] if speech_stream else [])
+
+            # LangSmith run config. Naming + tagging every turn is what makes
+            # the trace list explorable: the UI groups by run_name, filters on
+            # tags, and searches metadata. `trace_id` is the SAME id that
+            # stamps this turn's JSON log lines and /diag/timing events, so a
+            # LangSmith run, `journalctl -u langrobo-brain`, and the latency
+            # waterfall can all be joined on it. Costs nothing when tracing is
+            # off (LANGROBO_TRACING unset → services.config scrubs the env).
+            run_config = {
+                "callbacks": callbacks,
+                "run_name": f"turn:{source}",
+                "tags": [f"channel:{source}", f"entry:{incoming_agent}"],
+                "metadata": self._trace_metadata(
+                    trace, source, incoming_agent, telegram),
+            }
+
+            # A warm turn speaks its first sentence in ~1.5s. If nothing has
+            # been said after this long, something is wrong (cold KV cache, the
+            # Mac Mini unreachable) and silence reads as a dead robot — so say
+            # "one moment". Voice only: a Telegram sender gets typing dots.
+            if not telegram and not quiet:
+                def _say_one_moment():
+                    if speech_stream is None or not speech_stream.chunks_sent:
+                        self.get_logger().info("turn is slow — cueing 'one moment'")
+                        self._bridge.publish_cue("wait")
+                slow_cue = threading.Timer(SLOW_TURN_CUE_S, _say_one_moment)
+                slow_cue.daemon = True
+                slow_cue.start()
+
+            result = None
+            interrupted = False
+            for event in self._graph.stream(
+                {"messages": messages, "active_agent": incoming_agent,
+                 # "system" marks proactive turns (quiet-hours gate in the
+                 # telegram tools); _turn_channel stays voice/telegram — it
+                 # governs barge-in and the reply sink, and a [SYSTEM] turn
+                 # speaks aloud like any voice turn.
+                 "channel": "system" if is_system else self._turn_channel,
+                 "sender_name": telegram.name if telegram else (sender[0] if sender else None),
+                 "sender_role": telegram.role if telegram else (sender[1] if sender else None),
+                 "jev_vision": jev_read.vision if jev_read is not None else None,
+                 "addressed": addressing.addressed(
+                     text, "system" if is_system else self._turn_channel,
+                     self._last_spoke_ts, time.time())},
+                config=run_config,
+                stream_mode="values"):
+                if self._turn_interrupt.is_set():
+                    # Barge-in: a newer utterance is waiting. Abandon this turn
+                    # at the step boundary — drop any partial speech so
+                    # tts_node releases the mic, keep history/sticky untouched,
+                    # and let the worker loop pick up the new input.
+                    interrupted = True
+                    break
+                if "messages" in event:
+                    msg = event["messages"][-1]
+                    self._turn_moving = any(tc.get("name") in MOTION_TOOL_NAMES
+                                            for tc in (getattr(msg, "tool_calls", None) or []))
+                    self.get_logger().info(f"Step message [{type(msg).__name__}]: {str(msg.content)[:200]} (tool_calls: {getattr(msg, 'tool_calls', None)})")
+                    if speech_stream is not None:
+                        self._speak_around_tools(speech_stream, msg)
+                result = event
+
+            if slow_cue is not None:
+                slow_cue.cancel()
+            timing.emit("graph_end", interrupted=interrupted)
+
+            if interrupted:
+                if speech_stream and speech_stream.chunks_sent:
+                    # DROP what is queued and playing, don't merely close the
+                    # utterance: publish_speech_end() left the abandoned
+                    # answer talking underneath the new one, because tts_node
+                    # keeps speaking sentences it has already synthesised.
+                    self._bridge.publish_speech_stop()
+                self.get_logger().info("Turn abandoned — newer user input (barge-in)")
+                metrics.inc("turns_interrupted_total")
+                return
+
+            response = self._extract_response(result)
+
+            if is_silent(response):
+                if not telegram and not is_system and not addressing.name_said(text):
+                    # The agent judged it was not said to it (SPEECH_STYLE): no
+                    # reply, and like an empty turn nothing is kept -- room talk
+                    # in the history would only cost cache and confuse routing.
+                    self.get_logger().info(f"→ (silent: not for me) {text[:120]!r}")
+                    metrics.inc("turns_silent_total")
+                    return
+                # Called by name (any misspelling: Keeno, Keeno) or a
+                # [SYSTEM]/Telegram turn: silence is never the answer there.
+                self.get_logger().warning("silent reply to a turn that needs one -- asking again")
+                response = "Sorry, could you say that again?"
+                result["messages"][-1] = result["messages"][-1].model_copy(update={"content": response})
+
+            if not response:
+                if speech_stream and speech_stream.chunks_sent:
+                    # Something was streamed but the graph ended without a final
+                    # text — close the utterance so tts_node releases the mic.
+                    self._bridge.publish_speech_end()
+                if telegram:
+                    # A texter gets an answer or an apology — never silence.
+                    self._telegram.send_message(
+                        telegram.chat_id, "Sorry, I couldn't come up with a reply.")
+                self.get_logger().warning("Graph returned empty response")
+                metrics.inc("empty_responses_total")
+                # Return WITHOUT touching history or sticky: a turn that isn't
+                # persisted must not change routing state either (same invariant
+                # as barge-in above) — otherwise the next turn enters an agent
+                # whose context was discarded with this turn.
+                return
+
+            # Remember where the turn ended, so the next user follow-up can
+            # re-enter it directly and skip the routing hop entirely.
+            # turn_entry decides which agents are actually sticky-eligible
+            # (registry.py `sticky`; all three since 2026-09-08).
+            self._sticky_agent = result.get("active_agent") if result else None
+            self._jev_outcome(jev_read if jev_mode == "on" else
+                              (jev_shadow or {}).get("read"), self._sticky_agent,
+                              shadow=jev_mode == "shadow")
+            fields = intent_routing.record_outcome(intent_pick, self._sticky_agent, intent_acted)
+            if fields:
+                self.get_logger().info(intent_routing.log_line(fields))
+
+            # Persist the FULL message list from the graph (including any frames
+            # captured via look()), so follow-up turns reason over the same image.
+            # Trim at a turn boundary so the cached image prefix stays intact until
+            # a deliberate reset (never a per-turn front shift).
+            new_history = result.get("messages", messages) if result else messages
+            with self._history_lock:
+                self._history, history_reset = trim_history(new_history, self._max_history)
+
+            if quiet:
+                self.get_logger().info(f"→ (quiet, not spoken): {response[:120]}")
+            elif telegram:
+                # Reply sink: the sender's chat, never the speaker.
+                self.get_logger().info(f"→ Telegram ({telegram.name}): {response[:120]}")
+                err = self._telegram.send_message(telegram.chat_id, response)
+                if err:
+                    self.get_logger().warning(f"Telegram reply not delivered — {err}")
+            elif speech_stream and speech_stream.chunks_sent:
+                self._last_spoke_ts = time.time()
+                self.get_logger().info(f"→ TTS: {response[:120]}")
+                # Sentences already went out while the model was generating.
+                # Speak only what the listener has NOT heard: a streaming
+                # attempt that failed part-way still played its chunks, and a
+                # retry (or the non-streaming cloud fallback) then produced a
+                # final text that starts with them — publishing it whole said
+                # the beginning twice.
+                remainder = speech_stream.unspoken(response)
+                timing.emit("speech_stream_done", chunks=speech_stream.chunks_sent,
+                            respoke_chars=len(remainder))
+                if remainder:
+                    self.get_logger().info(f"→ TTS (not yet spoken): {remainder[:120]}")
+                    self._bridge.publish_speech(remainder)
+                else:
+                    self._bridge.publish_speech_end()
+            else:
+                self._last_spoke_ts = time.time()
+                self.get_logger().info(f"→ TTS: {response[:120]}")
+                # Streaming off, or nothing streamed at all — speak it whole.
+                self._bridge.publish_speech(response)
+
+            # Warm the next turn's prompt after EVERY turn, not just trims.
+            # An excursion to another agent appends messages chat's slot has
+            # never seen; without this the NEXT user turn paid that delta
+            # prefill up front (~40s measured, 2026-07-06). When the prefix is
+            # already cached the warm is a near-free no-op, and it skips itself
+            # if input is pending.
+            self._start_cache_warm()
+
+        except Exception as e:
+            self.get_logger().error(f"Graph error: {e}")
+            metrics.inc("turn_errors_total")
+            apology = "I'm having trouble right now. Please try again in a moment."
+            if telegram:
+                self._telegram.send_message(telegram.chat_id, apology)
+            elif not quiet:
+                self._bridge.publish_speech(apology)
+        finally:
+            # The cue must never outlive the turn — a late "one moment" after
+            # the answer has been spoken is worse than no cue at all.
+            if slow_cue is not None:
+                slow_cue.cancel()
+            with self._queue_lock:
+                self._turn_active = False
+                self._turn_moving = False
+            self._last_turn_ts = time.time()
+            metrics.set_gauge("last_turn_duration_seconds",
+                              round(time.time() - turn_start, 3))
+            if not telegram and not quiet:
+                self._pub_thinking.publish(Bool(data=False))
+
+    # ── KV-cache warming (background) ─────────────────────────────────────
+
+    def _probe_total_slots(self, base_url: str) -> int | None:
+        """How many parallel slots the llama.cpp server actually has
+        (GET /props → total_slots), so the slot map can fold gracefully when
+        the server runs fewer than the configured pins (an out-of-range
+        id_slot fails every request for that agent). Returns None when the
+        server is unreachable — the configured map is kept in that case."""
+        import json as _json
+        import urllib.request
+        root = base_url.rstrip("/")
+        if root.endswith("/v1"):
+            root = root[:-3].rstrip("/")
+        try:
+            with urllib.request.urlopen(f"{root}/props", timeout=3) as r:
+                total = int(_json.load(r).get("total_slots") or 0)
+            self.get_logger().info(f"LLM server reports {total} parallel slots")
+            return total or None
+        except Exception as e:
+            self.get_logger().info(
+                f"Slot probe failed ({e}) — keeping the configured slot map")
+            return None
+
+    def _start_cache_warm(self) -> None:
+        """Kick off one background prefill of the next-turn prompt (no-op if
+        one is already running)."""
+        if self._warm_thread and self._warm_thread.is_alive():
+            return
+        # Warm the agent the next turn will actually enter — the same rule
+        # turn_entry applies, read from the registry rather than restated
+        # here (it named local_agent explicitly and so went stale the moment
+        # navigate became sticky). Each sticky agent has its own KV slot, so
+        # warming the right one is what keeps that prefix resident.
+        agent = (self._sticky_agent
+                 if self._sticky_agent in registry.STICKY_ELIGIBLE else "chat")
+        # LANGROBO_WARM_ALL=1: every agent, entry FIRST (registry.warm_order),
+        # so a handover target is warm too. OFF by default: on a server whose
+        # slots wipe each other it costs ~3 full prompt reads per idle spell
+        # for nothing. The Mac PASSES scripts/llm_cache_check.py since
+        # 2026-10-01 and production .env sets it.
+        order = registry.warm_order(
+            agent, os.environ.get("LANGROBO_WARM_ALL", "0").strip().lower() in ("1", "true", "yes", "on"))
+        self._warm_thread = threading.Thread(
+            target=self._warm_all, args=(order,), daemon=True)
+        self._warm_thread.start()
+
+    def _warm_all(self, order: list) -> None:
+        for agent in order:
+            if self._input_event.is_set():
+                return          # a turn is pending: it goes first
+            if registry.SPECS[agent].keep_images and self._bridge.navigation_active():
+                # A drive ends in the arrival check, a vision question that
+                # needs the Mac. On 2026-10-11 a warm started mid-drive re-read
+                # local_agent's photo history for 43 s and the arrival check,
+                # beside it, took 43 s instead of ~6 -- the "stop" said
+                # meanwhile waited behind both. Text-only agents still warm:
+                # skipping chat too left the arrival report a 37 s cold read.
+                self.get_logger().info(f"KV-cache warm of '{agent}' (photos) skipped: a drive is running")
+                continue
+            self._warm_cache(agent)
+
+    def _warm_cache(self, agent: str) -> None:
+        """Prefill `agent`'s llama.cpp slot with its current projected prompt.
+
+        Sends the IDENTICAL system prompt + bound tools + history the next real
+        turn will send (via the agent's build_llm_call), with max_tokens=1, so
+        the server caches the prefix while the robot is idle. If the user
+        speaks mid-warm, the real request queues behind this one on the same
+        slot and then reuses the very prefix being computed — total prefill
+        work is the same, so the race is harmless.
+        """
+        try:
+            from langchain_core.messages import HumanMessage
+            if self._input_event.is_set():
+                return  # a turn is already pending — it will pay the prefill itself
+            with self._history_lock:
+                history = list(self._history)
+            # Same prompt assembly the real turn will use — the warmer must
+            # prefill a byte-identical prompt or it warms nothing. Registry-built
+            # agents all expose it (langrobo_core.agents.BUILD_LLM_CALLS).
+            from langrobo_core.agents import BUILD_LLM_CALLS
+            build_llm_call = BUILD_LLM_CALLS.get(agent) or BUILD_LLM_CALLS["chat"]
+            # The trailing "(warmup)" user message only diverges at the tail —
+            # everything before it (the expensive part) is cached for real turns.
+            llm, msgs = build_llm_call(history + [HumanMessage(content="(warmup)")])
+            # Named + tagged so these don't sit in the LangSmith trace list as
+            # anonymous root ChatOpenAI runs next to real turns: there are two
+            # per turn, they carry the full prompt, and they
+            # answer nothing. Hide them in the UI with -has(tags, "cache_warm").
+            llm.bind(max_tokens=1).invoke(msgs, config={
+                "run_name": f"cache_warm:{agent}",
+                "tags": ["cache_warm", f"entry:{agent}"],
+                "metadata": {"agent": agent, "history_messages": len(history)},
+            })
+            self.get_logger().info(
+                f"KV-cache warmed for '{agent}' ({len(history)} history messages)")
+        except Exception as e:
+            self.get_logger().warning(f"KV-cache warm failed (non-fatal): {e}")
+
+    def _speak_around_tools(self, speech_stream, msg) -> None:
+        """Say what is happening as it happens (utils/tool_speech.py): a line
+        when a slow tool is called, and its plain success when it returns --
+        then the model's restatement is not spoken. Graph events arrive after
+        each step, so a call's line is out before its tool runs."""
+        from langchain_core.messages import ToolMessage
+        if isinstance(msg, ToolMessage):
+            line = tool_speech.on_result(msg.name, msg.content)
+            if line:
+                self.get_logger().info(f"→ TTS (from {msg.name}): {line}")
+                speech_stream.say(line, mute_next_run=True)
+            return
+        for tc in getattr(msg, "tool_calls", None) or []:
+            line = tool_speech.on_call(tc.get("name", ""), tc.get("args") or {})
+            if line:
+                self.get_logger().info(f"→ TTS (calling {tc.get('name')}): {line}")
+                speech_stream.say(line)
+
+    def _extract_response(self, result: dict) -> str | None:
+        """Return the last non-empty AI text from THIS turn of the graph output.
+
+        Stops at the first HumanMessage: walking past it would pick up a
+        previous turn's reply and re-speak it whenever the current turn ended
+        without AI text (empty content, loop-guard edge cases)."""
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+        for msg in reversed(result.get("messages", [])):
+            if isinstance(msg, HumanMessage):
+                return None
+            if isinstance(msg, ToolMessage):
+                continue
+            if isinstance(msg, AIMessage):
+                content = msg.content
+                if isinstance(content, str) and content.strip():
+                    return content.strip()
+                if isinstance(content, list):
+                    text = " ".join(
+                        p.get("text", "") for p in content
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    ).strip()
+                    if text:
+                        return text
+        return None
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = AgentNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        # try_: on SIGINT/SIGTERM rclpy's own signal handler has already shut
+        # the context down, and a second shutdown() raised RCLError -- which
+        # made every clean `systemctl restart` log "process has died, exit
+        # code 1" like a crash.
+        rclpy.try_shutdown()

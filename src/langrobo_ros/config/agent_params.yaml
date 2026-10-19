@@ -1,0 +1,68 @@
+# LangRobo brain — ROS parameters (LLM + robot behaviour).
+# Service settings (cloud fallback, Telegram, health API, tracing) are
+# NOT here — they live in .env, validated by langrobo_core.services.config.
+# See OPERATIONS.md for the full reference of both.
+
+agent_node:
+  ros__parameters:
+    # LLM provider — "llamacpp" uses the ChatOpenAI class with a custom base_url.
+    # Options: llamacpp | openai | anthropic | gemini | ollama
+    # The launch file overrides provider/base_url (prod default: llamacpp + Mac Mini).
+    provider: "llamacpp"
+
+    # Model name — the llama.cpp server ignores this field, so any string works.
+    model: "default"
+
+    # Environment variable that holds the API key (leave empty for llama.cpp).
+    api_key_env: ""
+
+    # Mac Mini llama.cpp server endpoint (launch arg base_url overrides).
+    base_url: "http://singireddys-mac-mini.local:8080/v1"
+
+    # Max tokens per LLM response. Replies are spoken: 1-3 sentences, ~20-60
+    # tokens (2026-10-02 measurements); a long Telegram message ~200. The cap
+    # is what bounds a runaway Gemma "thinking" loop (services/llm.py): at
+    # ~9 tok/s, 600 tokens is ~1 min of silence before the blank-reply retry,
+    # where 3000 was ~5 min.
+    max_tokens: 600
+
+    # User/assistant turn pairs kept in conversation memory (x4 for tool/image
+    # messages). Each trim resets the llama.cpp prompt cache (the kept suffix
+    # re-prefills), so bigger = fewer resets; the reset cost is hidden by the
+    # background cache warmer in agent_node anyway.
+    history_turns: 12
+
+    # Subscribe to the Jetson camera topic and cache the latest frame so
+    # local_agent's look() can see and reason over it.
+    use_vision: true
+
+    # Stream sentence chunks to /voice/robot_speech as the LLM generates,
+    # ending each utterance with the <|eou|> marker (utils/speech_stream.py).
+    # First audio starts after the first sentence instead of the full reply.
+    stream_speech: true
+
+    # ── llama.cpp KV-cache slots ──────────────────────────────────────────
+    # NOT configured here. Each agent's slot is declared next to the agent in
+    # langrobo_core/registry.py (AgentSpec.slot), because it is a property of
+    # the agent and nothing else. It used to be five parameters plus a
+    # fold-when-out-of-range algorithm in agent_node, which is a lot of moving
+    # parts for "give each agent its own cache".
+    #
+    # What you DO need: start the llama.cpp server with --parallel 5 (e12b5):
+    # one slot per agent (chat, local_agent, navigate), the vision-tool slot 3
+    # (photo questions, search, locate) and the voice filter's slot 4. agent_node probes the server's
+    # real slot count at boot and warns — loudly — if it is lower, because
+    # sharing a slot means each call evicts the other agent's prompt prefix and
+    # pays it back as ~18-50s of re-prefill on the next turn.
+
+    # Override model for local_agent only ("" = inherit the global model).
+    # Set to your multimodal GGUF if the global model is text-only.
+    local_agent_model: ""
+
+    # ── Named locations: none configured here, on purpose ─────────────────
+    # Places come only from "save this location as X" (save_location ->
+    # ~/.langrobo/locations.json, stamped with the odom origin). There used to
+    # be four placeholder rooms here, but odom restarts at zero wherever the
+    # robot boots, so fixed coordinates pointed at a different spot every
+    # power-on and were offered as if they were real.
+

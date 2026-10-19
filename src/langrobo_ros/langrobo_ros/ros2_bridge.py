@@ -1,0 +1,1422 @@
+"""ROS2Bridge — ROS2 I/O for the langrobo brain (imports rclpy/ROS2 types).
+
+Three sections mirror the three ROS2 communication patterns:
+  1. Topics   — fast pub/sub with sensor caching
+  2. Services — synchronous request / response
+  3. Actions  — long-running goals with optional feedback callbacks
+
+LangGraph tools never import from this file directly — they call
+langrobo_core.tools._bridge.get() which returns this object.
+"""
+
+import re
+import json
+import os
+import threading
+import time
+from typing import Callable
+
+import math
+
+from geometry_msgs.msg import PoseStamped, Twist
+from std_msgs.msg import Bool, String
+
+from langrobo_core.utils.speech_stream import SPEECH_ABANDON, SPEECH_EOU, clean_for_speech
+
+
+class ROS2Bridge:
+
+    # The ONE frame this brain navigates and localises in.
+    #
+    # Every goal sent to Nav2, every pose read from TF, and every 3D detection
+    # accepted from the Jetson must agree on this. They did not: "map" was
+    # hardcoded in three separate places, written against a fuller perception
+    # stack that this rover does not have. This rover's Nav2 runs single-session
+    # in `odom` with no relocalisation (nav2.yaml: global_frame: odom, in the
+    # rover repo), so nothing ever publishes a map frame — get_current_pose()
+    # returned None on every call and every navigate_to_pose/approach_* goal
+    # was silently untransformable. Two of the three were fixed by hand on
+    # 2026-09-06; a third — the detections handler — was missed entirely and
+    # silently dropped every detection it was ever given.
+    #
+    # It is a single name now precisely so they can never drift apart again.
+    # Set LANGROBO_NAV_FRAME=map on a rig that really does run AMCL or cuVSLAM
+    # map-relocalisation.
+    #
+    # Anything publishing object positions for this brain to navigate to must
+    # express them in THIS frame — see INTEGRATION_GAPS.md §1 for the
+    # /vision/detections_3d contract.
+    NAV_FRAME = os.environ.get("LANGROBO_NAV_FRAME", "odom")
+
+    def __init__(self, node, known_locations: dict = None, use_vision: bool = True):
+        self._node = node
+
+        # Named map locations: {name: (x, y, yaw_deg)} — the caller's base set
+        # (empty in production: places come only from save_location). This is the BASE set; _rebuild_known_locations() layers fresh saved
+        # locations on top of it and reassigns _known_locations wholesale, so
+        # keep the config-declared set around under its own name.
+        self._config_locations: dict = dict(known_locations or {})
+        self._known_locations: dict = dict(self._config_locations)
+
+        # The odom origin THIS process currently believes is live, from
+        # /fusion/status's origin_epoch (None until the first message arrives).
+        # Every saved location is stamped with the epoch it was measured
+        # under; one stamped with a DIFFERENT epoch was measured from a
+        # physical spot this session has no relationship to (see NAV_FRAME
+        # above) and must not be served, or navigate_to_pose would silently
+        # drive to the wrong place. See _on_fusion_status / _rebuild_known_locations.
+        self._origin_epoch = None
+        self._warned_stale_locations = False
+
+        # Locations saved at runtime (save_location tool) persist across
+        # restarts and shadow config defaults on name collision -- but ONLY
+        # once their stamped epoch matches the live one; see above.
+        from langrobo_core.services.config import state_path   # LANGROBO_STATE_DIR (the twin's own)
+        self._locations_file = state_path("locations.json")
+        self._saved_locations: dict = {}   # {name: (x, y, yaw_deg, origin_epoch[, home])}
+        # home = {"room": id, "map": [x, y, yaw_deg]}: the same spot in the saved
+        # room's map frame, when the Jetson announced one (/home/room). That is
+        # what lets a place survive a power cycle: odom restarts at 0 every
+        # boot, the room's map frame does not (rover phase2/tools/relocalize.py
+        # finds the rover in it at start-up). 2026-10-18, real robot: every
+        # saved place was dropped at each power cycle as "a different origin".
+        self._room = None                  # the live /home/room: {"id", "frame", "state"}
+        try:
+            with open(self._locations_file) as f:
+                raw = json.load(f)
+            for k, v in raw.items():
+                # 4 fields = post-epoch format. 3 = a file from before this
+                # existed; treat as unstamped so it never gets reloaded silently
+                # (it may well be from a now-gone odom origin).
+                self._saved_locations[k] = tuple(v) if len(v) in (4, 5) else (*v, None)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            node.get_logger().warning(f"Could not load saved locations: {e}")
+        # NOT merged into _known_locations yet: that happens in
+        # _rebuild_known_locations, gated on origin_epoch actually being
+        # known, so a stale entry is never served even in the few seconds
+        # before the first /fusion/status message arrives.
+
+        node.create_subscription(String, "/fusion/status", self._on_fusion_status, 10)
+        from rclpy.qos import DurabilityPolicy as _D, QoSProfile as _Q
+        node.create_subscription(String, "/home/room", self._on_home_room,
+                                 _Q(depth=1, durability=_D.TRANSIENT_LOCAL))
+
+        # TF buffer for get_current_pose() (NAV_FRAME -> base_link)
+        from tf2_ros import Buffer, TransformListener
+        self._tf_buffer = Buffer()
+        self._tf_listener = TransformListener(self._tf_buffer, node)
+
+        # ── Locks ─────────────────────────────────────────────────────────────
+        self._frame_lock   = threading.Lock()
+        self._pub_lock     = threading.Lock()
+        self._act_lock     = threading.Lock()
+
+        # ── Pixel-grounding replies (JSON from Jetson pixel_to_goal) ─────────
+        # Keyed by the request id we sent in the query's frame_id; ground_pixel
+        # polls for its own id so concurrent queries can't steal each other's
+        # answer.
+        self._pixel_lock = threading.Lock()
+        self._pixel_results: dict[str, dict] = {}
+
+        # ── Latest camera frame (bytes, JPEG-encoded) ─────────────────────────
+        self._latest_frame: bytes | None = None
+        self._frame_stamp: float = 0.0   # time.monotonic() of last frame
+        # The CAMERA's own stamp for that frame, (sec, nanosec) on the Jetson's
+        # clock, or None. It was dropped here until 2026-09-26, and without it
+        # the Jetson could only ground a VLM pixel against its NEWEST depth
+        # and pose -- 10-40 s after the photo, wherever the rover had got to
+        # (rover repo INTELLIGENCE_PLAN.md B2). It is only ever echoed back to
+        # the Jetson, never compared with this clock, so the Pi 5's ~1.5 s
+        # offset from the Jetson's clock does not matter.
+        self._frame_camera_stamp: tuple | None = None
+
+        # Commanded pan/tilt (open-loop; servos settle in ~0.3s). Kept so tools
+        # can re-centre and report the current aim without a state topic.
+        self._pan_tilt = (0.0, 0.0)
+
+        # ── Speech state ───────────────────────────────────────────────────────
+        # No queue here: sentence chunks are published immediately and
+        # pi5_voice_pkg's tts_node queues/plays them in order (utterance ends
+        # with the SPEECH_EOU marker). _is_speaking is informational.
+        self._speech_lock    = threading.Lock()
+        self._is_speaking    = False   # updated by /voice/tts_speaking subscription
+
+        # ── Active navigation state ────────────────────────────────────────────
+        self._nav_lock      = threading.Lock()
+        self._nav_cancel_event: threading.Event | None = None
+        self._nav_thread:       threading.Thread | None = None
+        # What the robot is driving to, and how its last drive ended -- read by
+        # get_robot_status, so "where are you?" is answered from the robot, not
+        # from the last thing it said (2026-10-04: "1.5 m from the door",
+        # long after it had arrived).
+        self._nav_goal:         dict | None = None
+        self._last_nav:         dict | None = None
+
+        # ── Motion interrupt ───────────────────────────────────────────────────
+        # Set by agent_node when new user input arrives, so blocking motion tools
+        # (move_robot, the approach search, scan_surroundings, reach_and_wait)
+        # bail out promptly — i.e. a spoken "stop" actually stops the wheels.
+        self._motion_interrupt = threading.Event()
+
+        # ── Lazy client registries ─────────────────────────────────────────────
+        self._dynamic_pubs:    dict = {}   # topic name → Publisher
+        self._action_clients:  dict = {}   # action name → ActionClient
+
+        # ── Registered callback for navigation completion ──────────────────────
+        self._nav_done_callback: Callable[[bool, str], None] | None = None
+
+        # ── Registered callback for tool-injected [SYSTEM] turns ───────────────
+        # Lets pure-zone tools hand a proactive turn to
+        # agent_node's system queue without importing anything ROS-side.
+        self._system_turn_callback: Callable[[str], None] | None = None
+
+        # ── Fixed publishers (pre-created so tools never block on first call) ──
+        self._speech_pub        = node.create_publisher(String, "/voice/robot_speech", 10)
+        # Abandon what is queued/playing. Same topic stt_node's stop word uses,
+        # tagged so agent_node does not mistake its own message for a human
+        # saying "stop" and sweep the wheels (see _on_tts_stop).
+        self._tts_stop_pub      = node.create_publisher(String, "/voice/tts_stop", 10)
+        self._cue_pub           = node.create_publisher(String, "/voice/cue", 10)
+        # the ESP32's input: plain Twist on /cmd_vel (the twin's esp32_twin is the same)
+        self._twist_pub = node.create_publisher(Twist, "/cmd_vel", 10)
+        self._timing_pub        = node.create_publisher(String, "/diag/timing", 10)
+        # Camera pan/tilt: raw servo angles for the ESP32 (0-180, 90=centre) +
+        # a JSON state topic for a TF broadcaster. NO listener today (no mount,
+        # no servo subscriptions in the firmware): only point_camera uses them,
+        # and it is bound only with LANGROBO_PAN_TILT=1 (movement.PAN_TILT_ENABLED).
+        from std_msgs.msg import UInt16
+        self._UInt16 = UInt16
+        self._servo_pan_pub  = node.create_publisher(UInt16, "/servo_pan", 10)
+        self._servo_tilt_pub = node.create_publisher(UInt16, "/servo_tilt", 10)
+        self._pan_tilt_state_pub = node.create_publisher(String, "/camera/pan_tilt_state", 10)
+
+        # VLM pixel grounding (Jetson pixel_to_goal): PointStamped pixel query
+        # in, JSON result out — see ~/rover phase4/nodes/pixel_to_goal.py (Jetson).
+        from geometry_msgs.msg import PointStamped
+        self._PointStamped = PointStamped
+        self._pixel_query_pub = node.create_publisher(PointStamped, "/vision/pixel_query", 10)
+        node.create_subscription(String, "/vision/pixel_result", self._on_pixel_result, 10)
+        # "Keep the depth and camera pose of THIS photo": sent the moment a
+        # frame is taken for the VLM, so the later pixel_query can be grounded
+        # at the photo's instant (pixel_to_goal.py AT THE MOMENT OF THE PHOTO).
+        self._pixel_snapshot_pub = node.create_publisher(PointStamped, "/vision/pixel_snapshot", 10)
+        # Volume / Bluetooth (audio_device_node) and music (media_node), both on
+        # the Pi 5's voice side. Requests carry an id; the latched state topics
+        # echo it in "last" -- audio_request()/music_request() wait for it.
+        from rclpy.qos import DurabilityPolicy as _Dur, QoSProfile as _QoS, ReliabilityPolicy as _Rel
+        _latched = _QoS(depth=1, durability=_Dur.TRANSIENT_LOCAL, reliability=_Rel.RELIABLE)
+        self._audio_cmd_pub = node.create_publisher(String, "/audio/cmd", 10)
+        self._music_cmd_pub = node.create_publisher(String, "/audio/music_cmd", 10)
+        self._audio_replies: dict[str, dict] = {}
+        self._audio_lock = threading.Lock()
+        node.create_subscription(String, "/audio/state", self._on_audio_state, _latched)
+        node.create_subscription(String, "/audio/music_state", self._on_audio_state, _latched)
+
+        # ── Exact motion on the Jetson (rover repo phase3/) ──────────────────
+        # goal_exec: turns and short straight moves closed on the fused pose
+        # (~1.4 cm, heading within 2 deg), outline-checked against LiDAR and
+        # depth. reach: nav2 for the route, goal_exec to finish, and on failure
+        # look / pass / wait, retrying. Both report on a status topic whose
+        # lines carry the goal's header.stamp ("goal_stamp"), which is how a
+        # result is matched to the goal that asked for it.
+        self._goal_exec_goal_pub = node.create_publisher(PoseStamped, "/goal_exec/goal", 10)
+        self._goal_exec_turn_pub = node.create_publisher(PoseStamped, "/goal_exec/turn", 10)
+        from std_msgs.msg import Empty
+        self._Empty = Empty
+        self._goal_exec_cancel_pub = node.create_publisher(Empty, "/goal_exec/cancel", 10)
+        self._reach_goal_pub = node.create_publisher(PoseStamped, "/reach/goal", 10)
+        self._reach_cancel_pub = node.create_publisher(Empty, "/reach/cancel", 10)
+        self._status_lock = threading.Lock()
+        self._goal_exec_status: dict[str, list] = {}   # goal_stamp -> status dicts
+        self._reach_status: dict[str, list] = {}
+        node.create_subscription(String, "/goal_exec/status",
+                                 lambda m: self._on_status(m, self._goal_exec_status), 10)
+        node.create_subscription(String, "/reach/status",
+                                 lambda m: self._on_status(m, self._reach_status), 10)
+        # follow: "follow me" / "come to me" (Jetson phase3/nodes/follow_node.py).
+        # Its status lines echo the "req" we send, as goal_stamp does above.
+        self._follow_start_pub = node.create_publisher(String, "/follow/start", 10)
+        self._follow_cancel_pub = node.create_publisher(Empty, "/follow/cancel", 10)
+        self._follow_status: dict[str, list] = {}
+        self._follow_current_key = None     # the follow a cancel is for (start_follow)
+        node.create_subscription(String, "/follow/status",
+                                 lambda m: self._on_status(m, self._follow_status, "req"), 10)
+
+        # tts_node's speaking state (half-duplex: the mic is muted while True)
+        node.create_subscription(Bool, "/voice/tts_speaking", self._on_speaking, 10)
+
+        # ── Vision input ──────────────────────────────────────────────────
+        # This belongs HERE because this class owns the cache it fills:
+        # get_frame()/frame_age(). It used to be wired in agent_node instead,
+        # which meant any OTHER owner of a bridge got the cache with nothing to
+        # fill it -- graph_studio.py (LangGraph Studio) had a fully wired bridge
+        # whose look() returned "no camera frame is available" forever, on a
+        # robot whose camera was publishing fine.
+        # /vision/pixel_result is already subscribed above for the same reason;
+        # the image half was simply left outside. Same failure family as the
+        # NAV_FRAME note at the top of this class: wiring that lives in more
+        # than one place drifts, and the half nobody is looking at goes quiet.
+        if use_vision:
+            from sensor_msgs.msg import CompressedImage
+            # Consume the JPEG camera_node already publishes -- no raw-frame
+            # transport over the Jetson<->Pi5 link and no re-encode on the Pi5.
+            # The compressed bytes ARE what look() needs (base64 image/jpeg).
+            node.create_subscription(CompressedImage, "/camera/color/image_raw/compressed",
+                                     self._on_compressed_image, 1)
+
+        # ── Object memory -> RViz (/brain/objects) ─────────────────────────
+        # What the brain has located, drawn where it is: a sphere and a label
+        # ("orange bottle, 3 min ago") per remembered object, in NAV_FRAME.
+        # Without it, "go to the bottle" was a goal arrow appearing from
+        # nowhere; now the laptop shows what was found before the drive starts.
+        # Latched, so an RViz started later still gets the current set.
+        from rclpy.qos import DurabilityPolicy, QoSProfile
+        from visualization_msgs.msg import Marker, MarkerArray
+        self._Marker, self._MarkerArray = Marker, MarkerArray
+        self._objects_pub = node.create_publisher(
+            MarkerArray, "/brain/objects",
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        self._objects_sig = None
+        node.create_timer(2.0, self._publish_object_markers)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 1 — Topics
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _publish_object_markers(self) -> None:
+        """Object memory -> MarkerArray. Republishes only when the set or an
+        age label changes. Memory is a display here: any failure is logged
+        once per kind and never reaches a turn."""
+        from langrobo_core.services import object_memory
+        try:
+            now = time.time()
+            entries = (object_memory.recall("", self._origin_epoch, now=now)
+                       if self._origin_epoch is not None else [])
+            labels = [f"{e['description']}, {object_memory.describe_age(now - e.get('seen_at', now))}"
+                      for e in entries]
+            sig = tuple((e.get("id"), round(e["x"], 2), round(e["y"], 2), lab)
+                        for e, lab in zip(entries, labels))
+            if sig == self._objects_sig:
+                return
+            self._objects_sig = sig
+            M = self._Marker
+            clear = M(action=M.DELETEALL)
+            clear.header.frame_id = self.NAV_FRAME
+            out = [clear]
+            stamp = self._node.get_clock().now().to_msg()
+            for i, (e, lab) in enumerate(zip(entries, labels)):
+                # Fresh sightings solid, hour-old ones faint (MAX_AGE_S drops them).
+                alpha = max(0.35, 1.0 - (now - e.get("seen_at", now)) / object_memory.MAX_AGE_S)
+                for kind in ("dot", "label"):
+                    m = M()
+                    m.header.frame_id, m.header.stamp = self.NAV_FRAME, stamp
+                    m.ns, m.id, m.action = f"brain_objects_{kind}", i, M.ADD
+                    m.pose.position.x, m.pose.position.y = float(e["x"]), float(e["y"])
+                    m.pose.orientation.w = 1.0
+                    m.color.r, m.color.g, m.color.b, m.color.a = 1.0, 0.55, 0.0, alpha
+                    if kind == "dot":
+                        m.type = M.SPHERE
+                        m.pose.position.z = 0.10
+                        m.scale.x = m.scale.y = m.scale.z = 0.14
+                    else:
+                        m.type, m.text = M.TEXT_VIEW_FACING, lab
+                        m.pose.position.z = 0.35
+                        m.scale.z = 0.10
+                        m.color.r = m.color.g = m.color.b = 1.0
+                    out.append(m)
+            self._objects_pub.publish(self._MarkerArray(markers=out))
+        except Exception as e:   # noqa: BLE001 - a display must never break the brain
+            if getattr(self, "_objects_err", None) != type(e).__name__:
+                self._objects_err = type(e).__name__
+                self._node.get_logger().warning(f"/brain/objects not published: {e!r}")
+
+    # ── Callbacks (ROS2 spin thread) ───────────────────────────────────────
+
+    def on_image(self, frame_bytes: bytes, camera_stamp: tuple | None = None) -> None:
+        with self._frame_lock:
+            self._latest_frame = frame_bytes
+            self._frame_stamp = time.monotonic()
+            self._frame_camera_stamp = camera_stamp
+
+    def _on_compressed_image(self, msg) -> None:
+        """CompressedImage -> the byte cache. msg.data is already JPEG.
+
+        Kept separate from on_image() because that one takes raw bytes and is
+        part of the bridge protocol StubBridge also implements; this is the ROS
+        message adapter and only makes sense with rclpy present.
+        """
+        try:
+            st = msg.header.stamp
+            self.on_image(bytes(msg.data),
+                          (st.sec, st.nanosec) if (st.sec or st.nanosec) else None)
+        except Exception as e:
+            self._node.get_logger().warning(f"Frame cache error: {e}")
+
+    def _on_speaking(self, msg: Bool) -> None:
+        with self._speech_lock:
+            self._is_speaking = msg.data
+
+    # ── Cached reads (worker thread) ──────────────────────────────────────
+
+    def get_frame(self, max_age_s: float | None = None) -> bytes | None:
+        """Latest camera JPEG, or None if there is none — or it is older than
+        max_age_s (camera node dead / Jetson link down: better to admit
+        blindness than confidently describe a scene that is long gone)."""
+        with self._frame_lock:
+            if self._latest_frame is None:
+                return None
+            if max_age_s is not None and time.monotonic() - self._frame_stamp > max_age_s:
+                return None
+            return self._latest_frame
+
+    def frame_age(self) -> float | None:
+        """Seconds since the last camera frame arrived (None = never)."""
+        with self._frame_lock:
+            if self._latest_frame is None:
+                return None
+            return time.monotonic() - self._frame_stamp
+
+    def get_frame_stamped(self, max_age_s: float | None = None) -> tuple:
+        """(jpeg, camera_stamp) for the latest frame, read together so the two
+        always describe the same photo; (None, None) under get_frame's rules.
+        camera_stamp is (sec, nanosec) on the Jetson's clock, or None if the
+        publisher left it empty."""
+        with self._frame_lock:
+            if self._latest_frame is None:
+                return None, None
+            if max_age_s is not None and time.monotonic() - self._frame_stamp > max_age_s:
+                return None, None
+            return self._latest_frame, self._frame_camera_stamp
+
+    def hold_frame(self, camera_stamp: tuple) -> None:
+        """Ask the Jetson to keep the depth frame and camera pose of the photo
+        with this camera stamp, for a pixel_query that will come after the VLM
+        has looked (10-40 s: longer than the Jetson's depth ring and TF buffer
+        reach back). Fire and forget: a failed hold shows up in that query's
+        reason ("snapshot_expired"). No-op for a frame with no stamp."""
+        if not camera_stamp:
+            return
+        msg = self._PointStamped()
+        msg.header.stamp.sec, msg.header.stamp.nanosec = int(camera_stamp[0]), int(camera_stamp[1])
+        self._pixel_snapshot_pub.publish(msg)
+
+    def get_known_locations(self) -> dict:
+        # Places from an earlier boot of the SAME room come back through the
+        # room's map frame, re-projected into this session's odom NOW (SLAM's
+        # map -> odom moves a few cm as it corrects, so never cache it).
+        back = {}
+        if self._room:
+            for k, v in self._saved_locations.items():
+                if k in self._known_locations or len(v) < 5 or not v[4]:
+                    continue
+                home = v[4]
+                if home.get("room") == self._room.get("id"):
+                    p = self._map_to_odom(*home["map"])
+                    if p is not None:
+                        back[k] = p
+        return {**self._known_locations, **back} if back else self._known_locations
+
+    def _on_home_room(self, msg) -> None:
+        try:
+            room = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError):
+            return
+        if room.get("id") and room != self._room:
+            self._room = room
+            n = sum(1 for v in self._saved_locations.values()
+                    if len(v) >= 5 and v[4] and v[4].get("room") == room["id"])
+            self._node.get_logger().info(
+                f"home room {room['id']} ({room.get('state')}): {n} saved place(s) belong to it")
+
+    def _tf_pose(self, parent: str, child: str):
+        import rclpy.time
+        try:
+            t = self._tf_buffer.lookup_transform(parent, child, rclpy.time.Time())
+        except Exception:
+            return None
+        q = t.transform.rotation
+        return (t.transform.translation.x, t.transform.translation.y,
+                math.degrees(math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))))
+
+    def _map_to_odom(self, x: float, y: float, yaw_deg: float):
+        """A map-frame pose -> NAV_FRAME (odom) through the live map -> odom transform."""
+        t = self._tf_pose(self.NAV_FRAME, "map")
+        if t is None:
+            return None
+        tx, ty, tyaw = t
+        c, s = math.cos(math.radians(tyaw)), math.sin(math.radians(tyaw))
+        return (tx + c * x - s * y, ty + s * x + c * y, (yaw_deg + tyaw + 180.0) % 360.0 - 180.0)
+
+    def _odom_to_map(self, x: float, y: float, yaw_deg: float):
+        t = self._tf_pose("map", self.NAV_FRAME)
+        if t is None:
+            return None
+        tx, ty, tyaw = t
+        c, s = math.cos(math.radians(tyaw)), math.sin(math.radians(tyaw))
+        return (tx + c * x - s * y, ty + s * x + c * y, (yaw_deg + tyaw + 180.0) % 360.0 - 180.0)
+
+    def _rebuild_known_locations(self) -> None:
+        """Recompute _known_locations from config + only the saved locations
+        whose stamped epoch matches the currently-live odom origin. Called
+        whenever origin_epoch changes -- including mid-session, e.g. a
+        cuVSLAM divergence recovery (./rover pose) restarts the odom origin
+        without the Pi 5 process ever restarting."""
+        fresh = {k: v[:3] for k, v in self._saved_locations.items()
+                 if v[3] == self._origin_epoch}
+        stale = sorted(set(self._saved_locations) - set(fresh))
+        if stale and not self._warned_stale_locations:
+            self._warned_stale_locations = True
+            self._node.get_logger().warning(
+                f"{len(stale)} saved location(s) are from a different odom "
+                f"origin and will not be served until re-saved: {stale}")
+        self._known_locations = {**self._config_locations, **fresh}
+
+    def _on_fusion_status(self, msg) -> None:
+        try:
+            data = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError):
+            return
+        epoch = data.get("origin_epoch")
+        if epoch is None or epoch == self._origin_epoch:
+            return
+        self._origin_epoch = epoch
+        self._warned_stale_locations = False   # a new origin deserves its own warning
+        self._rebuild_known_locations()
+
+    def get_origin_epoch(self):
+        """The odom origin this session's coordinates are measured from
+        (/fusion/status origin_epoch), or None before the first message.
+        Anything remembered in odom -- saved locations, object memory -- is
+        only meaningful under the same epoch."""
+        return self._origin_epoch
+
+    def get_current_pose(self) -> tuple | None:
+        """Robot pose as (x, y, yaw_deg) in NAV_FRAME; None if TF has no fix."""
+        import rclpy.time
+        try:
+            t = self._tf_buffer.lookup_transform(
+                self.NAV_FRAME, "base_link", rclpy.time.Time())
+        except Exception:
+            return None
+        q = t.transform.rotation
+        yaw = math.degrees(math.atan2(2 * (q.w * q.z + q.x * q.y),
+                                      1 - 2 * (q.y * q.y + q.z * q.z)))
+        return (t.transform.translation.x, t.transform.translation.y, yaw)
+
+    def add_known_location(self, name: str, x: float, y: float, yaw_deg: float) -> None:
+        """Add/overwrite a named location for THIS odom session, and persist it
+        to disk stamped with the current origin_epoch. It will only be served
+        again after a restart (or a mid-session pose reset) if that same
+        origin is still the live one -- see _rebuild_known_locations. Usable
+        immediately either way, for the rest of the current session."""
+        self._known_locations[name] = (x, y, yaw_deg)
+        home = None
+        if self._room:
+            m = self._odom_to_map(x, y, yaw_deg)
+            if m is not None:
+                home = {"room": self._room["id"], "map": [round(v, 3) for v in m]}
+        self._saved_locations[name] = (x, y, yaw_deg, self._origin_epoch, home)
+        os.makedirs(os.path.dirname(self._locations_file), exist_ok=True)
+        # Atomic, like object memory: a power cut mid-write left a truncated
+        # file, which the next boot could not read -- every saved place gone.
+        tmp = f"{self._locations_file}.tmp"
+        with open(tmp, "w") as f:
+            json.dump({k: list(v) for k, v in self._saved_locations.items()}, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, self._locations_file)
+
+    # ── Camera pan/tilt (ESP32 dual servo + Jetson TF mirror) ─────────────
+
+    def set_pan_tilt(self, pan_deg: float, tilt_deg: float) -> None:
+        """Aim the camera head: pan -90..90 (0 = forward), tilt -30..30
+        (0 = level). Publishes raw servo angles (90 + deg) for the ESP32 and a
+        JSON state for the Jetson's pan_tilt TF broadcaster."""
+        self._pan_tilt = (pan_deg, tilt_deg)
+        self._servo_pan_pub.publish(self._UInt16(data=int(round(90 + pan_deg))))
+        self._servo_tilt_pub.publish(self._UInt16(data=int(round(90 + tilt_deg))))
+        self._pan_tilt_state_pub.publish(String(data=json.dumps(
+            {"pan_deg": pan_deg, "tilt_deg": tilt_deg, "t": time.time()})))
+
+    def get_pan_tilt(self) -> tuple:
+        """Last commanded (pan_deg, tilt_deg) — open-loop state."""
+        return self._pan_tilt
+
+    def _on_pixel_result(self, msg) -> None:
+        """Cache a /vision/pixel_result JSON reply under its request id."""
+        try:
+            data = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError):
+            return
+        req_id = data.get("id")
+        if not req_id:
+            return
+        with self._pixel_lock:
+            # Keep the map tiny — replies are consumed within seconds; what
+            # piles up is late replies to queries that already timed out.
+            # Drop the OLDEST, never all: clear() here could wipe the reply a
+            # ground_pixel call (the photo survey grounds up to 8 per photo)
+            # is polling for right now, and it would report no_reply_from_jetson.
+            while len(self._pixel_results) >= 32:
+                self._pixel_results.pop(next(iter(self._pixel_results)))
+            self._pixel_results[req_id] = data
+
+    def ground_pixel(self, u: float, v: float, timeout: float = 4.0,
+                     stamp: tuple | None = None, box: tuple | None = None,
+                     what: str | None = None) -> dict:
+        """Ask the Jetson to turn a COLOR-image pixel into a NAV_FRAME Nav2
+        goal (deproject depth → NAV_FRAME → pull back by the approach standoff).
+        The Jetson's pixel_to_goal node publishes odom, matching NAV_FRAME.
+        Returns the pixel_to_goal JSON result, or ok=False on timeout —
+        which means the query never arrived (node down / link), NOT that
+        grounding failed; grounding failures come back with a reason.
+
+        stamp: the photo's camera stamp (get_frame_stamped). With it the
+        Jetson grounds against the depth and camera pose of THAT photo
+        (see hold_frame); without it, against its newest ones -- right only
+        if nothing has moved since the photo.
+
+        box: the VLM's (x0, y0, x1, y1) around the object. The Jetson then
+        takes the nearest solid slab above the floor inside it instead of the
+        depth at one pixel (which, on a thin object, is often the background).
+
+        what: the description the box was found for ("the door"). For big flat
+        things (door, wall, cupboard ...) the Jetson then measures with the
+        LiDAR instead of the camera (pixel_to_goal LIDAR_TARGETS): a dark plain
+        door gives stereo almost nothing (2026-10-03)."""
+        import uuid
+        req_id = uuid.uuid4().hex[:8]
+        msg = self._PointStamped()
+        # The box rides in the id string ("<id>;box=..."): the reply's id is <id>.
+        msg.header.frame_id = req_id + (
+            ";box=" + ",".join(f"{a:.0f}" for a in box) if box else "") + (
+            ";what=" + re.sub(r"[;=]", " ", what)[:80] if what else "")
+        if stamp:
+            msg.header.stamp.sec, msg.header.stamp.nanosec = int(stamp[0]), int(stamp[1])
+        msg.point.x = float(u)
+        msg.point.y = float(v)
+        self._pixel_query_pub.publish(msg)
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            with self._pixel_lock:
+                if req_id in self._pixel_results:
+                    return self._pixel_results.pop(req_id)
+            time.sleep(0.05)
+        return {"ok": False, "reason": "no_reply_from_jetson"}
+
+    # ── Audio: volume, Bluetooth, music (pi5_voice_pkg) ───────────────────
+
+    def _on_audio_state(self, msg) -> None:
+        try:
+            data = json.loads(msg.data)
+        except ValueError:
+            return
+        last = data.get("last") or {}
+        if last.get("id"):
+            with self._audio_lock:
+                while len(self._audio_replies) >= 16:
+                    self._audio_replies.pop(next(iter(self._audio_replies)))
+                self._audio_replies[last["id"]] = last
+
+    def _audio_round_trip(self, pub, cmd: dict, timeout: float) -> dict:
+        import uuid
+        req_id = uuid.uuid4().hex[:8]
+        pub.publish(String(data=json.dumps({**cmd, "id": req_id})))
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            with self._audio_lock:
+                if req_id in self._audio_replies:
+                    return self._audio_replies.pop(req_id)
+            time.sleep(0.05)
+        return {}
+
+    def audio_request(self, cmd: dict, timeout: float = 10.0) -> dict:
+        """Volume / mute / Bluetooth request to audio_device_node (/audio/cmd).
+        Returns its reply {ok, msg, ...}, or {} when nothing answered."""
+        return self._audio_round_trip(self._audio_cmd_pub, cmd, timeout)
+
+    def music_request(self, cmd: dict, timeout: float = 25.0) -> dict:
+        """play / pause / resume / next / stop / status to media_node
+        (/audio/music_cmd). Returns its reply, or {} when nothing answered."""
+        return self._audio_round_trip(self._music_cmd_pub, cmd, timeout)
+
+    # ── Timing events (/diag/timing) ──────────────────────────────────────
+
+    def publish_timing(self, event: dict) -> None:
+        """Sink for graph.utils.timing — one JSON stage event per message."""
+        self._timing_pub.publish(String(data=json.dumps(event)))
+
+    # ── Speech (streamed utterance protocol) ──────────────────────────────
+    # An utterance = 1..N text chunks followed by the SPEECH_EOU marker.
+    # tts_node plays chunks in order and holds /voice/tts_speaking True
+    # (mic muted) until the marker arrives.
+
+    def publish_speech_chunk(self, text: str) -> None:
+        """Publish one sentence chunk immediately (SpeechStreamHandler sink).
+
+        Cleaned here rather than at each caller: this is the ONE point every
+        spoken path passes through — streamed chunks, whole replies, the
+        startup line, the error apology — so markup cannot reach the speaker
+        by some other route.
+        """
+        text = clean_for_speech(text)
+        if not text:
+            return                      # was only markup; nothing to say
+        self.publish_timing({"stage": "speech_publish", "t": time.time(), "chars": len(text)})
+        self._speech_pub.publish(String(data=text))
+
+    def publish_speech_end(self) -> None:
+        """Terminate the current utterance — lets tts_node release the mic."""
+        self.publish_timing({"stage": "speech_eou", "t": time.time()})
+        self._speech_pub.publish(String(data=SPEECH_EOU))
+
+    def publish_speech(self, text: str) -> None:
+        """Publish a complete utterance (non-streamed path: startup, fallbacks)."""
+        self.publish_speech_chunk(text)
+        self.publish_speech_end()
+
+    def publish_cue(self, name: str) -> None:
+        """Fire a short pre-rendered cue ("wake", "wait") on /voice/cue.
+
+        Not speech: tts_node plays a clip it rendered at startup and never
+        touches /voice/tts_speaking, so this costs no API call, no synthesis
+        delay, and cannot mute the mic mid-command.
+        """
+        self._cue_pub.publish(String(data=name))
+
+    def publish_speech_stop(self) -> None:
+        """Abandon the current utterance — drop what is queued AND playing.
+
+        publish_speech_end() only closes the protocol: tts_node keeps speaking
+        the sentences it has already synthesised, so an abandoned answer went
+        on talking underneath the next one. This drops them.
+        """
+        self.publish_timing({"stage": "speech_abandon", "t": time.time()})
+        self._tts_stop_pub.publish(String(data=SPEECH_ABANDON))
+
+    # ── Publishers ─────────────────────────────────────────────────────────
+
+    def publish_twist(self, twist: Twist) -> None:
+        """Publish a Twist on /cmd_vel: the ESP32 (micro-ROS) on the robot, its
+        stand-in esp32_twin on the twin -- the same interface."""
+        self._twist_pub.publish(twist)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 3 — Actions (Nav2)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def register_nav_done_callback(self, cb: Callable[[bool, str], None]) -> None:
+        """Register a callback(success: bool, message: str) called when navigation ends."""
+        self._nav_done_callback = cb
+
+    # ── Tool-injected [SYSTEM] turns ────────────────────────────────────────
+
+    def register_system_turn_callback(self, cb: Callable[[str], None]) -> None:
+        """Register agent_node's _enqueue_system so pure-zone tools can inject
+        proactive turns (the standard [SYSTEM] producer pattern)."""
+        self._system_turn_callback = cb
+
+    def enqueue_system_turn(self, text: str) -> None:
+        """Queue a [SYSTEM] turn (FIFO, never dropped, spoken via the normal
+        proactive path). Called from tools on the worker thread — the callback
+        only appends to agent_node's locked queue, so this is thread-safe."""
+        cb = self._system_turn_callback
+        if cb:
+            cb(text)
+
+    def cancel_navigation(self) -> None:
+        """Cancel any active navigation goal."""
+        with self._nav_lock:
+            if self._nav_cancel_event:
+                self._nav_cancel_event.set()
+
+    # ── Motion interrupt (blocking movement tools) ─────────────────────────
+    def request_motion_stop(self) -> None:
+        """Signal blocking motion tools to abort (e.g. on new user input)."""
+        self._motion_interrupt.set()
+
+    def clear_motion_stop(self) -> None:
+        """Clear the interrupt — call at the start of a deliberate motion tool."""
+        self._motion_interrupt.clear()
+
+    def motion_interrupted(self) -> bool:
+        return self._motion_interrupt.is_set()
+
+    # ── Exact moves (Jetson goal_exec) ─────────────────────────────────────
+    #
+    # These replace the TIMED twists movement.py used to drive for every turn
+    # and short move: 5.0 rad/s for a computed duration, open loop. Graded on
+    # 2026-09-24 (INTEGRATION_GAPS.md §6) that slid 31-68 cm per 90 deg turn
+    # and once stalled at 67 of 90 deg while reporting "Movement done".
+    # goal_exec closes the move on fusion2's pose, checks the swept outline
+    # against the LiDAR and depth first and throughout, and says why when it
+    # refuses. Both calls BLOCK until the move ends (like the timed drive did)
+    # and return:
+    #   {"ok": bool, "result": "reached" | "refused" | "stalled" | "failed" |
+    #    "cancelled" | "interrupted" | "timeout" | "no_answer" | "no_pose" |
+    #    "unavailable", "why": str, "turned_deg": float, "moved_cm": float}
+    # "unavailable" = goal_exec is not running; the caller may fall back.
+
+    def _on_status(self, msg, store: dict, key_field: str = "goal_stamp") -> None:
+        try:
+            d = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError):
+            return
+        key = d.get(key_field)
+        if not key:
+            return
+        with self._status_lock:
+            if key not in store and len(store) > 16:
+                store.pop(next(iter(store)))
+            store.setdefault(key, []).append(d)
+
+    def _stamp_now(self) -> tuple:
+        """(header stamp, key): a unique id for a goal, echoed back in status."""
+        st = self._node.get_clock().now().to_msg()
+        return st, f"{st.sec}.{st.nanosec:09d}"
+
+    def _pose_msg(self, x: float, y: float, yaw_rad: float, stamp) -> PoseStamped:
+        p = PoseStamped()
+        p.header.frame_id = self.NAV_FRAME
+        p.header.stamp = stamp
+        p.pose.position.x, p.pose.position.y = float(x), float(y)
+        p.pose.orientation.z = math.sin(yaw_rad / 2.0)
+        p.pose.orientation.w = math.cos(yaw_rad / 2.0)
+        return p
+
+    def turn_by(self, degrees: float, timeout: float = 40.0) -> dict:
+        """Turn in place by `degrees` (+ left), closed on the measured heading.
+        The shorter way round: callers split turns over ~170 deg."""
+        pose = self.get_current_pose()
+        if pose is None:
+            return {"ok": False, "result": "no_pose", "why": "no odom -> base_link fix"}
+        x, y, yaw = pose
+        return self._run_goal_exec(self._goal_exec_turn_pub, x, y,
+                                   math.radians(yaw + degrees), timeout, pose)
+
+    def drive_by(self, metres: float, timeout: float = 60.0) -> dict:
+        """Drive straight `metres` (+ forward, - back), ending on the line to
+        ~1.5 cm, heading held."""
+        pose = self.get_current_pose()
+        if pose is None:
+            return {"ok": False, "result": "no_pose", "why": "no odom -> base_link fix"}
+        x, y, yaw = pose
+        th = math.radians(yaw)
+        return self._run_goal_exec(self._goal_exec_goal_pub, x + metres * math.cos(th),
+                                   y + metres * math.sin(th), th, timeout, pose)
+
+    def _run_goal_exec(self, pub, x: float, y: float, yaw_rad: float,
+                       timeout: float, start: tuple) -> dict:
+        if pub.get_subscription_count() == 0:
+            return {"ok": False, "result": "unavailable",
+                    "why": "goal_exec is not running on the Jetson (./rover nav)"}
+        stamp, key = self._stamp_now()
+        pub.publish(self._pose_msg(x, y, yaw_rad, stamp))
+        t0 = time.monotonic()
+        out = None
+        while out is None:
+            if self.motion_interrupted():
+                self._goal_exec_cancel_pub.publish(self._Empty())
+                out = {"ok": False, "result": "interrupted", "why": "stopped by a new command"}
+                break
+            with self._status_lock:
+                lines = list(self._goal_exec_status.get(key, []))
+            done = [d for d in lines if d.get("state") == "done"]
+            if done:
+                d = done[-1]
+                out = {"ok": d.get("result") == "reached",
+                       "result": d.get("result") or "failed", "why": d.get("why", "")}
+            elif not lines and time.monotonic() - t0 > 3.0:
+                # It reports the instant a goal arrives. Silence is not
+                # "unavailable" -- it may still act on it -- so no fallback.
+                self._goal_exec_cancel_pub.publish(self._Empty())
+                out = {"ok": False, "result": "no_answer", "why": "goal_exec did not acknowledge the goal"}
+            elif time.monotonic() - t0 > timeout:
+                self._goal_exec_cancel_pub.publish(self._Empty())
+                out = {"ok": False, "result": "timeout", "why": f"no result in {timeout:.0f} s"}
+            else:
+                time.sleep(0.05)
+        with self._status_lock:
+            self._goal_exec_status.pop(key, None)
+        end = self.get_current_pose()
+        if end is not None:
+            out["turned_deg"] = round((end[2] - start[2] + 180.0) % 360.0 - 180.0, 1)
+            out["moved_cm"] = round(math.hypot(end[0] - start[0], end[1] - start[1]) * 100.0, 1)
+        return out
+
+    # How navigate_to_pose / approach goals are driven. "reach" (default): the
+    # Jetson's reach_node -- nav2 for the route, goal_exec for an exact finish,
+    # and on failure it clears, looks, passes a tight gap or waits, and tries
+    # again (plain nav2 gave up on a 51 cm corridor in 15 s, 2026-09-26).
+    # "nav2": the plain NavigateToPose action, as before. reach falls back to
+    # nav2 by itself when reach_node is not running.
+    NAV_BACKEND = os.environ.get("LANGROBO_NAV_BACKEND", "reach").strip().lower()
+
+    def navigation_active(self) -> bool:
+        """True while a background drive (start_nav_to_pose) is still running --
+        the robot is on its way and has not arrived or failed yet."""
+        with self._nav_lock:
+            return bool(self._nav_thread and self._nav_thread.is_alive())
+
+    def is_following(self) -> bool:
+        """True while a "follow me" (start_follow mode "follow") is the
+        background drive -- not "come to me", which is over in seconds.
+        agent_node then halts the wheels only on a stop word (utils/stop_words.py)."""
+        with self._nav_lock:
+            return bool(self._nav_thread and self._nav_thread.is_alive()
+                        and (self._nav_goal or {}).get("label") == "following you")
+
+    def navigation_state(self) -> dict:
+        """{"active": bool, "goal": {x, y, label, since} | None, "last":
+        {success, message, label, at} | None} -- the background drive now, and
+        how the previous one ended."""
+        with self._nav_lock:
+            active = bool(self._nav_thread and self._nav_thread.is_alive())
+            return {"active": active, "goal": dict(self._nav_goal) if self._nav_goal else None,
+                    "last": dict(self._last_nav) if self._last_nav else None}
+
+    def start_nav_to_pose(self, x: float, y: float, yaw_deg: float, label: str = "") -> None:
+        """Start driving to (x, y, yaw) in NAV_FRAME asynchronously -- through
+        reach_node, or plain Nav2 (see NAV_BACKEND).
+
+        Returns immediately. When navigation completes or fails, the registered
+        nav_done_callback is invoked from a background thread with (success, message).
+        """
+        worker, args = self._nav_worker, (x, y, yaw_deg, label)
+        if self.NAV_BACKEND == "reach":
+            if self._reach_goal_pub.get_subscription_count() > 0:
+                # The new goal's key is current BEFORE the old goal is
+                # cancelled, so the old worker sees it has been superseded and
+                # does not send /reach/cancel, which could land after this
+                # goal and kill it. reach preempts on a new goal by itself.
+                stamp, key = self._stamp_now()
+                self._reach_current_key = key
+                worker, args = self._reach_worker, (x, y, yaw_deg, label, stamp, key)
+            else:
+                self._node.get_logger().warning(
+                    "nav: reach_node is not running on the Jetson -- plain nav2 "
+                    "(no exact finish, no retries). ./rover nav starts it.")
+        self.cancel_navigation()
+
+        cancel_event = threading.Event()
+        with self._nav_lock:
+            self._nav_cancel_event = cancel_event
+
+        thread = threading.Thread(
+            target=worker,
+            args=(*args, cancel_event),
+            daemon=True,
+        )
+        with self._nav_lock:
+            self._nav_thread = thread
+            self._nav_goal = {"x": x, "y": y, "label": label, "since": time.time()}
+        thread.start()
+
+    def _nav_worker(
+        self,
+        x: float,
+        y: float,
+        yaw_deg: float,
+        label: str,
+        cancel_event: threading.Event,
+    ) -> None:
+        """Background thread: send Nav2 action goal, wait for result."""
+        try:
+            from rclpy.action import ActionClient
+            from nav2_msgs.action import NavigateToPose
+
+            with self._act_lock:
+                if "/navigate_to_pose" not in self._action_clients:
+                    self._action_clients["/navigate_to_pose"] = ActionClient(
+                        self._node, NavigateToPose, "/navigate_to_pose"
+                    )
+            client = self._action_clients["/navigate_to_pose"]
+
+            if not client.wait_for_server(timeout_sec=10.0):
+                self._fire_nav_done(False, "Navigation unavailable — Nav2 not running")
+                return
+
+            goal = NavigateToPose.Goal()
+            goal.pose = PoseStamped()
+            # One frame for goals, poses and detections alike — see NAV_FRAME.
+            goal.pose.header.frame_id = self.NAV_FRAME
+            # stamp left zero = "use latest TF": Nav2 re-transforms the
+            # ORIGINAL stamp on every replan, so a now() stamp ages out of
+            # the 10s TF cache mid-drive and aborts the goal (2026-07-16).
+            goal.pose.pose.position.x = x
+            goal.pose.pose.position.y = y
+            yaw_rad = math.radians(yaw_deg)
+            goal.pose.pose.orientation.z = math.sin(yaw_rad / 2.0)
+            goal.pose.pose.orientation.w = math.cos(yaw_rad / 2.0)
+
+            goal_event = threading.Event()
+            goal_box:  list = [None]
+
+            def _goal_response(future):
+                # An exception here would propagate into rclpy's executor and
+                # leave goal_event unset — the caller then waits the full 10s
+                # and reports a timeout for what was really a rejection.
+                try:
+                    goal_box[0] = future.result()
+                except Exception:
+                    goal_box[0] = None
+                goal_event.set()
+
+            send_future = client.send_goal_async(goal)
+            send_future.add_done_callback(_goal_response)
+
+            if not goal_event.wait(timeout=10.0):
+                self._fire_nav_done(False, "Navigation goal acceptance timed out")
+                return
+
+            goal_handle = goal_box[0]
+            if goal_handle is None:
+                # future.result() raised inside the callback, so _goal_response
+                # set the event with an empty box. Without this the next line
+                # raised AttributeError and the user heard "Navigation error:
+                # 'NoneType' object has no attribute 'accepted'".
+                self._fire_nav_done(
+                    False, "Navigation failed — Nav2 never answered the goal request")
+                return
+            if not goal_handle.accepted:
+                self._fire_nav_done(False, "Navigation goal rejected by Nav2")
+                return
+
+            result_event = threading.Event()
+            result_box:  list = [None]
+
+            def _result(future):
+                try:
+                    result_box[0] = future.result()
+                except Exception:
+                    result_box[0] = None
+                result_event.set()
+
+            goal_handle.get_result_async().add_done_callback(_result)
+
+            from action_msgs.msg import GoalStatus as _GS
+            _TERMINAL = {_GS.STATUS_SUCCEEDED, _GS.STATUS_ABORTED,
+                         _GS.STATUS_CANCELED}
+            _RESULT_GRACE_S = 5.0     # let the result arrive normally first
+            _HARD_LIMIT_S = 900.0     # nothing may wait here forever
+
+            # STATUS BACKSTOP. This loop used to have exactly two exits, the
+            # result future and an explicit cancel, and on 2026-09-10 it found
+            # the third: nav2 aborted the goal (bt_navigator logged "Goal
+            # failed" after three backup recoveries) and the result future
+            # never resolved. The thread span here forever, _fire_nav_done was
+            # never called, and the user was told "I'll say when I'm there"
+            # by a robot that had already given up. Nothing logged, because
+            # the only code that logs is the code that never ran.
+            #
+            # So trust the action's STATUS TOPIC as well as its result. rclpy
+            # keeps goal_handle.status fresh from /navigate_to_pose/_action/
+            # status independently of the result service, so a terminal status
+            # is proof the goal is over even when the result never lands.
+            # Grace period first, because the result carries more detail.
+            waited = 0.0
+            terminal_since = None
+            while not result_event.wait(timeout=1.0):
+                waited += 1.0
+                if cancel_event.is_set():
+                    goal_handle.cancel_goal_async()
+                    dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"
+                    self._fire_nav_done(False, f"Navigation to {dest} cancelled")
+                    return
+
+                try:
+                    status = goal_handle.status
+                except Exception:
+                    status = None
+
+                if status in _TERMINAL:
+                    if terminal_since is None:
+                        terminal_since = waited
+                        self._node.get_logger().warning(
+                            f"nav: goal reached terminal status {status} but no "
+                            f"result yet — waiting {_RESULT_GRACE_S:.0f}s for it")
+                    elif waited - terminal_since >= _RESULT_GRACE_S:
+                        dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"
+                        self._node.get_logger().error(
+                            f"nav: result never arrived for terminal status "
+                            f"{status}; reporting from status instead")
+                        if status == _GS.STATUS_SUCCEEDED:
+                            self._fire_nav_done(True, f"I've arrived at {dest}.")
+                        elif status == _GS.STATUS_CANCELED:
+                            self._fire_nav_done(
+                                False, f"Navigation to {dest} cancelled")
+                        else:
+                            self._fire_nav_done(
+                                False,
+                                f"Navigation to {dest} failed — path may be "
+                                f"blocked.")
+                        return
+                else:
+                    terminal_since = None
+
+                if waited >= _HARD_LIMIT_S:
+                    dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"
+                    goal_handle.cancel_goal_async()
+                    self._node.get_logger().error(
+                        f"nav: no result and no terminal status after "
+                        f"{_HARD_LIMIT_S:.0f}s — giving up")
+                    self._fire_nav_done(
+                        False,
+                        f"Navigation to {dest} never finished — I've stopped "
+                        f"waiting and cancelled the goal.")
+                    return
+
+            result = result_box[0]
+            dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"
+            if result is None:
+                self._fire_nav_done(
+                    False, f"Navigation to {dest} ended without a result from Nav2")
+                return
+            from action_msgs.msg import GoalStatus
+            if result.status == GoalStatus.STATUS_SUCCEEDED:
+                self._fire_nav_done(True, f"I've arrived at {dest}.")
+            else:
+                self._fire_nav_done(False, f"Navigation to {dest} failed — path may be blocked.")
+
+        except Exception as e:
+            self._fire_nav_done(False, f"Navigation error: {e}")
+
+    _reach_current_key: str | None = None
+
+    def _reach_worker(self, x: float, y: float, yaw_deg: float, label: str,
+                      stamp, key: str, cancel_event: threading.Event) -> None:
+        """Background thread: one goal through reach_node, until its final line."""
+        dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"
+        try:
+            self._reach_goal_pub.publish(self._pose_msg(x, y, math.radians(yaw_deg), stamp))
+            t0 = time.monotonic()
+            while True:
+                if cancel_event.wait(timeout=0.5):
+                    if self._reach_current_key == key:     # a stop, not a newer goal
+                        self._reach_cancel_pub.publish(self._Empty())
+                    self._fire_nav_done(False, f"Navigation to {dest} cancelled")
+                    return
+                with self._status_lock:
+                    lines = list(self._reach_status.get(key, []))
+                final = [d for d in lines if "result" in d]
+                if final:
+                    d = final[-1]
+                    if d["result"] == "reached":
+                        # reach's "note": at the spot, but the final turn to
+                        # face the goal heading was blocked (usually by the
+                        # object itself) -- arrived, just not squared up.
+                        extra = (" I couldn't turn all the way to face it -- "
+                                 "something is right beside me." if d.get("note") else "")
+                        self._fire_nav_done(True, f"I've arrived at {dest}.{extra}")
+                    elif d["result"] == "cancelled":
+                        self._fire_nav_done(False, f"Navigation to {dest} cancelled")
+                    else:
+                        # reach's own final reason, unless it is only the
+                        # count ("gave up after N attempts") -- then the last
+                        # attempt's. Its note says why the way back the rover
+                        # came did not work either (Jetson trail.way_back_note).
+                        tried = d.get("tried") or []
+                        final = d.get("why", "")
+                        why = tried[-1] if tried and final.startswith("gave up") else (
+                            final or (tried[-1] if tried else ""))
+                        note = f" ({d['note']})" if d.get("note") else ""
+                        self._fire_nav_done(
+                            False, f"Navigation to {dest} failed after retrying -- {why}.{note}"
+                            if why else f"Navigation to {dest} failed.{note}")
+                    return
+                waited = time.monotonic() - t0
+                if not lines and waited > 10.0:
+                    self._fire_nav_done(
+                        False, f"Navigation to {dest} did not start -- the Jetson's "
+                        f"reach node did not answer.")
+                    return
+                if waited > 900.0:              # reach gives up by itself at 300 s
+                    self._reach_cancel_pub.publish(self._Empty())
+                    self._fire_nav_done(
+                        False, f"Navigation to {dest} never finished -- I've stopped "
+                        f"waiting and cancelled the goal.")
+                    return
+        except Exception as e:
+            self._fire_nav_done(False, f"Navigation error: {e}")
+        finally:
+            with self._status_lock:
+                self._reach_status.pop(key, None)
+
+    def reach_and_wait(self, x: float, y: float, yaw_deg: float,
+                       timeout: float = 240.0) -> dict:
+        """Drive to (x, y, yaw) in NAV_FRAME through reach_node and WAIT for it
+        -- a leg inside a tool (approach: "go to where I saw it, then look"),
+        so no [SYSTEM] arrival report. Cancels any background drive first.
+        {"ok", "result": reached|failed|interrupted|unavailable|timeout, "why",
+         "note"}. A new utterance (motion stop) cancels it."""
+        if self._reach_goal_pub.get_subscription_count() == 0:
+            return {"ok": False, "result": "unavailable",
+                    "why": "reach is not running on the Jetson (./rover nav)"}
+        # Key first, then cancel -- as start_nav_to_pose does. The other order
+        # let a background _reach_worker wake from the cancel, still see its
+        # own key as current, and send /reach/cancel, which could land after
+        # this goal and kill it.
+        stamp, key = self._stamp_now()
+        self._reach_current_key = key
+        self.cancel_navigation()
+        self._reach_goal_pub.publish(self._pose_msg(x, y, math.radians(yaw_deg), stamp))
+        t0 = time.monotonic()
+        try:
+            while time.monotonic() - t0 < timeout:
+                if self.motion_interrupted():
+                    self._reach_cancel_pub.publish(self._Empty())
+                    return {"ok": False, "result": "interrupted", "why": "stopped by a new command"}
+                with self._status_lock:
+                    lines = list(self._reach_status.get(key, []))
+                final = [d for d in lines if "result" in d]
+                if final:
+                    d = final[-1]
+                    tried = d.get("tried") or []
+                    return {"ok": d["result"] == "reached", "result": d["result"],
+                            "why": tried[-1] if tried else d.get("why", ""),
+                            "note": d.get("note")}
+                if not lines and time.monotonic() - t0 > 10.0:
+                    return {"ok": False, "result": "unavailable",
+                            "why": "the Jetson's reach node did not answer"}
+                time.sleep(0.2)
+            self._reach_cancel_pub.publish(self._Empty())
+            return {"ok": False, "result": "timeout", "why": f"not there after {timeout:.0f} s"}
+        finally:
+            with self._status_lock:
+                self._reach_status.pop(key, None)
+
+    # ── Follow me (Jetson follow_node) ─────────────────────────────────────
+    FOLLOW_START_WAIT_S = 7.0   # follow_node waits 3 s for a person, +1 s for no people at all
+    FOLLOW_SILENT_S = 10.0      # follow_node reports at 2 Hz while following
+
+    def start_follow(self, mode: str = "follow", announce: bool = False) -> dict:
+        """Start "follow me" (mode "follow") or "come to me" (mode "come":
+        drive to ~1 m from the person and stop) on the Jetson, and WAIT for its
+        first answer, so the tool can say "I can't see anyone" instead of
+        promising. On a start it becomes the background drive: a new utterance
+        (cancel_navigation) stops it, and its end -- reached, lost, blocked --
+        arrives through the nav-done callback as the [SYSTEM] report, exactly
+        like an arrival. {"ok", "result": following | finding | nobody |
+        unavailable | ..., "why", "target", "dist"}.
+
+        finding (2026-10-13): nobody was in view and follow_node is turning to
+        find someone. announce: a voice turn -- the worker says "There you
+        are" when they are found (a COMPLETE utterance, like approach._say).
+        Either way the person is photographed as the follow begins."""
+        if self._follow_start_pub.get_subscription_count() == 0:
+            return {"ok": False, "result": "unavailable",
+                    "why": "the Jetson's follow node is not running (./rover follow)"}
+        # The new follow's key is current BEFORE the old drive is cancelled, so
+        # an old follow worker sees it was superseded and does not send
+        # /follow/cancel -- which could land after this start and kill it (the
+        # same race start_nav_to_pose guards with _reach_current_key).
+        stamp, key = self._stamp_now()
+        self._follow_current_key = key
+        self.cancel_navigation()
+        come = mode == "come"
+        self._follow_start_pub.publish(String(data=json.dumps({"req": key, "stop_at_gap": come})))
+        t0 = time.monotonic()
+        first = None
+        while time.monotonic() - t0 < self.FOLLOW_START_WAIT_S:
+            with self._status_lock:
+                lines = list(self._follow_status.get(key, []))
+            first = next((d for d in lines if d.get("state") in ("following", "finding", "done")),
+                         None)
+            if first:
+                break
+            time.sleep(0.1)
+        if first is None:
+            self._follow_cancel_pub.publish(self._Empty())
+            with self._status_lock:
+                self._follow_status.pop(key, None)
+            return {"ok": False, "result": "unavailable",
+                    "why": "the Jetson's follow node did not answer"}
+        if first["state"] == "done":
+            with self._status_lock:
+                self._follow_status.pop(key, None)
+            return {"ok": False, "result": first.get("result", "failed"),
+                    "why": first.get("why", "")}
+
+        label = "you" if come else "following you"
+        cancel_event = threading.Event()
+        with self._nav_lock:
+            self._nav_cancel_event = cancel_event
+        thread = threading.Thread(target=self._follow_worker,
+                                  args=(key, come, cancel_event, announce), daemon=True)
+        with self._nav_lock:
+            self._nav_thread = thread
+            self._nav_goal = {"x": None, "y": None, "label": label, "since": time.time()}
+        thread.start()
+        return {"ok": True, "result": first["state"], "target": first.get("target"),
+                "dist": first.get("dist")}
+
+    # follow_node's end results, as the sentence the [SYSTEM] report carries
+    _FOLLOW_ENDS = {
+        "lost": (False, "I lost sight of the person I was following, so I stopped"),
+        "blocked": (False, "something was in the way, so I stopped following"),
+        "timeout": (True, "I followed for 10 minutes and then stopped, as I always do"),
+        "pose unsure": (False, "I stopped following because I was not sure where I was"),
+        "no people": (False, "I stopped following because my camera stopped seeing people"),
+        "taken over": (False, "another drive took over, so I stopped following"),
+        "nobody": (False, "I looked for someone to follow, but I couldn't find anyone"),
+    }
+
+    def _follow_worker(self, key: str, come: bool, cancel_event: threading.Event,
+                       announce: bool = False) -> None:
+        """Background thread: one follow, until its final status line."""
+        what = "Coming to you" if come else "Following you"
+        seen, seen_at = 0, time.monotonic()
+        photographed = said_found = False
+        try:
+            while True:
+                if cancel_event.wait(timeout=0.3):
+                    if getattr(self, "_follow_current_key", None) == key:   # a stop, not a newer follow
+                        self._follow_cancel_pub.publish(self._Empty())
+                    self._fire_nav_done(False, f"{what} -- cancelled")
+                    return
+                with self._status_lock:
+                    lines = list(self._follow_status.get(key, []))
+                if len(lines) != seen:
+                    seen, seen_at = len(lines), time.monotonic()
+                elif time.monotonic() - seen_at > self.FOLLOW_SILENT_S:
+                    # follow_node reports at 2 Hz while following: silence is
+                    # a dead node or a dead link, not a quiet follow
+                    self._follow_cancel_pub.publish(self._Empty())
+                    self._fire_nav_done(False, "I stopped following -- the Jetson's follow "
+                                       "node went silent.")
+                    return
+                done = next((d for d in reversed(lines) if d.get("state") == "done"), None)
+                cur = lines[-1] if lines else {}
+                if done is None and cur.get("state") == "following":
+                    if not photographed:
+                        photographed = True
+                        self._photograph_follow_target()
+                    if cur.get("found") and not said_found:
+                        said_found = True
+                        if announce:
+                            self.publish_speech("There you are. " + (
+                                "Coming to you." if come else
+                                "Following you now. Say stop if it's not you."))
+                if done is None:
+                    continue
+                result, why = done.get("result", ""), done.get("why", "")
+                if result == "reached":
+                    self._fire_nav_done(True, f"I've come to you ({why}).")
+                elif result == "cancelled":
+                    self._fire_nav_done(False, f"{what} -- cancelled")
+                else:
+                    ok, sentence = self._FOLLOW_ENDS.get(
+                        result, (False, f"I stopped following ({result})"))
+                    self._fire_nav_done(ok, f"{sentence}{f' -- {why}' if why else ''}.")
+                return
+        except Exception as e:
+            self._fire_nav_done(False, f"Follow error: {e}")
+        finally:
+            with self._status_lock:
+                self._follow_status.pop(key, None)
+
+    SCAN_WAIT_S = 2.0
+
+    def get_scan_points(self) -> list | None:
+        """One LiDAR scan as [(x, y)] in NAV_FRAME, or None (no scan / no TF).
+
+        For the room search's next viewpoint (utils/viewpoints.py). Subscribed
+        only for the one scan: /scan at 10 Hz over the WiFi is not worth
+        carrying all the time for a question asked once per search spot."""
+        import rclpy.time
+        from rclpy.qos import qos_profile_sensor_data
+        from sensor_msgs.msg import LaserScan
+        got = threading.Event()
+        box = {}
+
+        def _cb(m):
+            if not got.is_set():
+                box["m"] = m
+                got.set()
+
+        sub = self._node.create_subscription(LaserScan, "/scan", _cb, qos_profile_sensor_data)
+        try:
+            if not got.wait(self.SCAN_WAIT_S):
+                return None
+        finally:
+            self._node.destroy_subscription(sub)
+        m = box["m"]
+        try:
+            tf = self._tf_buffer.lookup_transform(self.NAV_FRAME, m.header.frame_id,
+                                                  rclpy.time.Time())
+        except Exception:
+            return None
+        t, q = tf.transform.translation, tf.transform.rotation
+        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        c, s_ = math.cos(yaw), math.sin(yaw)
+        pts = []
+        for i, r in enumerate(m.ranges):
+            if not (0.05 < r < 8.0):         # also drops inf / nan
+                continue
+            a = m.angle_min + i * m.angle_increment
+            lx, ly = r * math.cos(a), r * math.sin(a)
+            pts.append((t.x + c * lx - s_ * ly, t.y + s_ * lx + c * ly))
+        return pts
+
+    def _photograph_follow_target(self) -> None:
+        """The person a follow begins with, into the photo log (owner,
+        2026-10-13: "save his pic"): the robot's memory is its photos, so
+        ask_photos can answer "who did you follow?". Never fails the follow."""
+        try:
+            frame, stamp = self.get_frame_stamped(max_age_s=1.0)
+            if frame is None:
+                return
+            from langrobo_core.tools import photos
+            if stamp:
+                self.hold_frame(stamp)
+            photos.record(frame, stamp, self.get_current_pose(), time.time(),
+                          self.get_origin_epoch(), "follow")
+        except Exception as e:
+            self._node.get_logger().warning(f"follow: no photo of the person ({e})")
+
+    def _fire_nav_done(self, success: bool, message: str) -> None:
+        # Logged unconditionally, and says whether a listener existed. A silent
+        # arrival is indistinguishable from a nav that never finished unless
+        # this line is in the log (2026-09-10: a goal failed after 44 s of
+        # follow_path aborts and nothing anywhere recorded that it had).
+        with self._nav_lock:
+            self._last_nav = {"success": success, "message": message, "at": time.time(),
+                              "label": (self._nav_goal or {}).get("label", "")}
+        cb = self._nav_done_callback
+        self._node.get_logger().info(
+            f"nav done: success={success} listener={'yes' if cb else 'NONE'} "
+            f"msg={message!r}")
+        if cb is None:
+            # Not a curiosity: this is a navigation that finished and told
+            # nobody. It happened for two sessions on 2026-09-10 because
+            # LangGraph Studio was running beside the brain, polling the same
+            # Telegram bot, and its /studio_bridge ran the goal -- only
+            # agent_node registers this callback. The rover drove, failed, and
+            # the user waited for a message that had already been discarded.
+            self._node.get_logger().error(
+                "nav done with NO listener — this completion is being thrown "
+                "away and nobody will be told. If LangGraph Studio is running "
+                "next to the brain, stop it: `pkill -f 'langgrap[h] dev'`, "
+                "then check `ros2 node list | grep studio` is empty.")
+        if cb:
+            try:
+                cb(success, message)
+            except Exception as e:
+                self._node.get_logger().error(f"nav_done_callback raised: {e}")
+
+    def wait_for_nav_server(self, timeout: float = 30.0) -> bool:
+        """Return True if the Nav2 action server is available within timeout."""
+        try:
+            from rclpy.action import ActionClient
+            from nav2_msgs.action import NavigateToPose
+
+            with self._act_lock:
+                if "/navigate_to_pose" not in self._action_clients:
+                    self._action_clients["/navigate_to_pose"] = ActionClient(
+                        self._node, NavigateToPose, "/navigate_to_pose"
+                    )
+            return self._action_clients["/navigate_to_pose"].wait_for_server(timeout_sec=timeout)
+        except Exception:
+            return False
