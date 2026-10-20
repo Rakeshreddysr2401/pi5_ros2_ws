@@ -24,9 +24,9 @@ class FollowBridge(StubBridge):
         super().__init__()
         self.answer, self.calls = answer, []
 
-    def start_follow(self, mode="follow", announce=False):
+    def start_follow(self, mode="follow", announce=False, who="you"):
         self.calls.append(mode)
-        self.announce = announce
+        self.announce, self.who = announce, who
         return self.answer
 
 
@@ -113,11 +113,33 @@ def test_roles_without_move_refused(role):
     assert "not allowed to move" in out and b.calls == []
 
 
-def test_telegram_owner_refused_me_is_not_visible():
+TELEGRAM_OWNER = {"channel": "telegram", "sender_name": "Rakesh", "sender_role": "owner",
+                  "messages": []}
+
+
+def test_telegram_follow_me_is_refused_the_sender_is_not_here():
     b = _use({"ok": True, "result": "following"})
-    st = {"channel": "telegram", "sender_name": "Rakesh", "sender_role": "owner", "messages": []}
-    out = follow_person.invoke({"state": st})
-    assert "over Telegram" in out and b.calls == []
+    out = follow_person.invoke({"state": TELEGRAM_OWNER})
+    assert "over Telegram" in out and "NOT started" in out and b.calls == []
+
+
+def test_telegram_come_goes_to_the_person_in_the_room(monkeypatch):
+    """2026-10-20: "find my mom, go near her and tell her to bring water" was
+    refused four times, and the model said "I am looking for her" each time."""
+    seen = {}
+    monkeypatch.setattr(fl, "remember_requester", lambda s, then="": seen.update(then=then))
+    b = _use({"ok": True, "result": "finding"})
+    out = follow_person.invoke({"state": TELEGRAM_OWNER, "mode": "come",
+                                "then": "say out loud to her: bring water"})
+    assert b.calls == ["come"] and b.who == "the person I found" and b.announce is False
+    assert "whoever I find" in out and "photo" in out
+    assert seen["then"] == "say out loud to her: bring water"
+
+
+def test_telegram_come_with_nobody_in_view_does_not_ask_to_stand_in_front():
+    _use({"ok": False, "result": "nobody"})
+    out = follow_person.invoke({"state": TELEGRAM_OWNER, "mode": "come"})
+    assert "can't see anyone in the room" in out and "stand in front" not in out
 
 
 def test_other_failures_are_reported():

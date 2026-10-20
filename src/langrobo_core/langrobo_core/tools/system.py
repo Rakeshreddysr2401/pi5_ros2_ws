@@ -54,6 +54,10 @@ def get_robot_status() -> str:
                      f"where I started this session")
     else:
         parts.append("I don't know where I am right now (no pose)")
+    from .approach import search_status   # approach imports this module's siblings
+    searching = search_status()
+    if searching:
+        parts.append(f"I'm {searching}")
     parts.append(_drive_status(bridge.navigation_state(), pose))
 
     age = bridge.frame_age()
@@ -72,7 +76,7 @@ def _drive_status(nav: dict, pose: tuple | None) -> str:
     if nav.get("active"):
         where = f"'{goal['label']}'" if goal.get("label") else "a goal"
         togo = ""
-        if pose and "x" in goal:
+        if pose and goal.get("x") is not None:   # a follow has no fixed goal
             togo = f", {math.hypot(goal['x'] - pose[0], goal['y'] - pose[1]):.1f} m to go"
         mins = (time.time() - goal.get("since", time.time())) / 60.0
         return f"I'm still driving to {where} ({mins:.0f} min so far{togo})"

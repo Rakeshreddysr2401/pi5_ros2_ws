@@ -221,7 +221,8 @@ class StubBridge:
         """No LiDAR: the room search stays at the one spot it started from."""
         return None
 
-    def start_follow(self, mode: str = "follow", announce: bool = False) -> dict:
+    def start_follow(self, mode: str = "follow", announce: bool = False,
+                     who: str = "you") -> dict:
         """No Jetson: "unavailable", the real bridge's answer when follow_node
         is not running."""
         logger.info("[STUB] start_follow(%s) -> unavailable", mode)

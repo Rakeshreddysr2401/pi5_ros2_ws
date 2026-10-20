@@ -1,6 +1,7 @@
 import logging
 import math
 import os
+import re
 import time
 from typing import Annotated
 
@@ -488,6 +489,19 @@ def remember_requester(state: dict | None, then: str = "", target: str = "") -> 
     }
 
 
+def add_errand(then: str) -> bool:
+    """Add "then" to the drive already under way ("...and send me a pic once
+    you arrive", said while it drives). Before this the model re-called the
+    drive tool to carry it, which re-sent the goal: two arrivals, two reports
+    (Telegram 2026-10-20). False when no drive is remembered."""
+    then = (then or "").strip()
+    if not then or _last_nav_requester is None:
+        return False
+    old = (_last_nav_requester.get("then") or "").strip()
+    _last_nav_requester["then"] = f"{old}; then {then}" if old and then not in old else (old or then)
+    return True
+
+
 def _current_thread_id() -> str | None:
     try:
         from langgraph.config import get_config
@@ -510,11 +524,16 @@ def nav_report(success: bool, message: str) -> dict:
     status = "Navigation succeeded" if success else "Navigation failed"
     req = get_last_nav_requester() or {}
     telegram = req.get("channel") == "telegram"
+    # The errand that came with the drive ("...and tell me what is on it").
+    task_note = arrival_task_note(success, message)
     routing = ""
     if telegram:
         routing = (f" (This navigation was requested by {req.get('sender')} "
-                   f"over Telegram — send this report to them with "
-                   f"send_telegram_message instead of saying it aloud.)")
+                   f"over Telegram — nothing you reply is spoken aloud. "
+                   + ("The arrival report and a photo have already been sent to them: "
+                      "do the errand, then tell them how it went with "
+                      "send_telegram_message.)" if task_note and success else
+                      "Send this report to them with send_telegram_message.)"))
     # A photo asked for mid-drive is sent HERE, by code, on arrival (and
     # dropped on failure); the note stops the model sending a second one.
     from .telegram import send_pending_photo
@@ -526,8 +545,6 @@ def nav_report(success: bool, message: str) -> dict:
     # in the nav callback it held the report back, and a message that came in
     # meanwhile was answered first (Telegram 2026-10-02).
     check = req.get("target") if success else None
-    # The errand that came with the drive ("...and tell me what is on it").
-    task_note = arrival_task_note(success, message)
     head = f"[SYSTEM] {status}: {message}"
     return {
         "text": f"{head}{task_note}{routing}",
@@ -538,7 +555,40 @@ def nav_report(success: bool, message: str) -> dict:
         "sender": (req.get("sender"), req.get("role")) if telegram else None,
         "requester": req,
         "photo_note": photo_note,
+        # No errand: the report is a fact, delivered as written by code
+        # (services/notices.py) -- no LLM turn to slow it or reword it.
+        # agent_node appends the arrival check's sentence to it.
+        "errand": bool(task_note),
+        "notice": report_sentence(success, message),
+        # A new command stopped the drive: the person has moved on.
+        "cancelled": not success and "cancelled" in (message or "").lower(),
     }
+
+
+def _place(label: str, failed: bool) -> str:
+    label = label.replace("_", " ").strip()
+    if label.startswith("near "):
+        return label
+    if not label.startswith("the "):
+        label = f"the {label}"
+    return f"{'to' if failed else 'at'} {label}"
+
+
+def report_sentence(success: bool, message: str) -> str:
+    """A drive's end as said to a person: "I've arrived at 'near the door'."
+    -> "I've arrived near the door."; "Navigation to 'near the box' failed
+    after retrying -- no path." -> "I couldn't get near the box: no path." """
+    m = (message or "").strip()
+    m = re.sub(r"^I've arrived at '([^']+)'",
+               lambda g: "I've arrived " + _place(g[1], False), m)
+    m = re.sub(r"^Navigation to '([^']+)' failed after retrying -- ",
+               lambda g: f"I couldn't get {_place(g[1], True)}: ", m)
+    m = re.sub(r"^Navigation to '([^']+)' (failed|did not start)[ .—-]*",
+               lambda g: f"I couldn't get {_place(g[1], True)}"
+               + (": " if g[2] == "did not start" else ". "), m)
+    if not success and not m.startswith("I"):
+        m = f"I couldn't get there: {m}"
+    return " ".join(m.replace(" .", ".").split())
 
 
 def arrival_task_note(success: bool, message: str) -> str:

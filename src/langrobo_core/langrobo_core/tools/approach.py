@@ -25,12 +25,14 @@ import logging
 import math
 import os
 import re
+import threading
 import time
 from typing import Annotated
 
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
+from ..services import notices as _notices
 from ..services import object_memory
 from . import _bridge
 from . import movement as _mv
@@ -383,20 +385,161 @@ def approach_described_object(description: str,
     then: what to do on ARRIVAL, if the user asked for more than the drive
     ("go to the box and tell me what is on it" -> then="tell the user what is
     on the box"). It is done automatically when the robot gets there; do not
-    do it now. Leave empty for a plain drive."""
-    # No photo survey while searching: the Mac runs one model, and every view
-    # of the search waits on it. The views are queued and surveyed after.
-    with _survey.paused():
-        return _approach(description, state, then)
+    do it now. Leave empty for a plain drive.
 
-
-def _approach(description: str, state: dict, then: str = "") -> str:
-    bridge = _bridge.get()
+    Asked again for the SAME object while already searching for or driving to
+    it ("...and send me a pic when you get there"), it does not restart: it
+    adds `then` to the drive under way."""
     description = description.strip()
+    name = _short_name(description)
+    bridge = _bridge.get()
+    already = _already_after(bridge, name)
+    if already:
+        if already == "searching":
+            with _job_lock:
+                _job["then"] = _join_errands(_job["then"], then)
+        else:
+            _mv.add_errand(then)
+        doing = "looking for" if already == "searching" else "on my way to"
+        return (f"I'm already {doing} the {name}"
+                + ("; I'll do that too when I get there" if then.strip() else "")
+                + ". Nothing was restarted -- a message will report when I get there.")
+    if not _notices.available():
+        # Studio / tests: no one to deliver a background result to, so the
+        # search runs inside the tool call, as it always did.
+        with _survey.paused():
+            out = _approach(description, state, then)
+        return out + (_mv.view_stale_note() if _STARTED in out else "")
+    return _start_search(bridge, description, name, state, then)
+
+
+# ── The search runs in the background (2026-10-20) ──────────────────────────
+# A search is 1-2 minutes of turning and vision calls. Run inside the tool
+# call, it held the whole brain: on Telegram (2026-10-20) "go near the dining
+# table" blocked for 2 min, the door's arrival report waited behind it and
+# landed AFTER "heading toward the dining table" -- the owner, confused, asked
+# again, which cancelled the drive that had just begun. Now the tool returns
+# within a few seconds; the search goes on in a thread and its result is a
+# notice (services/notices.py) to whoever asked. A quick answer (the person-
+# only refusal, MANUAL, a photo-memory hit close by) still comes back as the
+# tool's own result.
+_QUICK_S = float(os.environ.get("LANGROBO_APPROACH_QUICK_S", "8"))
+_STARTED = "On my way; I'll say when I'm there."
+_job_lock = threading.Lock()
+_job: dict | None = None
+
+
+def _short_name(description: str) -> str:
     # for the replies: "the orange bottle" -> "orange bottle", so the text does
     # not read "the the orange bottle" (floor test, 2026-09-26)
     # ...and "my bag" -> "bag": "the my bag" was said aloud on 2026-10-12
-    name = re.sub(r"^(?:(?:the|a|an|my|your|our)\s+)+", "", description, flags=re.IGNORECASE)
+    return re.sub(r"^(?:(?:the|a|an|my|your|our)\s+)+", "", description.strip(),
+                  flags=re.IGNORECASE)
+
+
+def _join_errands(old: str, new: str) -> str:
+    old, new = (old or "").strip(), (new or "").strip()
+    if not new or new in old:
+        return old
+    return f"{old}; then {new}" if old else new
+
+
+def search_active() -> bool:
+    """True while a background search is running (agent_node lets talk without
+    a stop word go on, as it does for a drive)."""
+    job = _job
+    return bool(job and job["thread"].is_alive() and not job["superseded"])
+
+
+def search_status() -> str | None:
+    """'looking for the X (40 s so far)' while a search runs, else None."""
+    job = _job
+    if not (job and job["thread"].is_alive() and not job["superseded"]):
+        return None
+    return f"looking for the {job['name']} ({time.time() - job['since']:.0f} s so far)"
+
+
+def _already_after(bridge, name: str) -> str | None:
+    """"searching" / "driving" when the robot is already after `name`."""
+    key = name.casefold()
+    job = _job
+    if job and job["thread"].is_alive() and not job["superseded"] and job["name"].casefold() == key:
+        return "searching"
+    try:
+        state = bridge.navigation_state() or {}
+    except Exception:
+        return None
+    label = ((state.get("goal") or {}).get("label") or "").casefold()
+    if state.get("active") and label == f"near the {key}":
+        return "driving"
+    return None
+
+
+def _start_search(bridge, description: str, name: str, state: dict, then: str) -> str:
+    global _job
+    with _job_lock:
+        prev = _job
+        if prev is not None and prev["thread"].is_alive():
+            # Something else was asked for: the old search stops at its next
+            # check (it may be inside a vision call), and never drives.
+            prev["superseded"] = True
+            bridge.request_motion_stop()
+        job = {"name": name, "description": description, "then": then, "state": dict(state or {}),
+               "requester": _notices.requester_of(state), "since": time.time(),
+               "superseded": False, "detached": False, "done": threading.Event(),
+               "result": None, "prev": prev}
+        job["thread"] = threading.Thread(target=_run_search, args=(job,), daemon=True,
+                                         name=f"search:{name[:20]}")
+        _job = job
+    bridge.cancel_navigation()          # a drive to something else ends here
+    job["thread"].start()
+    if job["done"].wait(_QUICK_S):
+        return job["result"] + (_mv.view_stale_note() if _STARTED in job["result"] else "")
+    with _job_lock:
+        if job["result"] is not None:   # finished in the gap
+            return job["result"] + (_mv.view_stale_note() if _STARTED in job["result"] else "")
+        job["detached"] = True
+    return (f"Looking for the {name} now -- searching in the background. The result "
+            f"(found and on my way, or not found) is reported to the user "
+            f"automatically. Tell them you are looking; do NOT say you have found "
+            f"it, and do not call this again.")
+
+
+def _run_search(job: dict) -> None:
+    prev = job["prev"]
+    job["prev"] = None
+    if prev is not None:
+        prev["thread"].join(timeout=90.0)
+    out = None
+    try:
+        if not job["superseded"]:
+            # No photo survey while searching: the Mac runs one model, and
+            # every view of the search waits on it. The views are queued and
+            # surveyed after.
+            with _survey.paused():
+                out = _approach(job["description"], job["state"], job=job)
+    except Exception as e:              # noqa: BLE001 -- a thread must report, not die
+        logger.exception("background search for %r failed", job["name"])
+        out = f"I couldn't finish looking for the {job['name']} ({type(e).__name__})."
+    out = out or f"Stopped looking for the {job['name']}."
+    if _STARTED not in out and not job["superseded"]:
+        from .telegram import send_pending_photo
+        send_pending_photo(False)       # a photo held for an arrival that won't come
+    with _job_lock:
+        job["result"] = out
+        detached = job["detached"]
+        job["done"].set()
+    if not detached or job["superseded"] or out.startswith("Stopped"):
+        return                          # the tool returned it, or the person moved on
+    stale = _mv.view_stale_note()
+    _notices.post(out, job["requester"],
+                  report=f"[SYSTEM] The search for {job['description']} finished: {out}{stale}")
+
+
+def _approach(description: str, state: dict, then: str = "", job: dict | None = None) -> str:
+    bridge = _bridge.get()
+    description = description.strip()
+    name = _short_name(description)
     if _names_a_person_only(description):
         return (f"I can't recognise who people are -- I only see what they look "
                 f"like, so I could go to the wrong person. Ask the user what "
@@ -651,6 +794,11 @@ def _approach(description: str, state: dict, then: str = "") -> str:
                 else f"It has moved about {moved:.1f} m since I last saw it. ")
 
     goal = res["goal"]
+    if job is not None:
+        with _job_lock:
+            if job["superseded"]:       # asked for something else meanwhile
+                return f"Stopped looking for the {name}."
+            then = job["then"]          # errands added while it searched
     # Nav completion arrives minutes later as a [SYSTEM] turn — remember who
     # asked so a Telegram-initiated approach reports back to that chat.
     _mv.remember_requester(state, then, target=description)
@@ -658,7 +806,7 @@ def _approach(description: str, state: dict, then: str = "") -> str:
                              round(math.degrees(goal["yaw"]), 1),
                              label=f"near the {name}")
     return (note + f"I can see the {name} — about {res['depth_m']:.1f} m away. "
-            f"On my way; I'll say when I'm there." + _mv.view_stale_note())
+            + _STARTED)
 
 
 def arrival_check(description: str) -> str:

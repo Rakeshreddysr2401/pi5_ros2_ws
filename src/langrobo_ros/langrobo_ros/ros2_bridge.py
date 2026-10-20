@@ -1191,7 +1191,8 @@ class ROS2Bridge:
     FOLLOW_START_WAIT_S = 7.0   # follow_node waits 3 s for a person, +1 s for no people at all
     FOLLOW_SILENT_S = 10.0      # follow_node reports at 2 Hz while following
 
-    def start_follow(self, mode: str = "follow", announce: bool = False) -> dict:
+    def start_follow(self, mode: str = "follow", announce: bool = False,
+                     who: str = "you") -> dict:
         """Start "follow me" (mode "follow") or "come to me" (mode "come":
         drive to ~1 m from the person and stop) on the Jetson, and WAIT for its
         first answer, so the tool can say "I can't see anyone" instead of
@@ -1204,7 +1205,10 @@ class ROS2Bridge:
         finding (2026-10-13): nobody was in view and follow_node is turning to
         find someone. announce: a voice turn -- the worker says "There you
         are" when they are found (a COMPLETE utterance, like approach._say).
-        Either way the person is photographed as the follow begins."""
+        Either way the person is photographed as the follow begins.
+        who: how the arrival report names the person -- "you" for the voice
+        speaker, "the person I found" when a Telegram sender sent it to
+        someone in the room."""
         if self._follow_start_pub.get_subscription_count() == 0:
             return {"ok": False, "result": "unavailable",
                     "why": "the Jetson's follow node is not running (./rover follow)"}
@@ -1239,12 +1243,12 @@ class ROS2Bridge:
             return {"ok": False, "result": first.get("result", "failed"),
                     "why": first.get("why", "")}
 
-        label = "you" if come else "following you"
+        label = who if come else "following you"
         cancel_event = threading.Event()
         with self._nav_lock:
             self._nav_cancel_event = cancel_event
         thread = threading.Thread(target=self._follow_worker,
-                                  args=(key, come, cancel_event, announce), daemon=True)
+                                  args=(key, come, cancel_event, announce, who), daemon=True)
         with self._nav_lock:
             self._nav_thread = thread
             self._nav_goal = {"x": None, "y": None, "label": label, "since": time.time()}
@@ -1264,9 +1268,9 @@ class ROS2Bridge:
     }
 
     def _follow_worker(self, key: str, come: bool, cancel_event: threading.Event,
-                       announce: bool = False) -> None:
+                       announce: bool = False, who: str = "you") -> None:
         """Background thread: one follow, until its final status line."""
-        what = "Coming to you" if come else "Following you"
+        what = f"Coming to {who}" if come else "Following you"
         seen, seen_at = 0, time.monotonic()
         photographed = said_found = False
         try:
@@ -1303,7 +1307,7 @@ class ROS2Bridge:
                     continue
                 result, why = done.get("result", ""), done.get("why", "")
                 if result == "reached":
-                    self._fire_nav_done(True, f"I've come to you ({why}).")
+                    self._fire_nav_done(True, f"I've come to {who} ({why}).")
                 elif result == "cancelled":
                     self._fire_nav_done(False, f"{what} -- cancelled")
                 else:

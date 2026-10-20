@@ -149,6 +149,9 @@ pip3 install --break-system-packages -r requirements.txt
    ("Looking for the bag.") and a plain success as it RETURNS ("Turned left 90
    degrees."), inside the turn's utterance; the model's next run, which would
    only restate it, is muted (one run only -- a second step is still heard).
+   The one exception for a MODEL: `say_in_room` (tools/room_voice.py, 2026-10-20),
+   chat only -- a Telegram sender's words said aloud ("tell her loudly"); a
+   Telegram reply never reaches the speaker. It refuses on a voice turn.
    An agent may also answer exactly `[silent]` (SPEECH_STYLE): not said to it
    (TV, room talk); never spoken, nothing kept -- unless the name was said.
    That is a prompt rule, so it is measured (2026-10-13, chat's real prompt: silent
@@ -162,6 +165,13 @@ pip3 install --break-system-packages -r requirements.txt
 6. New proactive behaviour = a producer injecting `[SYSTEM]` turns into
    agent_node's system queue (the Nav2 arrival report is the worked
    example) — don't invent new mechanisms.
+   A report that is only a FACT (a drive ended, a background search found or
+   missed its object) is a notice instead (services/notices.py, 2026-10-20):
+   delivered as written by code -- spoken, or sent to the asker's Telegram
+   with the arrival photo -- and kept in the history; no LLM turn. Only a drive
+   with an errand (`then`) still becomes a [SYSTEM] turn. approach_described_object
+   returns in seconds and searches in a thread; asked again for the same object
+   it adds the errand to the drive under way instead of restarting it.
 
 ## Layout (full detail in ARCHITECTURE_LLD.md)
 

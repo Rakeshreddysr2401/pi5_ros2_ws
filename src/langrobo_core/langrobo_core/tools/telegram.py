@@ -127,7 +127,8 @@ def send_telegram_photo(recipient: str, caption: str,
     if refusal:
         return refusal
     bridge = get_bridge()
-    if getattr(bridge, "navigation_active", lambda: False)():
+    from .approach import search_active   # still searching: the drive is coming
+    if getattr(bridge, "navigation_active", lambda: False)() or search_active():
         # "Go to the bag and send me a pic": approach returns as soon as the
         # drive STARTS, and the model then sent the photo at once, captioned
         # "I have reached the black bag" -- a picture of the way there, and a

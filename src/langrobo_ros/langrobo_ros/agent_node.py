@@ -35,6 +35,7 @@ from langrobo_core.services import config as config_service
 from langrobo_core.services import health as health_service
 from langrobo_core.services import llm as llm_module
 from langrobo_core.services import metrics
+from langrobo_core.services import notices
 from langrobo_core.services import telegram as telegram_service
 from langrobo_core.services.logging import new_trace, setup_logging
 from langrobo_core.tools import _bridge as bridge_module
@@ -55,6 +56,18 @@ from langrobo_core.utils.stop_words import keeps_moving
 
 # A warm turn speaks within ~1.5s; 6s means the LLM is cold or unreachable.
 SLOW_TURN_CUE_S = 6.0
+
+
+@contextmanager
+def _untraced():
+    """LangSmith off for the block (a no-op without langsmith)."""
+    try:
+        from langsmith import tracing_context
+    except Exception:
+        yield
+        return
+    with tracing_context(enabled=False):
+        yield
 
 from .ros2_bridge import ROS2Bridge
 
@@ -189,6 +202,9 @@ class AgentNode(Node):
         self._warn_if_competing_bridge()
         # Let pure-zone tools inject [SYSTEM] turns into the worker queue.
         self._bridge.register_system_turn_callback(self._enqueue_system)
+        # ...and code-written reports (a background search's result, a drive's
+        # end), delivered as written to whoever asked (services/notices.py).
+        notices.set_sink(self._enqueue_notice)
         # Background photo survey (every photo -> object memory) waits while
         # a turn is running: the Mac runs one model and the turn comes first.
         _survey.set_busy_probe(lambda: self._turn_active or self._user_pending is not None)
@@ -237,7 +253,8 @@ class AgentNode(Node):
         self._queue_lock     = threading.Lock()
         self._user_pending:   str | None = None
         self._user_pending_at: float = 0.0
-        self._system_pending: list[tuple] = []   # (text, quiet, sender (name, role) | None, check)
+        # dicts: {"kind": "turn" | "notice", "text", ...} -- see _enqueue_system / _enqueue_notice
+        self._system_pending: list[dict] = []
         self._telegram_pending: list = []
         self._input_event    = threading.Event()
         # Barge-in: set when a NEW user utterance arrives while a turn is
@@ -481,9 +498,26 @@ class AgentNode(Node):
         # already being answered, and the robot said "I had to stop, something
         # was in my way" and then "I have arrived" two seconds apart. The newer
         # drive reports for itself; an arrival is still true, so it stays.
+        failed_at = None if success else time.time()
+        if rep["cancelled"]:
+            # A stop word or a new command ended it: the person knows, and has
+            # moved on. (Its errand was dropped by arrival_task_note.)
+            self.get_logger().info(f"nav report not sent -- cancelled: {message!r}")
+            return
+        telegram = req.get("channel") == "telegram"
+        if not rep["errand"]:
+            # A plain report is a fact: code delivers it as written, no LLM
+            # turn (5-10 s, and it reworded "I can't see the table" away).
+            self._enqueue_notice(rep["notice"], req, report=rep["text"], check=rep["check"],
+                                 photo=telegram and success and not rep["photo_note"],
+                                 failed_at=failed_at)
+            return
+        # An errand to do on arrival needs the model. A Telegram asker gets
+        # the arrival report and photo from code first, then the errand's outcome.
         self._enqueue_system(rep["text"], check=rep["check"],
-                             quiet=rep["quiet"], sender=rep["sender"],
-                             failed_at=None if success else time.time())
+                             quiet=rep["quiet"], sender=rep["sender"], failed_at=failed_at,
+                             photo_first=(req, rep["notice"]) if telegram and success
+                             and not rep["photo_note"] else None)
 
     # ── Two-slot queue (spin thread → worker thread) ──────────────────────
 
@@ -500,7 +534,8 @@ class AgentNode(Node):
         # the dining table. Then only a stop word halts it (utils/stop_words.py);
         # the words are answered after the motion, and a new drive they ask for
         # replaces the old one by itself.
-        moving = self._bridge.navigation_active() or self._turn_moving
+        from langrobo_core.tools.approach import search_active
+        moving = self._bridge.navigation_active() or self._turn_moving or search_active()
         keep = keeps_moving(moving, text)
         if keep:
             self.get_logger().info("moving: talk without a stop word -- the motion goes on, "
@@ -596,16 +631,82 @@ class AgentNode(Node):
                                   ("ok", "latency_ms", "audio_ms", "rtf", "fell_back")})
 
     def _enqueue_system(self, text: str, quiet: bool = False, sender=None,
-                        check=None, failed_at=None) -> None:
+                        check=None, failed_at=None, photo_first=None) -> None:
         """Enqueue a system event — fires after current graph run.
         quiet: the turn's reply goes out by a tool (Telegram), never the speaker.
         check: (object, index) -- run the arrival check for `object` when this
         turn is taken and insert its sentence at `index` of the text.
         failed_at: a failed drive's report (wall time) -- the one thing ever
-        dropped: when a newer drive has started by the time it is taken."""
+        dropped: when a newer drive has started by the time it is taken.
+        photo_first: (requester, caption) -- send the arrival photo to that
+        Telegram asker, captioned, before the turn runs."""
         with self._queue_lock:
-            self._system_pending.append((text, quiet, sender, check, failed_at))
+            self._system_pending.append({"kind": "turn", "text": text, "quiet": quiet,
+                                         "sender": sender, "check": check,
+                                         "failed_at": failed_at, "photo_first": photo_first})
         self._input_event.set()
+
+    def _enqueue_notice(self, text: str, requester: dict, report: str = "",
+                        photo: bool = False, check=None, failed_at=None) -> None:
+        """services/notices.py's sink (any thread): a code-written report for
+        `requester`, delivered by the worker between turns (_deliver_notice).
+        check / failed_at: as _enqueue_system (check's index is into `report`)."""
+        with self._queue_lock:
+            self._system_pending.append({"kind": "notice", "text": text, "requester": requester,
+                                         "report": report, "photo": photo, "check": check,
+                                         "failed_at": failed_at})
+        self._input_event.set()
+
+    def _deliver_notice(self, item: dict, sentence: str = "") -> None:
+        """Say or send a notice as written, and keep it in the history as a
+        [SYSTEM] line + the robot's words, so a follow-up ("did you get
+        there?") is answered from it. Worker thread only (history)."""
+        from langchain_core.messages import AIMessage, HumanMessage
+        text = f"{item['text']}{sentence}"
+        report = item.get("report") or f"[SYSTEM] {item['text']}"
+        if item.get("check") and sentence:
+            at = item["check"][1]
+            report = report[:at] + sentence + report[at:]
+        req = item.get("requester") or {}
+        # A drive started by a quiet [SYSTEM] turn acting for a Telegram
+        # sender (an errand) is theirs too: channel "system", their name.
+        remote = req.get("channel") == "telegram" or (
+            req.get("channel") == "system" and self._telegram is not None
+            and self._telegram.member_by_name(req.get("sender") or "") is not None)
+        if remote:
+            err = self._send_to_member(req.get("sender"), text, photo=item.get("photo"),
+                                       proactive=True)
+            self.get_logger().info(f"→ notice (Telegram {req.get('sender')}): {text[:120]}"
+                                   + (f" -- NOT delivered: {err}" if err else ""))
+        else:
+            self._last_spoke_ts = time.time()
+            self.get_logger().info(f"→ notice (TTS): {text[:120]}")
+            self._bridge.publish_speech(text)
+        with self._history_lock:
+            self._history, _ = trim_history(
+                self._history + [HumanMessage(content=report), AIMessage(content=text)],
+                self._max_history)
+        self._start_cache_warm()
+
+    def _send_to_member(self, name: str | None, text: str, photo: bool = False,
+                        proactive: bool = False) -> str | None:
+        """Text (or the current camera view captioned with it) to a Telegram
+        member by name. None when sent; else why not. proactive: respects
+        quiet hours (queued as text until they end), like a [SYSTEM] ping."""
+        svc = self._telegram
+        member = svc.member_by_name(name) if (svc and name) else None
+        if member is None:
+            return f"no Telegram member {name!r}"
+        if proactive and svc.quiet_now():
+            svc.defer(member.chat_id, text)
+            return "quiet hours -- queued"
+        if photo:
+            frame = self._bridge.get_frame(max_age_s=3.0)
+            if frame is not None:
+                err = svc.send_photo(member.chat_id, frame, text)
+                if not err:
+                    return None
+        return svc.send_message(member.chat_id, text)
 
     def _on_telegram_inbound(self, inbound) -> None:
         """Telegram poller thread → worker queue. Never barges in on a running
@@ -628,8 +729,11 @@ class AgentNode(Node):
             # next loop.
             with self._queue_lock:
                 telegram, quiet, sender, check, failed_at = None, False, None, None, None
+                item = None
                 if self._system_pending:
-                    (text, quiet, sender, check, failed_at), is_system = self._system_pending.pop(0), True
+                    item, is_system = self._system_pending.pop(0), True
+                    text, check, failed_at = item["text"], item["check"], item["failed_at"]
+                    quiet, sender = item.get("quiet", False), item.get("sender")
                 elif self._user_pending is not None:
                     text, is_system = self._user_pending, False
                     self._user_pending = None
@@ -651,12 +755,28 @@ class AgentNode(Node):
             if text:
                 if not is_system and telegram is None:
                     text = self._await_continuation(text)
+                sentence = ""
                 if check:
                     # The arrival check, here in the worker: anything that
                     # arrives meanwhile waits behind this report.
                     from langrobo_core.tools.approach import arrival_check
-                    target, at = check
-                    text = text[:at] + arrival_check(target) + text[at:]
+                    sentence = arrival_check(check[0])
+                if item is not None and item["kind"] == "notice":
+                    try:
+                        self._deliver_notice(item, sentence)
+                    except Exception as e:     # the worker must outlive any one report
+                        self.get_logger().error(f"notice not delivered: {e}")
+                    continue
+                if check:
+                    text = text[:check[1]] + sentence + text[check[1]:]
+                if item is not None and item.get("photo_first"):
+                    req, caption = item["photo_first"]
+                    try:
+                        err = self._send_to_member(req.get("sender"), caption + sentence, photo=True)
+                    except Exception as e:
+                        err = str(e)
+                    if err:
+                        self.get_logger().warning(f"arrival photo not sent -- {err}")
                 self._process(text, is_system, telegram=telegram, quiet=quiet, sender=sender)
 
     def _await_continuation(self, text: str) -> str:
@@ -828,6 +948,7 @@ class AgentNode(Node):
         self._trace_for_tts = trace   # read by _on_tts_meta on the spin thread
         turn_start = time.time()
         slow_cue = None
+        typing_done = None
         metrics.inc("turns_total")
         if is_system:
             metrics.inc("system_turns_total")
@@ -891,6 +1012,13 @@ class AgentNode(Node):
                          "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
                     ])
                 self._telegram.send_typing(telegram.chat_id)
+                # Telegram shows "typing..." for 5 s; a turn can take 20.
+                typing_done = threading.Event()
+
+                def _keep_typing(chat_id=telegram.chat_id, done=typing_done):
+                    while not done.wait(4.0):
+                        self._telegram.send_typing(chat_id)
+                threading.Thread(target=_keep_typing, daemon=True, name="typing").start()
 
             messages = history + [turn_msg or HumanMessage(content=turn_text)]
 
@@ -990,6 +1118,7 @@ class AgentNode(Node):
 
             result = None
             interrupted = False
+            logged = len(messages) - 1   # the turn's own message is logged once, below
             for event in self._graph.stream(
                 {"messages": messages, "active_agent": incoming_agent,
                  # "system" marks proactive turns (quiet-hours gate in the
@@ -1012,7 +1141,11 @@ class AgentNode(Node):
                     # and let the worker loop pick up the new input.
                     interrupted = True
                     break
-                if "messages" in event:
+                if "messages" in event and len(event["messages"]) > logged:
+                    # stream_mode="values" repeats the state after a node that
+                    # added nothing (the entry router): log and speak each
+                    # message once -- every input was logged twice before.
+                    logged = len(event["messages"])
                     msg = event["messages"][-1]
                     self._turn_moving = any(tc.get("name") in MOTION_TOOL_NAMES
                                             for tc in (getattr(msg, "tool_calls", None) or []))
@@ -1141,6 +1274,8 @@ class AgentNode(Node):
             # the answer has been spoken is worse than no cue at all.
             if slow_cue is not None:
                 slow_cue.cancel()
+            if typing_done is not None:
+                typing_done.set()
             with self._queue_lock:
                 self._turn_active = False
                 self._turn_moving = False
@@ -1239,11 +1374,15 @@ class AgentNode(Node):
             # anonymous root ChatOpenAI runs next to real turns: there are two
             # per turn, they carry the full prompt, and they
             # answer nothing. Hide them in the UI with -has(tags, "cache_warm").
-            llm.bind(max_tokens=1).invoke(msgs, config={
-                "run_name": f"cache_warm:{agent}",
-                "tags": ["cache_warm", f"entry:{agent}"],
-                "metadata": {"agent": agent, "history_messages": len(history)},
-            })
+            # NOT traced: each warm uploads the whole prompt and answers
+            # nothing, and they were what drove LangSmith to 429 -- 42
+            # rejected uploads in 20 min on 2026-10-20, real turns lost.
+            with _untraced():
+                llm.bind(max_tokens=1).invoke(msgs, config={
+                    "run_name": f"cache_warm:{agent}",
+                    "tags": ["cache_warm", f"entry:{agent}"],
+                    "metadata": {"agent": agent, "history_messages": len(history)},
+                })
             self.get_logger().info(
                 f"KV-cache warmed for '{agent}' ({len(history)} history messages)")
         except Exception as e:
