@@ -16,6 +16,10 @@ Home robot "Kino" (renamed from "Rakhi" 2026-09-20; the `rakhi24` username and `
   Repo: **`~/rover`** on the Jetson (container `rover`), brought up with
   `./rover up`. (`~/langrobo_perception` and `~/robot` are the old stacks.)
 - **Mac Mini** — the LLM and VLM (llama.cpp, `singireddys-mac-mini.local:8080`).
+  `LANGROBO_LLM` in .env picks the server (services/llm_profiles.py): `gemma` = the
+  Mac (default), `qwen` = Qwen3.5-9B on the laptop's RTX 4050 (`~/llama.cpp-bin/qwen9b.sh`,
+  only while the twin is down). Measured 2026-10-20 on the brain's prompts: Gemma 16/16
+  tools right, Qwen 13/16 -- the owner keeps Gemma.
   **Start it with `e12b5`** in a Mac terminal after every power-on (nothing autostarts; it asks the
   Mac password once to raise the GPU memory limit to 13 GB): a PATCHED llama.cpp b9830 with
   `--jinja --parallel 5`, 5 x 16384 -- one KV slot per agent + photo questions (`ask_photos`) +
@@ -77,6 +81,7 @@ passwordless ssh; DDS is plain multicast on domain 0 everywhere (NETWORKING.md).
 ./scripts/fleet.sh stop       # park robot body (brain stays up)
 ./scripts/fleet.sh down       # full shutdown incl. Pi5 services (sudo)
 ./scripts/fleet.sh status
+./scripts/llm_switch.sh gemma|qwen   # which LLM server: Mac Gemma 4 12B (default) | laptop Qwen3.5-9B
 
 # Test (no robot, no LLM server, no keys; never traces) — run all three after a change
 cd src/langrobo_core && python3 -m pytest tests/ -q     # pure core, ~620 tests, ~25 s

@@ -34,6 +34,7 @@ load_dotenv(os.path.expanduser(os.getenv("LANGROBO_ENV_FILE", "~/ros2_ws/.env"))
 from langrobo_core.services import config as config_service
 from langrobo_core.services import health as health_service
 from langrobo_core.services import llm as llm_module
+from langrobo_core.services import llm_profiles
 from langrobo_core.services import metrics
 from langrobo_core.services import notices
 from langrobo_core.services import telegram as telegram_service
@@ -114,6 +115,12 @@ class AgentNode(Node):
         model         = self.get_parameter("model").value
         api_key_env   = self.get_parameter("api_key_env").value
         base_url      = self.get_parameter("base_url").value
+        # LANGROBO_LLM in .env (gemma = the Mac, qwen = the laptop) wins over
+        # the launch default: one switch for every LLM client (services/llm_profiles.py).
+        if llm_profiles.chosen():
+            base_url = llm_profiles.base_url()
+        self.get_logger().info(f"LLM: {llm_profiles.name()} -- {llm_profiles.profile()['where']} "
+                               f"at {base_url}" if llm_profiles.chosen() else f"LLM: {base_url}")
         max_tokens    = self.get_parameter("max_tokens").value
         # History stores raw message objects (incl. captured image blocks),
         # not turn-pairs, so allow extra room for tool-call / image messages.

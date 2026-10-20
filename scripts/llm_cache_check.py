@@ -44,8 +44,19 @@ import sys
 import time
 import urllib.request
 
-URL = (sys.argv[1] if len(sys.argv) > 1
-       else "http://singireddys-mac-mini.local:8080") + "/v1/chat/completions"
+def _default_root() -> str:
+    """The server LANGROBO_LLM in .env names (services/llm_profiles.py)."""
+    import os
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(os.path.expanduser(os.getenv("LANGROBO_ENV_FILE", "~/ros2_ws/.env")))
+        from langrobo_core.services import llm_profiles
+        return llm_profiles.server_root()
+    except Exception:
+        return "http://singireddys-mac-mini.local:8080"
+
+
+URL = (sys.argv[1] if len(sys.argv) > 1 else _default_root()) + "/v1/chat/completions"
 
 # ~3.5k tokens: about one agent's system prompt + tool schemas.
 SYSTEM = {"role": "system", "content": "Cache test. " + " ".join(

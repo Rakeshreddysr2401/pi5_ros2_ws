@@ -55,6 +55,9 @@ _PROVIDER_KEY_MAP = {
 _provider   = os.getenv("STUDIO_PROVIDER", "openai")
 _model      = os.getenv("STUDIO_MODEL",    "gpt-4o-mini")
 _base_url   = os.getenv("STUDIO_BASE_URL", "")
+if os.getenv("LANGROBO_LLM"):   # the brain's switch (services/llm_profiles.py) wins
+    from langrobo_core.services import llm_profiles
+    _base_url = llm_profiles.base_url()
 _max_tokens = int(os.getenv("STUDIO_MAX_TOKENS", "600"))   # = agent_params.yaml
 
 _key_env = _PROVIDER_KEY_MAP.get(_provider, "OPENAI_API_KEY")
