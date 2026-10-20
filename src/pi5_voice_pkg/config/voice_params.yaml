@@ -121,15 +121,21 @@ pi5_stt_node:
     # none. Not [] -- an empty list leaves a ROS string-list parameter
     # uninitialised and stt_node would not start; "" entries are dropped.
     wake_leading_aliases: [""]
-    # OFF (owner, 2026-10-12): every sentence goes to the brain -- no name gate,
-    # no "is this for me?" check (it dropped real commands whenever the Mac was
-    # busy: "Can you find the door?"). The agent clarifies when unsure; a trained
-    # wake word replaces this later. true + addressing_mode: llm = the old filter.
-    require_wake: false
-    # With require_wake: true -- the name works instantly; any other sentence is
-    # judged by the brain's LLM (relevance.py, slot 4). Unused while require_wake is false.
-    addressing_mode: llm
-    heard_cue: true          # a chime when the filter accepts a sentence (only with require_wake: true)
+    # ON (owner, 2026-10-20): only a sentence with the name ("Kino, ...") is a
+    # turn, then follow_up_window_s / max_follow_ups for the replies. It was OFF
+    # from 2026-10-12 (every sentence went to the brain), and room talk like
+    # "Okay." / "Yeah." became queued turns. false = answer everything.
+    require_wake: true
+    # 'name' = the name in the text + the follow-up window, nothing else.
+    # 'llm' = a sentence without the name is put to the brain's LLM as a yes/no
+    # (relevance.py, slot 4) -- it dropped real commands whenever the Mac was
+    # busy ("Can you find the door?", 2026-10-12).
+    addressing_mode: name
+    # Every utterance -> one JSON line (heard, decision, near-miss like "keno"),
+    # + WAV clips of wakes and near-misses. Read: scripts/wake_report.py. "" = off.
+    wake_log_dir: /home/rakhi24/ros2_ws/logs/wake
+    wake_log_clips: true
+    heard_cue: true          # a chime when the llm filter accepts a sentence (addressing_mode: llm only)
     # Speak the acknowledgement only if you PAUSE after the name. Saying
     # "Kino, go to the kitchen" in one breath skips it rather than talking
     # over the command (see wake_cue.py).
@@ -161,7 +167,11 @@ pi5_stt_node:
     # back to stt_fallback, then Whisper -- never silent (CLAUDE.md #5).
     # Owner's own voice, 39 sentences, fan on (docs/voice/VOICE_LAB_2026-10.md):
     # Sarvam 6-11 % word errors 0.35 s | Parakeet 10-15 % 0.55 s | tiny.en 45-54 %.
-    stt_provider: sherpa
+    # apple since 2026-10-20 (owner): kino-stt on the Mac (started by e12b5), on-device,
+    # frees the Pi 5 CPU; Mac off/slow -> stt_fallback (Parakeet) within 5 s. On the
+    # AM-C28 it hears "Hey Kino" as "Play Kino" (the mic drops the H): addressing.py
+    # drops that "Play". Parakeet heard the name 8/9 vs Apple 3/9 on this mic.
+    stt_provider: apple
     stt_source_language: te   # Telugu -- used by the translating cloud providers only
     stt_target_language: en
     stt_fallback: sherpa

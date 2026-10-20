@@ -8,7 +8,9 @@
 // Same shape as Sarvam's REST call (one whole utterance in, text out), so the
 // Pi side is a 40-line provider: pi5_voice_pkg/stt_providers/apple.py.
 // On-device only by default (no audio leaves the Mac); ?server=1 lets Apple's
-// servers help when the on-device model is missing for that locale.
+// servers help when the on-device model is missing for that locale, and
+// ?mode=server uses Apple's server model even when an on-device one exists --
+// the bigger model Siri and Dictation use (for A/B tests; audio goes to Apple).
 // No Telugu: SFSpeechRecognizer has no te-IN at all (probed 2026-10-10,
 // macOS 15.5) -- en-IN and hi-IN only for India, hi-IN without an on-device model.
 //
@@ -55,11 +57,12 @@ final class Once<T: Sendable>: @unchecked Sendable {
     }
 }
 
-func transcribe(wav: Data, locale: String, context: [String], allowServer: Bool) async throws -> (String, Bool) {
+func transcribe(wav: Data, locale: String, context: [String], allowServer: Bool,
+                preferServer: Bool = false) async throws -> (String, Bool) {
     let rec = try recognizers.get(locale)
     guard rec.isAvailable else { throw STTError.unavailable("recogniser for \(locale) not available") }
-    let onDevice = rec.supportsOnDeviceRecognition
-    if !onDevice && !allowServer {
+    let onDevice = rec.supportsOnDeviceRecognition && !preferServer
+    if !onDevice && !allowServer && !preferServer {
         throw STTError.unavailable("no on-device model for \(locale) (pass server=1 to allow Apple's servers)")
     }
     let url = FileManager.default.temporaryDirectory
@@ -136,10 +139,12 @@ func handle(_ conn: NWConnection, method: String, target: String, body: Data) {
         let locale = q["lang"].flatMap { $0.isEmpty ? nil : $0 } ?? defaultLocale
         let context = (q["context"] ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         let allowServer = q["server"] == "1"
+        let preferServer = q["mode"] == "server"
         let t0 = Date()
         Task {
             do {
-                let (text, onDevice) = try await transcribe(wav: body, locale: locale, context: context, allowServer: allowServer)
+                let (text, onDevice) = try await transcribe(wav: body, locale: locale, context: context, allowServer: allowServer,
+                                                          preferServer: preferServer)
                 let secs = Date().timeIntervalSince(t0)
                 print(String(format: "%.2fs %@ %@", secs, locale, text)); fflush(stdout)
                 respond(conn, 200, json(["transcript": text, "secs": secs, "on_device": onDevice]))

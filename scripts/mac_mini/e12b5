@@ -1,5 +1,6 @@
 #!/bin/zsh
-# e12b5 -- start Kino's LLM + VLM server (Gemma 4 12B, llama.cpp) on the Mac Mini.
+# e12b5 -- start Kino's LLM + VLM server (Gemma 4 12B, llama.cpp) on the Mac Mini,
+# and Apple speech recognition for the Pi5 (kino-stt, :8091) with it.
 #
 #   e12b5            start (asks for the Mac password once per boot: GPU memory limit)
 #   e12b5 stop       stop it
@@ -29,6 +30,7 @@ PLIST=$HOME/llama.cpp-kino/$LABEL.plist      # NOT in ~/Library/LaunchAgents: no
 LOG=$HOME/Library/Logs/llama-server.log
 GPU_MB=13312
 DOMAIN=gui/$(id -u)
+STT=${0:A:h}/stt_server        # kino-stt: tiny (~30 MB), so it stays up across `e12b5 stop`
 
 wait_up() {
   for i in {1..90}; do
@@ -44,6 +46,8 @@ status() {
 p=json.load(sys.stdin); print("slots:", p["total_slots"], " ctx per slot:", p["default_generation_settings"]["n_ctx"])' \
     2>/dev/null || echo "server: not answering on :8080"
   pid=$(pgrep -f "^$BIN") && ps -o rss= -p $pid | awk '{printf "server RAM: %.1f GB\n", $1 / 1048576}'
+  curl -s -m 2 localhost:8091/health | grep -q '"authorized"' \
+    && echo "speech (kino-stt): listening on :8091" || echo "speech (kino-stt): NOT answering -- $STT/ensure.sh"
 }
 
 stop() {
@@ -76,11 +80,14 @@ else
   CTX=61440 UB=256
 fi
 
-# 2. One owner of port 8080: stop any other llama-server and Ollama (it starts its own)
+# 2. Speech for the Pi5 first: it never blocks the LLM (ensure.sh always exits 0)
+$STT/ensure.sh
+
+# 3. One owner of port 8080: stop any other llama-server and Ollama (it starts its own)
 pkill -f '/Applications/Ollama.app' 2>/dev/null
 stop >/dev/null
 
-# 3. Run under launchd (restart on crash), from a plist outside LaunchAgents (no autostart)
+# 4. Run under launchd (restart on crash), from a plist outside LaunchAgents (no autostart)
 args=(/usr/bin/caffeinate -is $BIN -m $M/gemma-4-12B-it-Q4_K_M.gguf
       --mmproj $M/mmproj-gemma-4-12B-it-Q8_0.gguf --host 0.0.0.0 --port 8080 -ngl 99
       --parallel 5 --ctx-size $CTX -ub $UB --jinja --flash-attn on --reasoning off
