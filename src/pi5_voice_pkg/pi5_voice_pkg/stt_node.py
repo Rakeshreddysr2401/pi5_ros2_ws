@@ -56,7 +56,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, String
 
-from .addressing import strip_alias, strip_leading_alias, strip_sound_alike
+from .addressing import strip_alias, strip_leading_alias
 from . import relevance
 from .vad_gate import GateConfig, evaluate as gate_utterance
 from .vad_silero import SileroVad, VadUnavailable
@@ -221,8 +221,6 @@ class STTNode(Node):
         self._diag_every = int(_diag_s * 1000 / FRAME_MS) if _diag_s > 0 else 0
         self._aliases = [a.lower() for a in self.get_parameter('wake_aliases').value]
         self._leading_aliases = [a.lower() for a in self.get_parameter('wake_leading_aliases').value if a]
-        # The name alone ('hey kino' -> 'kino'), for misspellings: "Ekina, ..." (addressing.py).
-        self._names = sorted({a.split()[-1] for a in self._aliases if a.split()})
         self._stop_words = [w.lower() for w in self.get_parameter('stop_words').value]
         self._require_wake = bool(self.get_parameter('require_wake').value)
         provider_name = self.get_parameter('stt_provider').value
@@ -785,8 +783,7 @@ class STTNode(Node):
             # barge-in that abandons the turn, and room talk would cancel every
             # answer mid-thought. The name (and a stop word, above) cut in now.
             named = strip_alias(text, self._aliases) is not None or (
-                self._leading_aliases and strip_leading_alias(text, self._leading_aliases) is not None
-            ) or strip_sound_alike(text, self._names) is not None
+                self._leading_aliases and strip_leading_alias(text, self._leading_aliases) is not None)
             if not named:
                 with self._hold_lock:
                     held = self._hold.offer(text, time.monotonic())
@@ -806,17 +803,11 @@ class STTNode(Node):
         stripped = strip_alias(text, self._aliases)
         if stripped is None and self._leading_aliases:
             stripped = strip_leading_alias(text, self._leading_aliases)
-        # The name as the recogniser misspelt it ("Ekina, ...", "Hey Kinoff"),
-        # only where a name is called -- logged as heard_as='sounds-like'.
-        heard_as = 'name'
-        if stripped is None:
-            stripped = strip_sound_alike(text, self._names)
-            heard_as = 'sounds-like'
 
         if self._addressing == 'llm':
             if stripped is not None:
-                self._log_wake('wake', alias=True, sent=stripped or text, heard_as=heard_as)
-                self._accept(stripped or text, heard_as)
+                self._log_wake('wake', alias=True, sent=stripped or text)
+                self._accept(stripped or text, 'name')
                 return
             if self._music_title and relevance.music_control(text):
                 self._log_wake('music-control', sent=text)
@@ -846,7 +837,7 @@ class STTNode(Node):
             return
         if stripped is not None:
             self._follow_ups = 0
-            self._log_wake('wake', alias=True, sent=stripped or text, heard_as=heard_as,
+            self._log_wake('wake', alias=True, sent=stripped or text,
                            window_s=self._follow_up_s, follow_ups_left=self._max_follow_ups)
             # Bare "Kino?" is a real thing people say to get attention; forward
             # the name itself rather than dropping it as an empty remainder.

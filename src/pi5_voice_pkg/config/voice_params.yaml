@@ -169,8 +169,8 @@ pi5_stt_node:
     # Sarvam 6-11 % word errors 0.35 s | Parakeet 10-15 % 0.55 s | tiny.en 45-54 %.
     # apple since 2026-10-20 (owner): kino-stt on the Mac (started by e12b5), on-device,
     # frees the Pi 5 CPU; Mac off/slow -> stt_fallback (Parakeet) within 5 s. On the
-    # AM-C28 it hears "Hey Kino" as "Play Kino" (the mic drops the H): addressing.py
-    # drops that "Play". Parakeet heard the name 8/9 vs Apple 3/9 on this mic.
+    # AM-C28 it hears "Hey Kino" as "Play Kino" (the mic drops the H) and the name
+    # 3/9 vs Parakeet 8/9: the fix is a better mic + a trained wake model, not text rules.
     stt_provider: apple
     stt_source_language: te   # Telugu -- used by the translating cloud providers only
     stt_target_language: en

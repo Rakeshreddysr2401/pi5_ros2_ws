@@ -23,8 +23,6 @@ import wave
 
 import numpy as np
 
-from .addressing import sounds
-
 NEAR_MISS_RATIO = 0.9     # on sound keys: "keno"/"chino"/"gino" = "kino"; "kinda" 0.89, "kind" 0.75
 MAX_CLIPS = 500           # ~16 kHz mono, a few seconds each: < 100 MB
 _WORD = re.compile(r"[^\W\d_]+", re.UNICODE)
@@ -42,6 +40,20 @@ def name_words(aliases) -> list[str]:
         if parts:
             words.update({parts[-1], ''.join(parts)})
     return sorted(words)
+
+
+def sounds(word: str) -> str:
+    """A rough sound key, for LOGGING near-misses only (it never decides a wake):
+    recognisers write 'kino' as keno, chino, gino, keanu. Hard c/ch/g/q -> k,
+    front vowels -> i, back vowels -> o, a final 'a' -> o, doubles collapsed.
+    """
+    w = (word or "").lower()
+    for a, b in (("ch", "k"), ("ck", "k"), ("c", "k"), ("q", "k"), ("g", "k"),
+                 ("ee", "i"), ("ea", "i"), ("ie", "i"), ("e", "i"), ("y", "i"),
+                 ("oo", "o"), ("ou", "o"), ("u", "o"), ("h", "")):
+        w = w.replace(a, b)
+    w = re.sub(r"a$", "o", w)
+    return re.sub(r"(.)\1+", r"\1", w)
 
 
 def near_miss(text: str, names) -> tuple[str, float] | None:

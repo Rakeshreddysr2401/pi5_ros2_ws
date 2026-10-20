@@ -17,9 +17,9 @@ What the decisions mean:
     llm-*            addressing_mode: llm (the Mac judged it)
 
 A near-miss is an ignored sentence with a word close to the name
-("Keno, come here"): a missed wake, not room talk. Words that keep coming
-up are printed as alias suggestions for wake_aliases in voice_params.yaml.
-Clips of wakes and near-misses: logs/wake/clips/ (aplay <file> to listen).
+("Keno, come here"): probably a missed wake, not room talk. The log only
+reports it -- the gate is not changed. Their clips (logs/wake/clips/, aplay
+<file> to listen) are training material for the wake-word model.
 """
 import argparse
 import collections
@@ -58,8 +58,6 @@ def show(e: dict) -> str:
     d = e["decision"]
     mark = "✓" if d in TURN else "·" if d == "empty" else "✗"
     head = {"wake": "WAKE WORD", "follow-up": "follow-up"}.get(d, d)
-    if e.get("heard_as") == "sounds-like":
-        head = "WAKE ~sounds"           # a misspelt name ("Ekina") counted as the name
     near = f"   <- near-miss {e['near']['word']!r} ({e['near']['ratio']})" if e.get("near") else ""
     clip = f"   [{e['clip']}]" if e.get("clip") else ""
     out = f"{e['when']}  {mark} {head:<15} heard: {e['text']!r}{near}{clip}"
@@ -99,7 +97,7 @@ def summary(entries: list[dict]) -> None:
     words = collections.Counter(e["near"]["word"] for e in near)
     common = [(w, n) for w, n in words.most_common() if n >= 2]
     if common:
-        print("\nalias suggestions (heard 2+ times; check a clip before adding):")
+        print("\nhow the recogniser misspells the name (clips: wake-word training material):")
         for w, n in common:
             print(f"  {w!r:<14} x{n}")
 

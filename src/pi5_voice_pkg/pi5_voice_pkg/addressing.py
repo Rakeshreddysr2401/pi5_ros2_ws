@@ -45,13 +45,6 @@ def strip_alias(text: str, aliases) -> str | None:
             cut = max(before.rfind(c) for c in ".!?")
             if cut >= 0:
                 before = before[cut + 1:]
-            # "Hey" heard as "Play" (or Pay/They/Eh) right before the name is a
-            # call, not a request: "Play Kino, go back" must reach the brain as
-            # "go back", not "play go back" (Apple, 2026-10-20: the mic drops the
-            # breathy H, the vowel starts like a P, and "Play..." is the likeliest
-            # first word to say to an assistant).
-            if _CALL_ONLY.fullmatch(before):
-                before = ""
             rest = before + text[m.end():]
             # Cutting a name out of the middle leaves a double space behind.
             return re.sub(r"\s+", " ", rest).strip(" ,.!?;:-")
@@ -62,9 +55,6 @@ def strip_alias(text: str, aliases) -> str | None:
 _LEAD = r"(?:(?:hey|hi|hello|oh|o|my|dear)[\s,]+)*"
 # ...and the ones that make the next word a name being CALLED.
 _VOCATIVE = re.compile(r"\b(?:hey|hi|hello|oh|o|dear)\b", re.IGNORECASE)
-# Words a recogniser writes for a "Hey" it did not hear: only ever dropped when
-# they come straight before the name.
-_CALL_ONLY = re.compile(r"\s*(?:(?:hey|hi|hello|oh|o|play|pay|they|eh|a)[\s,]+)+", re.IGNORECASE)
 _PAUSE = re.compile(r"\s*(?:[,.!?:;-]|$)")
 
 
@@ -87,56 +77,6 @@ def strip_leading_alias(text: str, aliases) -> str | None:
         if not m:
             continue
         rest = text[m.end():]
-        if _VOCATIVE.search(m.group("lead")) or _PAUSE.match(rest):
-            return rest.strip(" ,.!?;:-")
-    return None
-
-
-def sounds(word: str) -> str:
-    """A rough sound key: recognisers write 'kino' as keno, chino, gino, keanu.
-
-    Hard c/ch/g/q -> k, front vowels -> i, back vowels -> o, a final 'a' -> o,
-    doubles collapsed. Plain letter similarity got this backwards (2026-10-20):
-    'kind', 'king' and 'skin' scored as close as 'keno', 'chino' fell short.
-    """
-    w = (word or "").lower()
-    for a, b in (("ch", "k"), ("ck", "k"), ("c", "k"), ("q", "k"), ("g", "k"),
-                 ("ee", "i"), ("ea", "i"), ("ie", "i"), ("e", "i"), ("y", "i"),
-                 ("oo", "o"), ("ou", "o"), ("u", "o"), ("h", "")):
-        w = w.replace(a, b)
-    w = re.sub(r"a$", "o", w)          # "kina": an unstressed last vowel drifts
-    return re.sub(r"(.)\1+", r"\1", w)
-
-
-def sounds_like(word: str, names) -> bool:
-    """The word is the name as a recogniser misspelt it.
-
-    Same sound key, or with a vowel glued on the front ("Ekina", "Akina" --
-    "Hey Kino" said fast) or up to two consonants on the end ("Kinoff").
-    Heard live on Parakeet, 2026-10-20 (logs/wake).
-    """
-    key = sounds(word)
-    return any(key == k or re.fullmatch(rf"[aio]?{re.escape(k)}[^aeiou]{{0,2}}", key)
-               for k in (sounds(n) for n in names or () if n))
-
-
-def strip_sound_alike(text: str, names) -> str | None:
-    """Like strip_leading_alias, for the name as a recogniser misspelt it.
-
-    A sound-alike is weaker evidence than the name, so it counts only where
-    a name is CALLED: first word of a sentence followed by a pause ("Ekina,
-    please move back.") or after a calling word ("Hey Kinoff what's the
-    time"). Sentences before it are dropped, as in strip_alias. "I bought
-    chinos" or "Gino is coming" stays unaddressed.
-    """
-    if not text:
-        return None
-    starts = [0] + [m.end() for m in re.finditer(r"[.!?]\s*", text)]
-    for start in starts:
-        m = re.match(rf"\s*(?P<lead>{_LEAD})(?P<word>[^\W\d_]+)", text[start:], flags=re.IGNORECASE)
-        if not m or not sounds_like(m.group("word"), names):
-            continue
-        rest = text[start + m.end():]
         if _VOCATIVE.search(m.group("lead")) or _PAUSE.match(rest):
             return rest.strip(" ,.!?;:-")
     return None
