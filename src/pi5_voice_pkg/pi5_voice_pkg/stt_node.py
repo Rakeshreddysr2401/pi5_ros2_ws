@@ -56,7 +56,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, String
 
-from .addressing import strip_alias, strip_leading_alias
+from .addressing import strip_alias, strip_leading_alias, strip_sound_alike
 from . import relevance
 from .vad_gate import GateConfig, evaluate as gate_utterance
 from .vad_silero import SileroVad, VadUnavailable
@@ -64,6 +64,7 @@ from .wake_cue import DEFAULT_DELAY_S, CueGate
 from .stt_providers import REGISTRY, ProviderUnavailable
 from .stt_providers.local_whisper import LocalWhisperProvider
 from .wake import REGISTRY as WAKE_REGISTRY, WakeUnavailable
+from .wake_log import WakeLog
 
 SAMPLE_RATE = 16000
 FRAME_MS = 30
@@ -200,6 +201,10 @@ class STTNode(Node):
         # kitchen" in one breath skips it rather than talking over you.
         self.declare_parameter('wake_cue', True)
         self.declare_parameter('wake_cue_delay_s', DEFAULT_DELAY_S)
+        # One JSON line per utterance (heard / decided / near-miss) for tuning the
+        # wake word: scripts/wake_report.py. '' = off. Clips: wakes + near-misses only.
+        self.declare_parameter('wake_log_dir', '~/ros2_ws/logs/wake')
+        self.declare_parameter('wake_log_clips', True)
 
         device_hint = self.get_parameter('input_device').value
         model_size = self.get_parameter('model_size').value
@@ -216,6 +221,8 @@ class STTNode(Node):
         self._diag_every = int(_diag_s * 1000 / FRAME_MS) if _diag_s > 0 else 0
         self._aliases = [a.lower() for a in self.get_parameter('wake_aliases').value]
         self._leading_aliases = [a.lower() for a in self.get_parameter('wake_leading_aliases').value if a]
+        # The name alone ('hey kino' -> 'kino'), for misspellings: "Ekina, ..." (addressing.py).
+        self._names = sorted({a.split()[-1] for a in self._aliases if a.split()})
         self._stop_words = [w.lower() for w in self.get_parameter('stop_words').value]
         self._require_wake = bool(self.get_parameter('require_wake').value)
         provider_name = self.get_parameter('stt_provider').value
@@ -339,6 +346,11 @@ class STTNode(Node):
         self._follow_up_s = float(self.get_parameter('follow_up_window_s').value)
         self._max_follow_ups = int(self.get_parameter('max_follow_ups').value)
         self._follow_ups = 0           # unnamed turns since the last named one
+        self._wake_log = WakeLog(self.get_parameter('wake_log_dir').value,
+                                 self._aliases + self._leading_aliases,
+                                 keep_clips=bool(self.get_parameter('wake_log_clips').value),
+                                 logger=self.get_logger())
+        self._utt = {}                 # the utterance being gated, for the wake log
         # An overheard sentence (llm-judged, no name) waits while the brain is
         # busy with a turn -- it cancelled "Kino, follow me" (relevance.HoldWhileBusy).
         self._hold = relevance.HoldWhileBusy()
@@ -351,7 +363,11 @@ class STTNode(Node):
         else:
             self.get_logger().info(
                 'wake_detector = transcript_alias (no acoustic model — transcribes '
-                'everything and matches a name in the text)')
+                'everything and matches a name in the text); '
+                f'require_wake={self._require_wake} addressing_mode={self._addressing}')
+        if self._wake_log.enabled:
+            self.get_logger().info(f'wake log: {self.get_parameter("wake_log_dir").value} '
+                                   '(read it: scripts/wake_report.py)')
 
         # Bounded, and stamped: if transcription falls behind (a slow cloud
         # call, several people talking), the backlog is answered minutes late,
@@ -744,19 +760,23 @@ class STTNode(Node):
         text = text.strip()
         self._debug_transcript_pub.publish(String(data=text if text else '(empty — filtered as noise/silence)'))
         self._publish_stt_meta(provider, fell_back, latency_ms, len(pcm), text)
+        self._utt = {'text': text, 'pcm': pcm, 'provider': provider, 'latency_ms': latency_ms}
         if not text:
+            self._log_wake('empty')
             return
 
         low = text.lower()
         if self._is_stop_command(low):
             self.get_logger().info(f'stop word heard: {text!r}')
             self._tts_stop_pub.publish(String(data='[stop]'))
+            self._log_wake('stop')
             return
 
         # Forward the whole transcript when either the wake word already gated us
         # (acoustic mode) or name-gating is disabled (require_wake: False) — the agent
         # prompt knows its own name and judges relevance.
         if self._acoustic:
+            self._log_wake('acoustic', alias=True, sent=text)
             self._forward(text)
             return
         if not self._require_wake:
@@ -765,13 +785,16 @@ class STTNode(Node):
             # barge-in that abandons the turn, and room talk would cancel every
             # answer mid-thought. The name (and a stop word, above) cut in now.
             named = strip_alias(text, self._aliases) is not None or (
-                self._leading_aliases and strip_leading_alias(text, self._leading_aliases) is not None)
+                self._leading_aliases and strip_leading_alias(text, self._leading_aliases) is not None
+            ) or strip_sound_alike(text, self._names) is not None
             if not named:
                 with self._hold_lock:
                     held = self._hold.offer(text, time.monotonic())
                 if held:
                     self.get_logger().info(f'a turn is running -- held until it ends: {text!r}')
+                    self._log_wake('held', alias=named)
                     return
+            self._log_wake('open', alias=named, sent=text)
             self._forward(text)
             return
 
@@ -783,12 +806,20 @@ class STTNode(Node):
         stripped = strip_alias(text, self._aliases)
         if stripped is None and self._leading_aliases:
             stripped = strip_leading_alias(text, self._leading_aliases)
+        # The name as the recogniser misspelt it ("Ekina, ...", "Hey Kinoff"),
+        # only where a name is called -- logged as heard_as='sounds-like'.
+        heard_as = 'name'
+        if stripped is None:
+            stripped = strip_sound_alike(text, self._names)
+            heard_as = 'sounds-like'
 
         if self._addressing == 'llm':
             if stripped is not None:
-                self._accept(stripped or text, 'name')
+                self._log_wake('wake', alias=True, sent=stripped or text, heard_as=heard_as)
+                self._accept(stripped or text, heard_as)
                 return
             if self._music_title and relevance.music_control(text):
+                self._log_wake('music-control', sent=text)
                 self._accept(text, 'music control')
                 return
             t0 = time.monotonic()
@@ -804,14 +835,19 @@ class STTNode(Node):
                 if held:
                     self.get_logger().info(
                         f'for me (llm {ms} ms), but a turn is running -- held until it ends: {text!r}')
+                    self._log_wake('llm-yes-held', llm_ms=ms)
                 else:
+                    self._log_wake('llm-yes', llm_ms=ms, sent=text)
                     self._accept(text, f'llm {ms} ms')
             else:
                 self.get_logger().info(
                     f"not for me ({'llm' if verdict is False else 'llm unreachable'} {ms} ms): {text!r}")
+                self._log_wake('llm-no' if verdict is False else 'llm-unreachable', llm_ms=ms)
             return
         if stripped is not None:
             self._follow_ups = 0
+            self._log_wake('wake', alias=True, sent=stripped or text, heard_as=heard_as,
+                           window_s=self._follow_up_s, follow_ups_left=self._max_follow_ups)
             # Bare "Kino?" is a real thing people say to get attention; forward
             # the name itself rather than dropping it as an empty remainder.
             self._forward(stripped or text)
@@ -820,14 +856,26 @@ class STTNode(Node):
         if time.monotonic() < self._awake_until and self._follow_ups >= self._max_follow_ups:
             self.get_logger().info(f'follow-up limit ({self._max_follow_ups}) -- say the name again: {text!r}')
             self._awake_until = 0.0
+            self._log_wake('follow-up-limit')
             return
         if time.monotonic() < self._awake_until:
             self._follow_ups += 1
             self.get_logger().info(f'follow-up: {text!r}')
+            self._log_wake('follow-up', sent=text,
+                           follow_ups_left=self._max_follow_ups - self._follow_ups)
             self._forward(text)
             return
 
         self.get_logger().info(f'not addressed to me — ignored: {text!r}')
+        self._log_wake('ignored')
+
+    def _log_wake(self, decision: str, alias: bool = False, **extra) -> None:
+        """One wake-log line for the utterance being gated (wake_log.py)."""
+        u = self._utt
+        self._wake_log.record(u.get('text', ''), decision, pcm=u.get('pcm'),
+                              sample_rate=SAMPLE_RATE, alias=alias,
+                              provider=u.get('provider', ''),
+                              latency_ms=u.get('latency_ms', 0), **extra)
 
     def _probe_relevance_slot(self) -> None:
         """Pin the filter to its own slot when the server has it (relevance.py,

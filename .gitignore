@@ -45,3 +45,6 @@ test_data/
 
 # Built by scripts/mac_mini/stt_server/build.sh
 scripts/mac_mini/stt_server/kino-stt.app/
+
+# wake log + voice clips (stt_node wake_log_dir): personal audio, never committed
+logs/wake/
