@@ -63,8 +63,6 @@
 
 ### 3. Owner-only steps
 - GitHub: rename `mitra_sim` -> `kino_sim` (Settings); then the remotes get updated.
-- Mac Mini, once: `scripts/mac_mini/migrate_to_kino.sh` (until then, do not
-  `git pull` there, or `e12b5` stops). Then delete that script.
 - Pi 5: `sudo systemctl restart langrobo-brain` (still on 2026-10-17's code;
   voice was restarted on 2026-10-18).
 - Jetson power mode: decide 15 W / 25 W / MAXN_SUPER once the supply is stable

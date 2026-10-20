@@ -65,8 +65,7 @@ case ${1:-start} in
   *)      echo "usage: e12b5 [start|stop|status|log]"; exit 2 ;;
 esac
 
-[[ -x $BIN ]] || { echo "missing $BIN -- first time after the rename to KINO: scripts/mac_mini/migrate_to_kino.sh"
-                 echo "(a rebuild alone: scripts/mac_mini/build_llama_kino.sh)"; exit 1; }
+[[ -x $BIN ]] || { echo "missing $BIN -- rebuild: scripts/mac_mini/build_llama_kino.sh"; exit 1; }
 
 # 1. GPU memory limit (resets at every boot)
 if (( $(sysctl -n iogpu.wired_limit_mb) < GPU_MB )); then

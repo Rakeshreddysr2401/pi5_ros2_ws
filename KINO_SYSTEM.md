@@ -128,7 +128,6 @@ cd ~/kino_sim && ./sim up home_real     # ~1 min; add follow=true for an Isaac w
 - The twin's cuVSLAM once lost itself in turns (2026-10-19, a degraded twin process);
   not reproduced since: if VO goes wild, `./sim vocheck`, restart the twin (laptop
   `docs/STATUS.md`, gap 1).
-- Owner to-dos: rename GitHub `mitra_sim` → `kino_sim` (then update remotes); run
-  `scripts/mac_mini/migrate_to_kino.sh` (in the Pi 5's `~/ros2_ws`) on the Mac; restart `langrobo-brain` on the
-  Pi 5 (sudo); install the sonar service (Pi 5 `TODO.md` 0b); delete `orin-nav:1.1`
+- Owner to-dos: rename GitHub `mitra_sim` → `kino_sim` (then update remotes); restart
+  `langrobo-brain` on the Pi 5 (sudo); install the sonar service (Pi 5 `TODO.md` 0b); delete `orin-nav:1.1`
   (58 GB; the real robot has run on 1.2 since 2026-10-18).

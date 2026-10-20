@@ -8,19 +8,13 @@ after a full test on the real robot.
 
 Work through the tasks **in order**, then fill in the report at the end.
 
-## FIRST (2026-10-18): the robot is now KINO -- migrate the Mac once
+## DONE (2026-10-20): the Mac runs KINO
 
-The LLM build, the speech app and their services were renamed for KINO
-(Knowledge Is Never Out): `~/llama.cpp-kino`, `com.kino.llama-server`,
-`kino-stt.app`, `com.kino.stt`. The Mac still has the old install, so
-`e12b5` stops with "missing ... llama.cpp-kino" until this runs once, in the
-Mac's own GUI session (it builds llama-server again, ~5-10 min, and macOS asks
-once for Speech Recognition permission for the renamed app):
-
-    cd <this repo on the Mac> && git pull && scripts/mac_mini/migrate_to_kino.sh
-
-Then `e12b5` as always. The script says which old folders to delete; then
-delete the script too (`git rm scripts/mac_mini/migrate_to_kino.sh`).
+`~/llama.cpp-kino` (b9830 + KINO patch) as `com.kino.llama-server`, and Apple
+speech `kino-stt` as `com.kino.stt` (:8091, the Pi's `stt_provider: apple`).
+`e12b5` starts both (speech first; it never blocks the LLM). The old install is
+deleted. Over ssh, run scripts through a login shell (`zsh -lc ...`): Homebrew's
+`cmake` and `~/.local/bin/e12b5` are not on a plain ssh PATH.
 
 ## READ FIRST, Pi 5: what the Mac did on 2026-10-11, and what you do now
 
