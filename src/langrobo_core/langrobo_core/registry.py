@@ -101,7 +101,7 @@ class AgentSpec:
 _SPECS: tuple[AgentSpec, ...] = (
     AgentSpec(
         name="chat",
-        description="general questions, web search, the time, robot status, small talk, and anything not about what the camera sees or about moving",
+        description="general questions, web search, the time, robot status, messages, reminders, lists, music, memory, what the robot saw earlier, and anything not about what the camera sees now or about moving",
         examples=["what's the weather?", "tell me a joke", "what time is it?",
                   "how are you doing?", "message mom that I'll be late"],
         prompt=prompts.CHAT_PROMPT,
@@ -144,7 +144,7 @@ _SPECS: tuple[AgentSpec, ...] = (
             "is the light on", "read what is written on that box",
             "which way is the spray can", "take a fresh look", "can you see my phone",
             "what is on the table", "is anyone sitting on the sofa",
-            "send me a pic of what you are seeing", "send me a photo"),
+            "send me a pic of what you are seeing", "what is behind you"),
     ),
     AgentSpec(
         name="navigate",

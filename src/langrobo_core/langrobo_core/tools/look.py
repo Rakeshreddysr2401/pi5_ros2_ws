@@ -41,11 +41,8 @@ def look(tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
     conversation and remains available for follow-up questions about the same
     scene, so you do NOT need to call look() again for a follow-up about the
     SAME view.
-
-    Each captured view is labelled with the pose it was taken FROM, and each
-    turn is labelled with where the robot is NOW. If those two poses differ the
-    robot has moved, the earlier photo shows a place it has left, and you MUST
-    call look() again before saying anything about the surroundings.
+    If the robot has moved since a photo was taken, look() again before
+    describing the surroundings.
     """
     bridge = get()
     # Reject frames older than this: the camera publishes continuously, so a

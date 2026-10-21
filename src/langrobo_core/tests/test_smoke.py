@@ -195,3 +195,33 @@ def test_agents_package_imports_before_the_graph():
          "import langrobo_core.agents as a; assert a.NODES and a.BUILD_LLM_CALLS"],
         check=True,
     )
+
+
+def test_handover_with_spoken_text_still_hands_the_turn_on():
+    """"Let me check." + handover(navigate) used to END the turn (chain=False
+    default): the user heard the filler and nothing moved. Every handover now
+    runs the target agent in the same turn."""
+    from langchain_core.messages import ToolMessage
+    from langgraph.types import Command
+    from langrobo_core.graph.handover_resolver import handle_handover
+    state = {
+        "messages": [
+            HumanMessage(content="go near the red bag"),
+            AIMessage(content="Let me check.", tool_calls=[{
+                "name": "handover", "args": {"next_agent": "navigate"},
+                "id": "c1", "type": "tool_call"}]),
+            ToolMessage(content='{"next_agent": "navigate", "reason": "go near the red bag"}',
+                        name="handover", tool_call_id="c1"),
+        ],
+        "active_agent": "chat",
+        "agent_turn_visits": {},
+    }
+    out = handle_handover(state)
+    assert isinstance(out, Command) and out.goto == "navigate"
+    note = out.update["messages"][0].content
+    assert "go near the red bag" in note and len(note) < 200
+
+
+def test_handover_schema_has_no_chain_switch():
+    from langrobo_core.tools.handover import handover
+    assert set(handover.args) == {"next_agent", "reason"}

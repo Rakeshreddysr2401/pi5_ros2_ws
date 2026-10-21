@@ -724,7 +724,7 @@ def navigate_to_pose(location: str,
     """Send the robot to a saved named location. Nav2 plans the route and
     avoids obstacles on the way.
 
-    then: what to do on ARRIVAL, if the user asked for more than the drive
+    then: what to do on ARRIVAL, in plain words, if the user asked for more than the drive
     ("go to the kitchen and tell me what is on the table" -> then="tell the
     user what is on the table"). It is done automatically when the robot gets
     there; do not do it now. Leave empty for a plain drive.
@@ -734,8 +734,8 @@ def navigate_to_pose(location: str,
     exists. For something the user describes rather than names ("the red
     bottle"), use approach_described_object instead.
 
-    Returns immediately — the robot drives in the background. A system message
-    arrives when it gets there, or fails."""
+    Returns immediately — the robot drives in the background, and the arrival
+    (or failure) is reported to the user automatically."""
     refusal = blocked_by_role(state) or blocked_by_manual()
     if refusal:
         return refusal
@@ -767,14 +767,13 @@ def save_location(name: str,
     robot back later with navigate_to_pose(name). Use when the user says
     "remember this spot as X", "save this location as the charging dock", etc.
 
-    Good for the rest of this power-on. It's written to disk and reloaded on
-    a restart too, but only stays usable if the robot's odom origin is still
-    the same one it was saved under — a container restart, a re-run of the
-    pose layer, or a cuVSLAM divergence recovery all start a fresh origin,
-    which silently retires every location saved before it (list_saved_locations
-    will just stop naming it). Re-save it once that happens.
+    A spot lasts until the robot's position tracking restarts (then
+    list_saved_locations stops naming it and it must be saved again).
 
     name: short lowercase identifier, e.g. 'table_5' or 'charging_dock'."""
+    # Saved spots are odom-frame: a container restart, a re-run of the pose
+    # layer or a cuVSLAM divergence recovery starts a fresh origin and silently
+    # retires every spot saved before it.
     refusal = blocked_by_role(state)      # it changes where the robot can be sent
     if refusal:
         return refusal

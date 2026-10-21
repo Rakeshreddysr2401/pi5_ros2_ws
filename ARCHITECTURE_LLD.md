@@ -192,18 +192,11 @@ from `agent_ids.ROUTABLE`, so llama.cpp compiles that enum into the decoding
 grammar — a small model **physically cannot** emit a route to an agent that
 does not exist.
 
-The resolver's actual rule is two lines:
-
-```
-agent was silent (no AI text) OR chain=True  →  Command(goto=next) [immediate]
-agent spoke AND chain=False                  →  dict update + END  [sticky]
-```
-
-So `chain=True` means "the next agent must act on my result" — local_agent
-identifies an object, navigate drives to it. `chain=False` after the agent has
-already spoken ends the turn. And an agent that hands over **without saying
-anything** always chains, whatever it passed: a silent turn would otherwise
-leave the user with no reply at all.
+Every handover chains: `Command(goto=next)`, and the target answers in the
+same turn. (Until 2026-10-21 the tool had a `chain` flag; `chain=False` after
+the agent had spoken ended the turn, so "Let me check." + handover(navigate)
+left the user with the filler and a robot that never moved. The flag is gone.)
+The routing note it leaves is one short line — it is permanent history.
 
 The reason string is the only information that crosses. Other agents cannot
 see images, so `local_agent`'s reason text is all `navigate` ever gets about

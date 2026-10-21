@@ -372,17 +372,12 @@ def approach_described_object(description: str,
     chair", "the surf excel packet". A person is described by how they look
     ("the man in the blue shirt") -- it cannot tell who someone is.
 
-    If the robot has seen it before (in any photo, from anywhere), it goes to
-    where it was -- turning to it if it is close, driving over if it is far or
-    out of view -- checks it is still there, and if not, searches around that
-    spot. Otherwise it turns in exact 45 degree steps and re-checks, up to a
-    full circle (each check takes a few seconds — the vision model looks at a
-    fresh photo every step). This can take a minute or two; call it once.
+    It uses the photos already taken first, otherwise searches by turning in
+    place. Call it once: it returns within seconds, the search and the drive go
+    on in the background, and the result and the arrival are reported to the
+    user automatically.
 
-    Returns once the object is found and the drive starts — the drive
-    continues in the background and a system message reports arrival.
-
-    then: what to do on ARRIVAL, if the user asked for more than the drive
+    then: what to do on ARRIVAL, in plain words, if the user asked for more than the drive
     ("go to the box and tell me what is on it" -> then="tell the user what is
     on the box"). It is done automatically when the robot gets there; do not
     do it now. Leave empty for a plain drive.
@@ -901,9 +896,8 @@ def describe_scan(views: list) -> str | None:
 def scan_surroundings(describe: bool = True,
                       state: Annotated[dict | None, InjectedState] = None) -> str:
     """Turn a full circle in place, photograph every direction and say what is
-    around the robot. Use for "look around", "what is in this room", "what is
-    behind you", "scan the room", or before driving somewhere the robot has
-    not seen from all sides (then describe=False: it only fills the map).
+    around the robot. Use for "look around", "what is in this room", "scan the
+    room". describe=False only fills the map (before driving somewhere unseen).
 
     Takes about 45 seconds; returns a short description of the room."""
     refusal = _mv.blocked_by_role(state) or _mv.blocked_by_manual()   # MANUAL: a turn against its zeros goes nowhere
@@ -962,7 +956,7 @@ def scan_surroundings(describe: bool = True,
 @tool
 def list_saved_locations() -> str:
     """List the named places the robot can navigate to with navigate_to_pose —
-    both configured rooms and spots saved with save_location."""
+    the spots saved with save_location."""
     known = _bridge.get().get_known_locations()
     if not known:
         return "No locations saved yet. Stand me somewhere and say 'save this location as ...'."

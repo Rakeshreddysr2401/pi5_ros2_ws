@@ -21,22 +21,19 @@ _NextAgent = Literal[ROUTABLE]           # type: ignore[valid-type]
 
 
 @tool("handover")
-def handover(
-    next_agent: _NextAgent,
-    reason: str = "",
-    chain: bool = False,
-) -> str:
-    """Transfer the conversation to another agent.
+def handover(next_agent: _NextAgent, reason: str = "") -> str:
+    """Pass this turn to another agent; it answers the user in this same turn.
+
+    Say nothing yourself when you call it.
 
     Args:
         next_agent: Agent to route to.
-        reason: Why this handover is happening (e.g. "visual query", "changed topic").
-        chain: True -> next agent responds immediately in the same turn.
-               Use when the next agent must ACT on this one's result (e.g.
-               local_agent identifies an object, then navigate drives to it).
-               False -> this agent has already answered; the turn ends here.
+        reason: What the next agent must do, in one short phrase -- it sees this
+            and the user's words, nothing you saw (e.g. "go near the red bag on the sofa").
     """
-    return json.dumps({"next_agent": next_agent, "reason": reason, "chain": chain})
+    # Always hands the turn on (2026-10-21): an old `chain=False` ended the turn
+    # with only the caller's words -- "Let me check." and nothing done.
+    return json.dumps({"next_agent": next_agent, "reason": reason})
 
 
 handover.description = handover.description.replace(

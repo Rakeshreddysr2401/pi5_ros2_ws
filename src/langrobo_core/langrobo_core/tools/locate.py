@@ -62,8 +62,8 @@ def locate_object(description: str,
     """Measure how far away something in the current camera view is, and which way, with the depth camera ("how far is the chair?").
 
     Returns metres, a direction, and coordinates relative to the robot. Does
-    NOT move or turn: only what is in view now; to drive there, use
-    approach_described_object. Never state a distance that did not come from
+    NOT move or turn: only what is in view now; driving there is navigate's
+    job (hand over). Never state a distance that did not come from
     this tool. For the distance BETWEEN two objects, call it once for each and
     compute sqrt((x1-x2)^2 + (y1-y2)^2) from the two coordinate pairs.
     """

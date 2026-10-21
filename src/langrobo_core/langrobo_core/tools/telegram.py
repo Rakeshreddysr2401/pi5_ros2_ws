@@ -119,8 +119,9 @@ def send_telegram_photo(recipient: str, caption: str,
     phone via Telegram.
 
     Use when someone asks for a photo of what the robot sees ("send me a pic of
-    the room"). The photo is taken fresh from the robot's current position —
-    the robot cannot go somewhere else first. `caption` is a short line
+    the room"). The photo is taken fresh from where the robot is now; while
+    it drives, it is held and sent on arrival. A photo of another place needs
+    a drive there first (navigate, with `then`). `caption` is a short line
     describing the shot; pass "" for none."""
     sender, _ = _sender(state)
     svc, member, refusal = _gate(state, permissions.CAP_PHOTO, recipient)

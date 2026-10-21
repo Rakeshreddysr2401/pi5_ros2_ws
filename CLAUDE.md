@@ -100,6 +100,7 @@ ros2 launch langrobo_ros brain_launch.py            # foreground all-in-one
 journalctl -u langrobo-brain -f -o cat              # JSON logs (jq-able, trace_id per turn)
 curl -s localhost:8090/status | jq                  # LLM health, telegram, turn state
 python3 scripts/latency_replay.py "utterance"       # per-stage latency waterfall
+python3 scripts/gemma_flow_eval.py                   # real LLM picks the right tools/handovers? (slot 4; 41/41 on 2026-10-21) -- after any prompt/tool-doc change
 
 # Python deps (system python, PEP 668)
 pip3 install --break-system-packages -r requirements.txt
