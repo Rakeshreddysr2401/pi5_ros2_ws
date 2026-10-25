@@ -133,6 +133,7 @@ cd ~/kino_sim && ./sim up home_real     # ~1 min; add follow=true for an Isaac w
 - The twin's cuVSLAM once lost itself in turns (2026-10-19, a degraded twin process);
   not reproduced since: if VO goes wild, `./sim vocheck`, restart the twin (laptop
   `docs/STATUS.md`, gap 1).
-- Owner to-dos: rename GitHub `mitra_sim` → `kino_sim` (then update remotes); restart
-  `langrobo-brain` on the Pi 5 (sudo); install the sonar service (Pi 5 `TODO.md` 0b); ~~delete `orin-nav:1.1`~~ (done 2026-10-24; 1.2 too, 2026-10-25)
-  (58 GB; the real robot has run on 1.2 since 2026-10-18).
+- Owner to-dos: rename GitHub `mitra_sim` → `kino_sim` (then update remotes); Jetson power
+  mode MAXN_SUPER or not (measured 2026-10-25: 25 W caps the CPU at 1.34 GHz and is worse
+  than 15 W for this CPU-bound stack). Done 2026-10-25: brain restarted, sonar service
+  installed, orin-nav:1.1/1.2 deleted, Jazzy removed from the Pi 5.
