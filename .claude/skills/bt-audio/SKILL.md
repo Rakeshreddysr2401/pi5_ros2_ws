@@ -31,7 +31,7 @@ bluetoothctl devices Trusted; bluetoothctl devices Paired
 for m in $(bluetoothctl devices Trusted | awk '{print $2}'); do echo "== $m"; bluetoothctl info $m | grep -E "Name|Paired|Connected|Icon"; done
 wpctl status | sed -n '/Sinks:/,/Streams:/p' | grep -E "\*|bluez|Stone|Buds"
 ```
-If ROS is up: `source /opt/ros/jazzy/setup.bash && source install/setup.bash && timeout 5 ros2 topic echo --once --qos-durability transient_local --qos-reliability reliable /voice/audio_device`
+If ROS is up: `source scripts/ros_env.sh && timeout 5 ros2 topic echo --once --qos-durability transient_local --qos-reliability reliable /voice/audio_device`
 
 Report as: which device is routed (or none), whether the voice service is
 running, and which known devices are on/off.
@@ -57,7 +57,7 @@ running, and which known devices are on/off.
 ## Step 3 — verify after any change
 
 ```bash
-source /opt/ros/jazzy/setup.bash && source install/setup.bash
+source scripts/ros_env.sh
 ros2 topic pub -1 /voice/robot_speech std_msgs/msg/String "{data: 'Testing the speaker.'}"
 ros2 topic pub -1 /voice/robot_speech std_msgs/msg/String "{data: '<|eou|>'}"
 ```

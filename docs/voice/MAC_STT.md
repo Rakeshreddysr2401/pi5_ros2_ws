@@ -172,7 +172,7 @@ Keep `SARVAM_API_KEY` in `.env`. Switching back is then a one-word config change
 
 ```bash
 cd ~/ros2_ws
-colcon build --symlink-install --packages-select pi5_voice_pkg
+./scripts/build_ws.sh --packages-select pi5_voice_pkg
 systemctl --user restart langrobo-voice
 ```
 
@@ -188,7 +188,7 @@ journalctl --user -u langrobo-voice -b -o cat | grep -E 'stt_provider|apple|fall
 #    stt_provider = apple
 
 # 2. speak to it ("Kino, what time is it?") and watch, in two terminals:
-source /opt/ros/jazzy/setup.bash && source ~/ros2_ws/install/setup.bash
+source ~/ros2_ws/scripts/ros_env.sh
 ros2 topic echo /voice/debug_transcript     # the words Apple heard
 ros2 topic echo /voice/stt_meta             # one JSON line per utterance
 #    {"provider": "apple", "configured_provider": "apple", "fell_back": false, "latency_ms": ~150, ...}

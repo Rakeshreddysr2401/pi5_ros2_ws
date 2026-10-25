@@ -60,23 +60,23 @@ startup.
 
 ---
 
-## Setup (Pi5, Ubuntu 24.04, ROS2 Jazzy)
+## Setup (Pi5, Ubuntu 24.04, ROS 2 Lyrical — the Jetson's distro, since 2026-10-25)
 
 ```bash
-# ROS2 Jazzy base (no desktop — saves ~400 MB RAM)
-sudo apt install ros-jazzy-ros-base
-sudo rosdep init && rosdep update            # skip init if already done
+# ROS 2 Lyrical base from NVIDIA's buildfarm (+ socket buffers, sonar service): once, as root
+sudo ~/ros2_ws/scripts/setup_lyrical_root.sh
 
 cd ~/ros2_ws
-rosdep install --from-paths src --ignore-src -r -y
-
 # Python deps: installs langrobo_core editable + its pinned stack
 pip3 install --break-system-packages -r requirements.txt
 
-# micro-ROS agent — built once in ~/microros_ws (see OPERATIONS.md)
+# micro-ROS agent: the standalone XRCE agent 3.0.1 in ~/.local/xrce-agent-3 (no ROS needed;
+# it bundles Fast DDS 3.6.2 = Lyrical's) -- see scripts/run_microros.sh
 
-colcon build --symlink-install
-source install/setup.bash
+./scripts/build_ws.sh                 # -> build_lyrical/ install_lyrical/
+source scripts/ros_env.sh             # THE switch: ROS distro + our overlay, for every script
+# roll back to Jazzy (still installed, its build in build/ install/):
+#   echo jazzy > ~/.langrobo/ros_distro && sudo systemctl restart langrobo-brain langrobo-microros langrobo-sonar langrobo-teleop
 
 cp example.env .env    # then fill in keys as they become available
 ```

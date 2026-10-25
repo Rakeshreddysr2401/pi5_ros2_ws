@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How much of the robot's own voice comes back through its mic?
 
-    source /opt/ros/jazzy/setup.bash && source install/setup.bash
+    source scripts/ros_env.sh
     python3 scripts/aec_probe.py                 # record the default mic
     PIPEWIRE_NODE="Echo Cancel Source" python3 scripts/aec_probe.py   # via the AEC
 

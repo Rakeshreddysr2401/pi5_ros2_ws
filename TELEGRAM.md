@@ -29,7 +29,7 @@ The robot connects as a **bot** with its own token.
    LANGROBO_QUIET_HOURS=23:00-07:00
    ```
 
-5. **Restart**: `colcon build --symlink-install && sudo systemctl restart langrobo-brain`,
+5. **Restart**: `./scripts/build_ws.sh && sudo systemctl restart langrobo-brain`,
    then check `curl -s localhost:8090/status | jq .telegram` → `"polling": true`.
 
 The channel stays completely off until BOTH token and allowlist are set.

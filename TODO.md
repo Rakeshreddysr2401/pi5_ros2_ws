@@ -1,6 +1,6 @@
 # TODO — pending on-device work
 
-## NOW — open items, 2026-10-18 (most urgent first)
+## NOW — open items, 2026-10-25 (most urgent first)
 
 ### 0. This Pi 5 is UNDER-POWERED (found 2026-10-19 night) -- most urgent
 - The kernel log says "Undervoltage detected!" again and again: 16:35, 17:38, 21:24 --
@@ -16,9 +16,8 @@
   two CP2102 boards share one by-id name; run_microros.sh uses by-path).
 - Firmware: MicroPython 1.24 + `~/rover/phase1/firmware/sonar/main.py` (update over USB
   with `upload_main.py`). Node: `scripts/sonar_node.py` -> `/sonar/left`, `/sonar/right`.
-- OWNER, once: `sudo cp src/langrobo_ros/systemd/langrobo-sonar.service /etc/systemd/system/`
-  `&& sudo systemctl daemon-reload && sudo systemctl enable langrobo-sonar` -- until then
-  the node is started by hand and does not survive a reboot.
+- Service installed and enabled 2026-10-25 (`scripts/setup_lyrical_root.sh`): /sonar/left and
+  /sonar/right at 15 Hz, and they come back after a reboot.
 - Owner to confirm: S1 (TRIG GPIO5) is the LEFT one; both point straight ahead, level.
 
 ### 1. The Jetson stops answering a few minutes after boot (since the power change)
@@ -39,32 +38,18 @@
   everything committed and pushed. The throwaway container `isaac46_test` was
   removed; the last plain one was `--rm`.
 
-### 2. Isaac ROS 4.6 — `orin-nav:1.2` is THE image (owner, 2026-10-18); step F = first real-robot run
-- **Status 2026-10-18 evening** (rover `c530fbe`, ISAAC_ROS_4_6_UPGRADE.md §5-6):
-  `orin-nav:1.2` (1.1 + Isaac ROS 4.6, cuVSLAM as `VO=isaac`) is built, and
-  `./rover` defaults to it for the robot and the twin (owner: "go ahead with
-  1.2"). Twin: every gate OK, `home_real` 4/4. Step F, the first real-robot
-  run with the owner watching, then delete 1.1; until then
-  `IMAGE=orin-nav:1.1 ./rover up` is the rollback.
-- The board's stability gate (§0 / item 1) is still open: the boot before
-  21:37 ended at 18:17 with no shutdown and no kernel error — the same
-  power-cut signature.
-- 4.6.0 (2026-08-18) adds official Jetson Orin + JetPack 7.2 support and builds
-  cuVSLAM from source for aarch64, so the packaged `isaac_ros_visual_slam` may
-  finally run on the Orin and could replace the pyCuVSLAM wheel in `vo_node`.
-  Stays on ROS 2 Jazzy. (5.0.0 moves to ROS 2 Lyrical: not now.)
-- Plan, never touching `orin-nav:1.1`: in a throwaway container switch apt to
-  `isaac-ros/release-4.6`; run the packaged visual SLAM against the twin's D555
-  (does it start on the Orin Nano? landmarks vs vo_node? CPU vs vo_node?);
-  if it wins, build `orin-nav:1.2`, run the full twin stack + `./sim scenario
-  home_real`, then the real robot with `IMAGE=orin-nav:1.2 ./rover up`.
-- The 4.5/4.6 notes fix none of our nvblox issues (specks, < 3 cm objects,
-  odom-frame drift): those are config/sensor work.
+### 2. ROS 2 Lyrical on this Pi 5 -- DONE 2026-10-25 (branch `lyrical-move`)
+- Why: Jazzy here vs Lyrical on the Jetson left the brain blind (the Jetson's `image_bridge`
+  never matched our readers in the live graph; Jetson OPEN_ISSUES.md 2026-10-25).
+- Now: every service on `/opt/ros/lyrical` through `scripts/ros_env.sh`; workspace built by
+  `scripts/build_ws.sh` into `build_lyrical/ install_lyrical/`. Brain gets 42 frames/10 s.
+- Rollback: `echo jazzy > ~/.langrobo/ros_distro` + restart the services (Jazzy and its
+  `build/ install/` are kept). After a few real sessions on Lyrical: remove them
+  (`sudo apt remove 'ros-jazzy-*'`, `rm -rf build install`) -- owner's call.
+- Next machines: the two laptops (owner: "first the Pi 5 and the Jetson, then the sim").
 
 ### 3. Owner-only steps
 - GitHub: rename `mitra_sim` -> `kino_sim` (Settings); then the remotes get updated.
-- Pi 5: `sudo systemctl restart langrobo-brain` (still on 2026-10-17's code;
-  voice was restarted on 2026-10-18).
 - Jetson power mode: decide 15 W / 25 W / MAXN_SUPER once the supply is stable
   (default in nvpmodel.conf is 25 W; it was at 15 W for a long time).
 - Old laptop: decide whether the old `rover_sim` in `/workspace` goes.

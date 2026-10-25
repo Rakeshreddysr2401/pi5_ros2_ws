@@ -29,7 +29,7 @@ curl -s localhost:8091/mode                                # {"manual": true} = 
 - Also from a shell (cancels the brain's own motion tools and navigation):
 
 ```bash
-source /opt/ros/jazzy/setup.bash; unset ROS_DISCOVERY_SERVER
+source ~/ros2_ws/scripts/ros_env.sh; unset ROS_DISCOVERY_SERVER
 ros2 topic pub --once -w 2 /voice/user_input std_msgs/msg/String "{data: 'stop'}"
 ```
 

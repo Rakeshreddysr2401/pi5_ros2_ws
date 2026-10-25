@@ -6,7 +6,7 @@ reply stream uses), then the end-of-utterance marker so the node's
 /voice/tts_speaking flag toggles back to false like in production.
 
 Run in a second terminal while ./run_tts.sh is up. Ctrl-D or 'quit' to exit.
-Requires: source /opt/ros/jazzy/setup.bash && source install/setup.bash
+Requires: source scripts/ros_env.sh
 """
 import rclpy
 from std_msgs.msg import String

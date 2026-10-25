@@ -491,7 +491,7 @@ here:
 # langrobo-voice service): double-speak and double-transcribe. (The Jetson's
 # old ai_stack voice role is retired; its container no longer exists.)
 cd ~/ros2_ws
-source /opt/ros/jazzy/setup.bash && source install/setup.bash
+source scripts/ros_env.sh
 ./scripts/run_voice.sh                          # all three nodes in the foreground
 systemctl --user status langrobo-voice          # ...or the service (starts at boot)
 ```
@@ -539,7 +539,7 @@ wrapped paste splits the `--params-file` arg and fails):
 ./scripts/run_stt.sh         # or: ./scripts/run_stt.sh sarvam
 
 # Terminal 2 — watch the raw transcript for every utterance (no wake word needed):
-source /opt/ros/jazzy/setup.bash && source install/setup.bash
+source scripts/ros_env.sh
 ros2 topic echo --field data /voice/debug_transcript
 ```
 Say **"what is the time today"** → text appears in Terminal 2. Say
@@ -564,7 +564,7 @@ does the debug-transcript/user_input flow above apply.
 ./scripts/run_tts.sh sarvam_translate  # English text spoken in Telugu
 
 # Terminal 2 — type text to hear it:
-source /opt/ros/jazzy/setup.bash && source install/setup.bash
+source scripts/ros_env.sh
 python3 scripts/tts_say.py
 # say> Good morning. Breakfast is ready.
 ```

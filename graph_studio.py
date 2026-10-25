@@ -7,7 +7,7 @@ can drive the physical robot.  Otherwise falls back to a StubBridge that
 logs tool calls without publishing to ROS2 topics.
 
 Usage on Pi5:
-    source /opt/ros/jazzy/setup.bash    # optional — enables real robot control
+    source ~/ros2_ws/scripts/ros_env.sh    # optional — enables real robot control
     langgraph dev                        # run from repo root
 
 Usage on dev machine (no ROS2):

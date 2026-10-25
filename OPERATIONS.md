@@ -189,7 +189,7 @@ debugging.
 
 ## Deploy checklist (Pi5 + Jetson protocol change)
 
-1. Pi5: `colcon build --symlink-install` + `pip3 install --break-system-packages -r requirements.txt`
+1. Pi5: `./scripts/build_ws.sh` + `pip3 install --break-system-packages -r requirements.txt`
 2. Mac Mini llama.cpp up: **`e12b5`** in a Mac terminal (`e12b5 status` must say 5 slots x 16384):
    `curl http://singireddys-mac-mini.local:8080/v1/models` must report
    `"multimodal"` in capabilities (mmproj loaded) for look().

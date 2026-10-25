@@ -48,7 +48,7 @@ Prove it with **data**, not node lists:
 
 ```bash
 # On the Pi 5 (same env as the brain):
-source /opt/ros/jazzy/setup.bash; unset ROS_DISCOVERY_SERVER; export ROS_DOMAIN_ID=0
+source ~/ros2_ws/scripts/ros_env.sh; unset ROS_DISCOVERY_SERVER; export ROS_DOMAIN_ID=0
 ros2 topic hz /odom                      # ~20 Hz = the Jetson's fused pose reaches the Pi 5
 ros2 topic hz /camera/color/image_raw/compressed   # only while the brain subscribes
 curl -s localhost:8090/status | jq .runtime.camera_frame_age_s   # the brain's own view

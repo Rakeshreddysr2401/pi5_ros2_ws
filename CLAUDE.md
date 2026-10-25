@@ -89,7 +89,7 @@ cd src/pi5_voice_pkg && python3 -m pytest tests/ -q     # voice, ~135 tests
 cd src/langrobo_ros && python3 -m pytest test/ -q       # bridge (needs rclpy), ~10 tests
 
 # Build + deploy after code changes
-colcon build --symlink-install && sudo systemctl restart langrobo-brain
+./scripts/build_ws.sh && sudo systemctl restart langrobo-brain
 
 # Run modes (NEVER two at once — both drive /cmd_vel + the ESP32's serial port)
 systemctl status langrobo-brain langrobo-microros   # production (systemd)
