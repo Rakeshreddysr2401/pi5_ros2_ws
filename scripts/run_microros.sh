@@ -24,10 +24,6 @@ ESP32_DEV="${ESP32_DEV:-/dev/serial/by-path/platform-xhci-hcd.0-usb-0:2:1.0-port
 SERIAL_DEV="${2:-$ESP32_DEV}"
 UDP_PORT="${2:-8888}"
 
-set +u
-source "$(dirname "${BASH_SOURCE[0]}")/ros_env.sh"
-set -u
-
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 # MULTICAST, not the discovery server (changed 2026-07-16): the Jetson
@@ -38,12 +34,9 @@ export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 unset ROS_DISCOVERY_SERVER || true
 unset ROS_LOCALHOST_ONLY
 
-# XRCE Agent v3.0.1 standalone (built 2026-07-16, ~/microros_ws/xrce_agent_3):
-# the ROS-wrapped agent (XRCE 2.4.3) stack-smashes on this ESP32 client
-# session (upstream Micro-XRCE-DDS-Agent issue #395) and died in a crash
-# loop. The standalone agent bridges topics identically; the wrapper only
-# added ros2-graph cosmetics. Revert: swap the exec lines back.
-#   exec ros2 run micro_ros_agent micro_ros_agent udp4 --port $UDP_PORT
+# XRCE Agent v3.0.1 standalone, no ROS needed (it bundles Fast DDS 3.6.2 = Lyrical's):
+# the ROS-wrapped agent (XRCE 2.4.3) stack-smashes on this ESP32 client session
+# (upstream Micro-XRCE-DDS-Agent issue #395). Rebuild: scripts/build_xrce_agent.sh.
 export LD_LIBRARY_PATH="$HOME/.local/xrce-agent-3/lib:${LD_LIBRARY_PATH:-}"
 AGENT="$HOME/.local/xrce-agent-3/bin/MicroXRCEAgent"
 case "$TRANSPORT" in

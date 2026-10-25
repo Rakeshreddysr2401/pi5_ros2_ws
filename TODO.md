@@ -42,10 +42,10 @@
 - Why: Jazzy here vs Lyrical on the Jetson left the brain blind (the Jetson's `image_bridge`
   never matched our readers in the live graph; Jetson OPEN_ISSUES.md 2026-10-25).
 - Now: every service on `/opt/ros/lyrical` through `scripts/ros_env.sh`; workspace built by
-  `scripts/build_ws.sh` into `build_lyrical/ install_lyrical/`. Brain gets 42 frames/10 s.
-- Rollback: `echo jazzy > ~/.langrobo/ros_distro` + restart the services (Jazzy and its
-  `build/ install/` are kept). After a few real sessions on Lyrical: remove them
-  (`sudo apt remove 'ros-jazzy-*'`, `rm -rf build install`) -- owner's call.
+  `scripts/build_ws.sh` into build/ install/. Brain gets 42 frames/10 s.
+- Jazzy removed the same night (owner: "remove Jazzy ... all clean and clear"): the 204
+  ros-jazzy packages, its builds, and ~/microros_ws (the old ROS-wrapped agent, unused since
+  2026-07-16; the standalone agent's recipe is scripts/build_xrce_agent.sh).
 - Next machines: the two laptops (owner: "first the Pi 5 and the Jetson, then the sim").
 
 ### 3. Owner-only steps
@@ -78,8 +78,9 @@ README.md / CLAUDE.md / docs/STATUS.md in it. The full twin was verified
 
 RViz is NOT set up on that laptop yet (no ROS there). To finish it:
 
-1. On the laptop, in a terminal (needs sudo): install `ros-jazzy-desktop`
-   (the ROS 2 apt repo for Ubuntu 24.04 "noble", then `sudo apt install ros-jazzy-desktop`).
+1. On the laptop, in a terminal (needs sudo): install ROS 2 Lyrical (`ros-lyrical-desktop`
+   from NVIDIA's buildfarm, as the Pi 5's scripts/setup_lyrical_root.sh does) -- the laptop's
+   move to Lyrical is the next step after the robot (2026-10-25).
 2. Then on the laptop: `cd ~/kino_sim && ./sim rviz` (the twin, domain 42) or
    `./sim rviz real` (the real robot, domain 0). Both fetch the layout from the
    Jetson (`~/rover/phase2/rviz/rover_live.rviz`) every time; the twin window adds

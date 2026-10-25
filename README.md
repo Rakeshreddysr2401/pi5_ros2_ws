@@ -71,12 +71,10 @@ cd ~/ros2_ws
 pip3 install --break-system-packages -r requirements.txt
 
 # micro-ROS agent: the standalone XRCE agent 3.0.1 in ~/.local/xrce-agent-3 (no ROS needed;
-# it bundles Fast DDS 3.6.2 = Lyrical's) -- see scripts/run_microros.sh
+# it bundles Fast DDS 3.6.2 = Lyrical's); rebuild: scripts/build_xrce_agent.sh
 
-./scripts/build_ws.sh                 # -> build_lyrical/ install_lyrical/
-source scripts/ros_env.sh             # THE switch: ROS distro + our overlay, for every script
-# roll back to Jazzy (still installed, its build in build/ install/):
-#   echo jazzy > ~/.langrobo/ros_distro && sudo systemctl restart langrobo-brain langrobo-microros langrobo-sonar langrobo-teleop
+./scripts/build_ws.sh                 # -> build/ install/ (always from the repo root)
+source scripts/ros_env.sh             # ROS 2 Lyrical + our overlay: what every script sources
 
 cp example.env .env    # then fill in keys as they become available
 ```

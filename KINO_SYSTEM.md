@@ -112,8 +112,8 @@ cd ~/kino_sim && ./sim up home_real     # ~1 min; add follow=true for an Isaac w
 - Jetson: image `orin-nav:2.0` = Isaac ROS 5.0, ROS 2 Lyrical, CUDA 13.2, TensorRT 10.16,
   VO = Isaac cuVSLAM (`isaac_ros_cuvslam`); recipe + checks in `~/rover/docker/2.0/`.
 - Pi 5: ROS 2 **Lyrical** on the host since 2026-10-25 (NVIDIA's buildfarm, same as the
-  Jetson; Jazzy kept installed as the rollback). The ONE switch: `~/ros2_ws/scripts/ros_env.sh`
-  (`echo jazzy > ~/.langrobo/ros_distro` rolls back); builds: `./scripts/build_ws.sh`.
+  Jetson; Jazzy removed the same night). Every script gets ROS from
+  `~/ros2_ws/scripts/ros_env.sh`; builds: `./scripts/build_ws.sh` (build/ install/).
   The wheels' micro-ROS agent (XRCE 3.0.1) bundles Fast DDS 3.6.2 = Lyrical's; the ESP32
   firmware's micro_ros_arduino (jazzy branch) speaks XRCE to it, so it needs no reflash.
 - Laptops: still Jazzy (Isaac Sim 6.2 bundles Humble/Jazzy only; the RViz laptop's apt

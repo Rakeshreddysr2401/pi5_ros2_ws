@@ -1,8 +1,6 @@
 # ROS 2 build artifacts
 build/
 install/
-build_*/
-install_*/
 log/
 
 # IDE files
