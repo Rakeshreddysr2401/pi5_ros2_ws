@@ -78,7 +78,7 @@ reachable() { timeout 4 ping -c1 -W2 "$1" >/dev/null 2>&1; }
 # container. The fused pose flowing and the VLM bridge listening means every
 # layer up to the last one came up.
 ros_env() {
-    source /opt/ros/jazzy/setup.bash
+    source "$(dirname "${BASH_SOURCE[0]}")/ros_env.sh"
     unset ROS_DISCOVERY_SERVER FASTRTPS_DEFAULT_PROFILES_FILE
     export ROS_DOMAIN_ID=0 RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 }
@@ -105,7 +105,7 @@ jetson_status() {
 # the laptop's address, cable ports, world. Asked over ROS like jetson_stack_up,
 # so nothing here needs ssh into the laptop. -> the JSON, or nothing.
 twin_announced() {
-    ( source /opt/ros/jazzy/setup.bash
+    ( source "$(dirname "${BASH_SOURCE[0]}")/ros_env.sh"
       unset ROS_DISCOVERY_SERVER FASTRTPS_DEFAULT_PROFILES_FILE
       export ROS_DOMAIN_ID=$TWIN_DOMAIN RMW_IMPLEMENTATION=rmw_fastrtps_cpp
       timeout 15 ros2 topic echo --once --qos-durability transient_local --qos-reliability reliable \

@@ -25,8 +25,7 @@ SERIAL_DEV="${2:-$ESP32_DEV}"
 UDP_PORT="${2:-8888}"
 
 set +u
-source /opt/ros/jazzy/setup.bash
-source ~/microros_ws/install/setup.bash
+source "$(dirname "${BASH_SOURCE[0]}")/ros_env.sh"
 set -u
 
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"

@@ -21,8 +21,7 @@ fi
 # ROS must match agent_node's own discovery settings. The Pi 5 uses plain SUBNET
 # discovery; a stale ROS_DISCOVERY_SERVER gives a bridge that starts perfectly
 # cleanly and silently sees no robot at all.
-source /opt/ros/jazzy/setup.bash >/dev/null
-source install/setup.bash        >/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/ros_env.sh" >/dev/null
 export ROS_DOMAIN_ID=0
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET

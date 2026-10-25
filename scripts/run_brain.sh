@@ -12,8 +12,7 @@ set -eo pipefail
 PROVIDER="${1:-llamacpp}"
 
 set +u
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_ws/install/setup.bash
+source "$(dirname "${BASH_SOURCE[0]}")/ros_env.sh"
 set -u
 
 # Python block-buffers stdout when it is a pipe, which systemd's journal

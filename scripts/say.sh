@@ -10,7 +10,7 @@
 # It is the real robot: a movement sentence MOVES IT -- only with someone watching.
 set -eo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-source /opt/ros/jazzy/setup.bash
+source "$(dirname "${BASH_SOURCE[0]}")/ros_env.sh"
 unset ROS_DISCOVERY_SERVER
 export ROS_DOMAIN_ID=0
 if [ "${1:-}" = "--listen" ]; then exec python3 "$HERE/twin_chat.py" --real --listen "${2:-120}"; fi

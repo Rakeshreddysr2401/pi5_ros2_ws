@@ -4,8 +4,7 @@
 # Override provider: ./scripts/run_tts.sh sarvam  (default: the config value)
 set -eo pipefail
 cd "$(dirname "$0")/.."   # repo root: src/ and install/ live there
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
+source "$(dirname "${BASH_SOURCE[0]}")/ros_env.sh"
 # Match the brain's DDS config EXACTLY (scripts/run_brain.sh): default multicast
 # discovery on domain 0, Fast DDS. The brain deliberately *unsets*
 # ROS_DISCOVERY_SERVER — setting it here puts us on a separate graph and we'd

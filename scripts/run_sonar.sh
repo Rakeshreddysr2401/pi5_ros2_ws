@@ -5,7 +5,7 @@
 #   SONAR_LEFT_IS_S1=0                 if S2 (TRIG GPIO18) is the left one
 set -eo pipefail
 set +u
-source /opt/ros/jazzy/setup.bash
+source "$(dirname "${BASH_SOURCE[0]}")/ros_env.sh"
 set -u
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp

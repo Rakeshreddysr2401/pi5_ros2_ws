@@ -13,8 +13,7 @@ set -eo pipefail
 cd "$(dirname "$0")/.."
 
 set +u
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
+source "$(dirname "${BASH_SOURCE[0]}")/ros_env.sh"
 set -u
 
 export PYTHONUNBUFFERED=1

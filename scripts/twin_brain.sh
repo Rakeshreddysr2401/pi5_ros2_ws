@@ -36,8 +36,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 rosenv() {
   set +u
-  source /opt/ros/jazzy/setup.bash
-  source "$HOME/ros2_ws/install/setup.bash"
+  source "$(dirname "${BASH_SOURCE[0]}")/ros_env.sh"
   set -u
   export ROS_DOMAIN_ID="$DOMAIN" RMW_IMPLEMENTATION=rmw_fastrtps_cpp PYTHONUNBUFFERED=1
   unset ROS_DISCOVERY_SERVER ROS_LOCALHOST_ONLY FASTRTPS_DEFAULT_PROFILES_FILE
