@@ -713,18 +713,19 @@ class ROS2Bridge:
         """Register a callback(success: bool, message: str) called when navigation ends."""
         self._nav_done_callback = cb
 
-    def register_nav_progress_callback(self, cb: Callable[[str], None]) -> None:
+    def register_nav_progress_callback(self, cb: Callable[..., None]) -> None:
         """Register a callback(text) for a background drive that is struggling
         ("Still trying to get near the box: ..."), sent once per drive
-        (utils/drive_watch.py). Called from the drive's thread."""
+        (utils/drive_watch.py), or the start of a Telegram follow (photo=True:
+        send the camera's view with it). Called from the drive's thread."""
         self._nav_progress_callback = cb
 
-    def _fire_nav_progress(self, text: str) -> None:
+    def _fire_nav_progress(self, text: str, photo: bool = False) -> None:
         cb = self._nav_progress_callback
         self._node.get_logger().info(f"nav progress: listener={'yes' if cb else 'NONE'} {text!r}")
         if cb:
             try:
-                cb(text)
+                cb(text, photo=photo)
             except Exception as e:      # noqa: BLE001 -- a report must never kill the drive
                 self._node.get_logger().warning(f"nav progress callback failed: {e}")
 
@@ -1228,7 +1229,7 @@ class ROS2Bridge:
     FOLLOW_SILENT_S = 10.0      # follow_node reports at 2 Hz while following
 
     def start_follow(self, mode: str = "follow", announce: bool = False,
-                     who: str = "you") -> dict:
+                     who: str = "you", photo_on_start: bool = False) -> dict:
         """Start "follow me" (mode "follow") or "come to me" (mode "come":
         drive to ~1 m from the person and stop) on the Jetson, and WAIT for its
         first answer, so the tool can say "I can't see anyone" instead of
@@ -1244,7 +1245,9 @@ class ROS2Bridge:
         Either way the person is photographed as the follow begins.
         who: how the arrival report names the person -- "you" for the voice
         speaker, "the person I found" when a Telegram sender sent it to
-        someone in the room."""
+        someone in the room. photo_on_start: a Telegram "follow me" -- once
+        following begins, the asker gets a photo of who it follows (through
+        the nav-progress callback), since nothing is said aloud for them."""
         if self._follow_start_pub.get_subscription_count() == 0:
             return {"ok": False, "result": "unavailable",
                     "why": "the Jetson's follow node is not running (./rover follow)"}
@@ -1284,7 +1287,8 @@ class ROS2Bridge:
         with self._nav_lock:
             self._nav_cancel_event = cancel_event
         thread = threading.Thread(target=self._follow_worker,
-                                  args=(key, come, cancel_event, announce, who), daemon=True)
+                                  args=(key, come, cancel_event, announce, who, photo_on_start),
+                                  daemon=True)
         with self._nav_lock:
             self._nav_thread = thread
             self._nav_goal = {"x": None, "y": None, "label": label, "since": time.time()}
@@ -1303,12 +1307,57 @@ class ROS2Bridge:
         "nobody": (False, "I looked for someone to follow, but I couldn't find anyone"),
     }
 
+    FOLLOW_MOVING_VX = 0.03      # m/s forward: the wheels really are following
+    FOLLOW_STUCK_TELL_S = 2.0    # blocked/holding this long before moving -> say so
+    FOLLOW_CLOSE_TELL_S = 3.0    # found, not blocked, not moving (they are close) -> say so
+
+    def _follow_start_notice(self, cur: dict, told: dict) -> dict:
+        """A Telegram "follow me": tell the asker, with a photo, what the
+        follow is really doing -- once it is MOVING, or why it is not. On
+        2026-10-31 "Following this person now" went out 0.2 s after the
+        person was found while a wall corner held the robot still, and it
+        never moved. `told` carries what was said across status lines:
+        "first" (when following began), "said" (moving | stuck | close)."""
+        now = time.monotonic()
+        told.setdefault("first", now)
+        said = told.get("said")
+        moving = (cur.get("vx") or 0.0) >= self.FOLLOW_MOVING_VX
+        stuck = cur.get("blocked") or cur.get("holding")
+        waited = now - told["first"]
+        if moving and said in (None, "close"):
+            told["said"] = "moving"
+            self._fire_nav_progress("Following this person now. Send stop to stop me.",
+                                    photo=said is None)
+        elif moving and said == "stuck":
+            told["said"] = "moving"
+            self._fire_nav_progress("Moving now -- following. Send stop to stop me.")
+        elif said is None and stuck:
+            told.setdefault("stuck_since", now)
+            if now - told["stuck_since"] >= self.FOLLOW_STUCK_TELL_S:
+                told["said"] = "stuck"
+                dist = cur.get("dist")
+                where = f" about {dist:.1f} m away" if dist else ""
+                self._fire_nav_progress(
+                    f"I can see someone{where}, but I can't move: {stuck}. I'll follow "
+                    "as soon as the way clears -- move me out a little, or send stop.",
+                    photo=True)
+        elif said is None and not stuck:
+            told.pop("stuck_since", None)
+            if waited >= self.FOLLOW_CLOSE_TELL_S:
+                told["said"] = "close"
+                self._fire_nav_progress(
+                    "I can see this person and will follow once they walk away. "
+                    "Send stop to stop me.", photo=True)
+        return told
+
     def _follow_worker(self, key: str, come: bool, cancel_event: threading.Event,
-                       announce: bool = False, who: str = "you") -> None:
+                       announce: bool = False, who: str = "you",
+                       photo_on_start: bool = False) -> None:
         """Background thread: one follow, until its final status line."""
         what = f"Coming to {who}" if come else "Following you"
         seen, seen_at = 0, time.monotonic()
         photographed = said_found = False
+        told = {}                    # photo_on_start: what the asker has been told
         try:
             while True:
                 if cancel_event.wait(timeout=0.3):
@@ -1333,6 +1382,8 @@ class ROS2Bridge:
                     if not photographed:
                         photographed = True
                         self._photograph_follow_target()
+                    if photo_on_start:
+                        told = self._follow_start_notice(cur, told)
                     if cur.get("found") and not said_found:
                         said_found = True
                         if announce:

@@ -12,7 +12,6 @@ import threading
 import time
 import types
 
-import pytest
 
 from langrobo_ros.ros2_bridge import ROS2Bridge
 
@@ -41,6 +40,8 @@ def fake(subs=1):
     s.photos, s.said = [], []
     s._photograph_follow_target = lambda: s.photos.append(1)
     s.publish_speech = s.said.append
+    s.progress = []
+    s._fire_nav_progress = lambda text, photo=False: s.progress.append((text, photo))
     s.cancel_navigation = lambda: s._nav_cancel_event and s._nav_cancel_event.set()
     n = [0]
 
@@ -51,6 +52,9 @@ def fake(subs=1):
     s.FOLLOW_START_WAIT_S, s.FOLLOW_SILENT_S = 1.0, 10.0
     s._FOLLOW_ENDS = ROS2Bridge._FOLLOW_ENDS
     s._follow_worker = types.MethodType(ROS2Bridge._follow_worker, s)
+    s._follow_start_notice = types.MethodType(ROS2Bridge._follow_start_notice, s)
+    s.FOLLOW_MOVING_VX = ROS2Bridge.FOLLOW_MOVING_VX
+    s.FOLLOW_STUCK_TELL_S, s.FOLLOW_CLOSE_TELL_S = 0.3, 0.6
     return s
 
 
@@ -165,3 +169,66 @@ def test_a_reach_drive_after_a_follow_still_stops_the_follow():
     s.cancel_navigation()          # start_nav_to_pose does this; the follow key stays current
     wait_done(s)
     assert s._follow_cancel_pub.sent == ["EMPTY"]
+
+
+def _tg_follow(*lines, wait=0.8):
+    """A Telegram follow (photo_on_start) fed these status lines after it starts."""
+    s = fake()
+    answer_later(s, "k1", {"state": "finding"})
+    ROS2Bridge.start_follow(s, "follow", photo_on_start=True)
+    answer_later(s, "k1", *lines, delay=0.05)
+    time.sleep(wait)
+    return s
+
+
+def _stop(s):
+    s.cancel_navigation()
+    wait_done(s)
+
+
+def test_telegram_follow_says_following_only_once_the_wheels_move():
+    s = _tg_follow({"state": "following", "found": True, "vx": 0.0, "dist": 2.0},
+                   {"state": "following", "vx": 0.12, "dist": 1.9})
+    assert s.progress == [("Following this person now. Send stop to stop me.", True)]
+    assert s.said == []                         # nothing aloud: announce is off
+    _stop(s)
+
+
+def test_telegram_follow_held_by_a_wall_says_so_not_following():
+    """2026-10-31, floor: a wall corner at the front-right held the robot still
+    ("holding: something 0.03 m ahead") while Telegram said "Following"."""
+    s = _tg_follow({"state": "following", "found": True, "vx": 0.0, "dist": 1.36,
+                    "holding": "something 0.03 m ahead"}, wait=0.1)
+    with s._status_lock:
+        s._follow_status["k1"].append({"state": "following", "vx": 0.0, "dist": 1.36,
+                                       "holding": "something 0.03 m ahead", "req": "k1"})
+    time.sleep(0.8)
+    (text, photo), = s.progress
+    assert photo and "can't move: something 0.03 m ahead" in text and "1.4 m" in text
+    assert "Following" not in text
+    with s._status_lock:                        # the way clears: it moves
+        s._follow_status["k1"].append({"state": "following", "vx": 0.1, "req": "k1"})
+    time.sleep(0.5)
+    assert s.progress[1] == ("Moving now -- following. Send stop to stop me.", False)
+    _stop(s)
+
+
+def test_telegram_follow_with_the_person_close_says_it_waits_for_them():
+    s = _tg_follow({"state": "following", "found": True, "vx": 0.0, "dist": 0.9}, wait=1.2)
+    (text, photo), = s.progress
+    assert photo and "follow once they walk away" in text
+    with s._status_lock:
+        s._follow_status["k1"].append({"state": "following", "vx": 0.1, "req": "k1"})
+    time.sleep(0.5)
+    assert s.progress[1] == ("Following this person now. Send stop to stop me.", False)
+    _stop(s)
+
+
+def test_voice_follow_sends_no_photo_notice():
+    s = fake()
+    answer_later(s, "k1", {"state": "following"})
+    start(s)
+    time.sleep(0.5)
+    assert s.progress == []
+    s.cancel_navigation()
+    wait_done(s)

@@ -22,8 +22,15 @@ blocked. Here: who may ask, and the honest first answer.
     stop word cancels the background drive (agent_node._on_user_input +
     utils/stop_words.py; other talk is answered with the follow still on), and
     that cancel reaches follow_node as /follow/cancel.
-  - Over Telegram the sender is not in the room, so "follow me" is refused,
-    by code. "come" still works there: it goes to the person the robot finds
+  - Over Telegram (owner, 2026-10-31: "follow me from Telegram too"): the
+    sender may be standing beside the robot with the phone, no speaker or mic.
+    "follow me" follows whoever is in front of the camera (turning to find
+    someone first), and the sender gets a photo of who it is following once
+    it really moves, or of why it cannot (ROS2Bridge._follow_start_notice)
+    -- a wrong person is seen at once and stopped with "stop" on
+    Telegram, which halts the wheels without waiting for the LLM
+    (agent_node._on_telegram_inbound). Before this it was refused: "me" was
+    assumed to be nobody in the room. "come" works there too: it goes to the person the robot finds
     in the room ("find Mom and tell her dinner is ready", 2026-10-20 -- it
     used to be refused too, and the model then said "I am looking for her"
     four times while nothing moved). The camera cannot tell who someone is,
@@ -45,12 +52,6 @@ logger = logging.getLogger(__name__)
 
 FOLLOW_ENABLED = os.environ.get("LANGROBO_FOLLOW", "0").strip().lower() not in (
     "", "0", "false", "no", "off")
-
-_TELEGRAM_REFUSAL = (
-    "NOT started -- nothing moved: over Telegram you are not in the room, so I "
-    "can't follow you. Tell the user that. (To go to someone who IS in the room, "
-    "use mode=\"come\".)")
-
 
 @tool
 def follow_person(state: Annotated[dict, InjectedState],
@@ -74,11 +75,13 @@ def follow_person(state: Annotated[dict, InjectedState],
     then: for mode="come", what to do on arriving ("come here and tell me the
     time" -> then="tell the user the time"). Leave empty otherwise.
 
-    Over Telegram the sender is not in the room: mode="come" goes to the
-    person the robot finds in the room -- "find Mom and tell her dinner is
-    ready" -> mode="come", then="say out loud to her: Rakesh says dinner is
-    ready". It cannot tell who people are, so it goes to whoever it finds;
-    the sender gets a photo on arrival. "follow" is refused there.
+    Over Telegram it cannot tell who people are, so it goes to whoever it
+    finds. mode="follow" follows whoever is in front of the camera (the
+    sender may be standing beside the robot); they get a photo of who it
+    follows. mode="come" goes to the person the robot finds in the room --
+    "find Mom and tell her dinner is ready" -> mode="come", then="say out
+    loud to her: Rakesh says dinner is ready"; the sender gets a photo on
+    arrival.
 
     Returns at once with whether it started; a system message reports how it
     ended."""
@@ -86,14 +89,21 @@ def follow_person(state: Annotated[dict, InjectedState],
     if refusal:
         return refusal
     remote = (state or {}).get("channel") == "telegram"
-    if remote and mode != "come":
-        return _TELEGRAM_REFUSAL
 
     remember_requester(state, then if mode == "come" else "")
     res = _bridge.get().start_follow(mode, announce=(state or {}).get("channel") == "voice",
-                                     who="the person I found" if remote else "you")
+                                     who="the person I found" if remote else "you",
+                                     photo_on_start=remote and mode == "follow")
     logger.info("follow_person(%s) -> %s", mode, res)
     if res.get("ok"):
+        if remote and mode == "follow":
+            return (("I can't see anyone from here, so I'm turning around to find someone "
+                     if res.get("result") == "finding" else
+                     "I can see someone, so I'm starting to follow them ")
+                    + "-- I can't tell who people are, so it is whoever is in front of my "
+                    "camera. The user gets a photo automatically once I'm really moving, "
+                    "or a message saying why I can't, and sending stop halts me. Tell them "
+                    "that in one sentence; do not say you are already following them.")
         if remote:
             return (("I can't see anyone from here, so I'm turning around to find someone "
                      if res.get("result") == "finding" else
@@ -111,6 +121,9 @@ def follow_person(state: Annotated[dict, InjectedState],
         return ("Following you now, about a metre behind. Say stop when you want "
                 "me to stop.")
     result = res.get("result")
+    if result == "nobody" and remote and mode == "follow":
+        return ("NOT started: I can't see anyone in front of me to follow. Tell the user "
+                "to stand in front of my camera and send follow me again.")
     if result == "nobody" and remote:
         return ("NOT started: I can't see anyone in the room from here. Tell the user; "
                 "if they know where the person is, they can send me to that place first.")

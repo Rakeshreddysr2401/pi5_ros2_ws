@@ -43,7 +43,8 @@ Roadmap page for people: https://claude.ai/artifact/E7o4XrtZ93i6b4wVCLTope
 | "stop" / "wait" / "stay there" / anything else | voice | Wheels stop at once (every utterance already does), the follow is cancelled, nothing extra said for the cancel | agent_node `_on_user_input` → `cancel_navigation` → `/follow/cancel` |
 | "follow me" with nobody in view | voice | Says it can't see anyone and to stand in front of it. Does NOT spin around looking | Jetson `nobody` result → tool's own reply (it waits for the start) |
 | "follow me" while teleop is MANUAL | any | Refused with the existing MANUAL message | `blocked_by_manual()` |
-| "follow me" / "come to me" | Telegram | Refused: over Telegram it cannot see who "me" is. The sender can ask it to go to a saved place instead | tool, by channel |
+| "follow me" | Telegram | Follows whoever is in front of the camera (turns to find someone first); the sender gets a photo of who it follows, and "stop" on Telegram halts the wheels at once, before any LLM call (2026-10-31; it used to be refused) | tool + `agent_node._on_telegram_inbound` |
+| "come to me" | Telegram | Goes to the person it finds in the room; photo on arrival (2026-10-20) | tool, by channel |
 | "follow me" from a guest role | Telegram | Refused (no move capability) | `blocked_by_role()` |
 | Person walks out of view | — | Keeps 3 s, re-finds them near where they were heading, else stops and says it lost them | Jetson follow.py → `[SYSTEM]` report |
 | Something blocks the way | — | Stops, keeps facing them; after 10 s says it is blocked | Jetson follow.py → `[SYSTEM]` report |

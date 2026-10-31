@@ -169,6 +169,9 @@ def hops():
          [HumanMessage(T + POSE + "Kino come here")], is_call("follow_person", mode="come")),
         ("navigate", "follow: follow me",
          [HumanMessage(T + POSE + "follow me")], "follow_person"),
+        ("navigate", "follow: follow me (Telegram)",
+         [HumanMessage(T + POSE + "[Telegram from Rakesh] follow me")],
+         is_call("follow_person", mode=lambda m: m in (None, "follow"))),
     ]
 
 

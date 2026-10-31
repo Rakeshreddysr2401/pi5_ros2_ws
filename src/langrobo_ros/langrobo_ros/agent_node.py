@@ -490,7 +490,7 @@ class AgentNode(Node):
                 f"FROM the Studio page reports its arrival to nobody. To drive "
                 f"from Studio, stop this brain first.")
 
-    def _on_nav_progress(self, text: str) -> None:
+    def _on_nav_progress(self, text: str, photo: bool = False) -> None:
         """A background drive is struggling (ROS2Bridge._reach_worker, once per
         drive): tell whoever asked, as written -- voice or their Telegram. On
         2026-10-29 a 305 s failing drive said nothing until it gave up."""
@@ -498,7 +498,7 @@ class AgentNode(Node):
         req = get_last_nav_requester() or {}
         self.get_logger().info(f"nav progress -> channel={req.get('channel') or 'voice'} "
                                f"sender={req.get('sender') or '-'}: {text!r}")
-        self._enqueue_notice(text, req)
+        self._enqueue_notice(text, req, photo=photo)
 
     def _on_nav_done(self, success: bool, message: str) -> None:
         """Called by bridge when Nav2 goal finishes. Injects system message
@@ -729,7 +729,24 @@ class AgentNode(Node):
 
     def _on_telegram_inbound(self, inbound) -> None:
         """Telegram poller thread → worker queue. Never barges in on a running
-        turn and never clobbers voice input — it waits its turn in FIFO order."""
+        turn and never clobbers voice input — it waits its turn in FIFO order.
+
+        Except the wheels: a stop word halts them HERE, on the poller thread,
+        as a spoken stop does in _on_user_input -- queued, it waited for any
+        running turn plus an LLM call (a Telegram "follow me", 2026-10-31,
+        is stopped from the phone). The message still queues, so the reply
+        says it stopped."""
+        from langrobo_core.tools.approach import search_active
+        from langrobo_core.utils.stop_words import says_stop
+        try:
+            moving = self._bridge.navigation_active() or self._turn_moving or search_active()
+            if moving and says_stop(inbound.text):
+                self.get_logger().info(f"Telegram stop word while moving -- halting now: "
+                                       f"{inbound.text[:80]!r}")
+                self._bridge.cancel_navigation()
+                self._bridge.request_motion_stop()
+        except Exception as e:      # noqa: BLE001 -- the message must still queue
+            self.get_logger().error(f"Telegram stop check failed: {e}")
         with self._queue_lock:
             self._telegram_pending.append(inbound)
         self._input_event.set()

@@ -1,8 +1,8 @@
 """follow_person — "follow me" / "come to me" (tools/follow.py).
 
 The properties: off by default (no schema, prompts unchanged); the same
-guards as every drive (role, teleop MANUAL); refused over Telegram, where
-"me" is nobody the camera can see; an honest first answer from the Jetson's
+guards as every drive (role, teleop MANUAL); over Telegram it follows whoever
+is in front of the camera and sends the asker a photo of them; an honest first answer from the Jetson's
 first status ("nobody" is said now, not promised away); and the requester is
 remembered so the end report reaches whoever asked, with "then" kept only
 for "come".
@@ -24,9 +24,9 @@ class FollowBridge(StubBridge):
         super().__init__()
         self.answer, self.calls = answer, []
 
-    def start_follow(self, mode="follow", announce=False, who="you"):
+    def start_follow(self, mode="follow", announce=False, who="you", photo_on_start=False):
         self.calls.append(mode)
-        self.announce, self.who = announce, who
+        self.announce, self.who, self.photo_on_start = announce, who, photo_on_start
         return self.answer
 
 
@@ -117,10 +117,34 @@ TELEGRAM_OWNER = {"channel": "telegram", "sender_name": "Rakesh", "sender_role":
                   "messages": []}
 
 
-def test_telegram_follow_me_is_refused_the_sender_is_not_here():
+def test_telegram_follow_me_follows_and_sends_who():
+    """Owner, 2026-10-31: standing by the robot with only the phone (no
+    speaker/mic) -- "follow me" on Telegram follows whoever is in front,
+    and the photo of who it follows goes to the sender."""
     b = _use({"ok": True, "result": "following"})
     out = follow_person.invoke({"state": TELEGRAM_OWNER})
-    assert "over Telegram" in out and "NOT started" in out and b.calls == []
+    assert b.calls == ["follow"] and b.photo_on_start is True and b.announce is False
+    assert "starting to follow them" in out and "photo" in out and "stop" in out
+
+
+def test_telegram_follow_me_turns_to_find_someone():
+    b = _use({"ok": True, "result": "finding"})
+    out = follow_person.invoke({"state": TELEGRAM_OWNER})
+    assert b.calls == ["follow"] and "turning around to find someone" in out
+
+
+def test_telegram_follow_me_with_nobody_found_asks_to_stand_in_front():
+    _use({"ok": False, "result": "nobody"})
+    out = follow_person.invoke({"state": TELEGRAM_OWNER})
+    assert "NOT started" in out and "stand in front" in out
+
+
+def test_photo_on_start_only_for_a_telegram_follow():
+    b = _use({"ok": True, "result": "following"})
+    follow_person.invoke({"state": VOICE})
+    assert b.photo_on_start is False
+    follow_person.invoke({"state": TELEGRAM_OWNER, "mode": "come"})
+    assert b.photo_on_start is False
 
 
 def test_telegram_come_goes_to_the_person_in_the_room(monkeypatch):

@@ -226,7 +226,7 @@ class StubBridge:
         return None
 
     def start_follow(self, mode: str = "follow", announce: bool = False,
-                     who: str = "you") -> dict:
+                     who: str = "you", photo_on_start: bool = False) -> dict:
         """No Jetson: "unavailable", the real bridge's answer when follow_node
         is not running."""
         logger.info("[STUB] start_follow(%s) -> unavailable", mode)
