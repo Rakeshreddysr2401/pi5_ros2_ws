@@ -116,8 +116,10 @@ cd ~/kino_sim && ./sim up home_real     # ~1 min; add follow=true for an Isaac w
   `~/ros2_ws/scripts/ros_env.sh`; builds: `./scripts/build_ws.sh` (build/ install/).
   The wheels' micro-ROS agent (XRCE 3.0.1) bundles Fast DDS 3.6.2 = Lyrical's; the ESP32
   firmware's micro_ros_arduino (jazzy branch) speaks XRCE to it, so it needs no reflash.
-- Laptops: still Jazzy (Isaac Sim 6.2 bundles Humble/Jazzy only; the RViz laptop's apt
-  install) -- the next step, after the robot.
+- RViz laptop (old laptop, .8): ROS 2 **Lyrical** beside Jazzy since 2026-11-01
+  (`~/rover/phase2/rviz/setup_lyrical_laptop.sh`, run once with sudo); `rover_live.sh` picks
+  Lyrical. On Jazzy the camera and the global costmap never reached RViz.
+- Isaac laptop: still Jazzy (Isaac Sim 6.2 bundles Humble/Jazzy only).
 
 ## 7. Known problems right now
 
