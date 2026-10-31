@@ -28,6 +28,7 @@ class StubBridge:
     def __init__(self, known_locations: dict = None):
         self._known_locations = known_locations or {}
         self._nav_done_callback = None
+        self._nav_progress_callback = None
         self._system_turn_callback = None
         self.system_turns: list[str] = []   # tests inspect what was enqueued
         logger.info("StubBridge initialised (no ROS2 — all publishes are logged)")
@@ -161,6 +162,9 @@ class StubBridge:
 
     def register_nav_done_callback(self, cb) -> None:
         self._nav_done_callback = cb
+
+    def register_nav_progress_callback(self, cb) -> None:
+        self._nav_progress_callback = cb
 
     def cancel_navigation(self) -> None:
         logger.info("[STUB] cancel_navigation()")

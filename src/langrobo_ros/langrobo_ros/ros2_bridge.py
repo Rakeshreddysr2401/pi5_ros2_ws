@@ -166,6 +166,8 @@ class ROS2Bridge:
 
         # ── Registered callback for navigation completion ──────────────────────
         self._nav_done_callback: Callable[[bool, str], None] | None = None
+        # ...and for a background drive that is struggling (drive_watch.py)
+        self._nav_progress_callback: Callable[[str], None] | None = None
 
         # ── Registered callback for tool-injected [SYSTEM] turns ───────────────
         # Lets pure-zone tools hand a proactive turn to
@@ -711,6 +713,21 @@ class ROS2Bridge:
         """Register a callback(success: bool, message: str) called when navigation ends."""
         self._nav_done_callback = cb
 
+    def register_nav_progress_callback(self, cb: Callable[[str], None]) -> None:
+        """Register a callback(text) for a background drive that is struggling
+        ("Still trying to get near the box: ..."), sent once per drive
+        (utils/drive_watch.py). Called from the drive's thread."""
+        self._nav_progress_callback = cb
+
+    def _fire_nav_progress(self, text: str) -> None:
+        cb = self._nav_progress_callback
+        self._node.get_logger().info(f"nav progress: listener={'yes' if cb else 'NONE'} {text!r}")
+        if cb:
+            try:
+                cb(text)
+            except Exception as e:      # noqa: BLE001 -- a report must never kill the drive
+                self._node.get_logger().warning(f"nav progress callback failed: {e}")
+
     # ── Tool-injected [SYSTEM] turns ────────────────────────────────────────
 
     def register_system_turn_callback(self, cb: Callable[[str], None]) -> None:
@@ -1089,6 +1106,14 @@ class ROS2Bridge:
                       stamp, key: str, cancel_event: threading.Event) -> None:
         """Background thread: one goal through reach_node, until its final line."""
         dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"
+        # Say when it struggles, stop when it is stuck (utils/drive_watch.py):
+        # reach alone tried for 305 s in silence on 2026-10-29.
+        from langrobo_core.utils.drive_watch import DriveWatch
+        watch = DriveWatch(label, (x, y))
+
+        def here_xy():
+            pose = self.get_current_pose()
+            return pose[:2] if pose else None
         try:
             self._reach_goal_pub.publish(self._pose_msg(x, y, math.radians(yaw_deg), stamp))
             t0 = time.monotonic()
@@ -1127,6 +1152,17 @@ class ROS2Bridge:
                             if why else f"Navigation to {dest} failed.{note}")
                     return
                 waited = time.monotonic() - t0
+                act = watch.step(lines, waited, here_xy)
+                if act and act[0] == "progress":
+                    self._fire_nav_progress(act[1])
+                elif act and act[0] == "give_up":
+                    if self._reach_current_key == key:
+                        self._reach_cancel_pub.publish(self._Empty())    # stop the wheels
+                    self._node.get_logger().warning(
+                        f"nav: stuck -- stopping {dest} after {waited:.0f} s ({act[1]})")
+                    self._fire_nav_done(False, f"Navigation to {dest} failed after retrying -- "
+                                               f"{act[1]}.")
+                    return
                 if not lines and waited > 10.0:
                     self._fire_nav_done(
                         False, f"Navigation to {dest} did not start -- the Jetson's "
