@@ -213,6 +213,19 @@ def test_telegram_follow_held_by_a_wall_says_so_not_following():
     _stop(s)
 
 
+def test_telegram_follow_escape_move_is_not_following():
+    """follow.py ESCAPE (2026-11-01): a 10 cm forward move off a wall corner
+    is not "Following" -- that is said once it really drives after them."""
+    s = _tg_follow({"state": "following", "found": True, "vx": 0.05, "dist": 1.36,
+                    "escaping": "forward 10 cm then turn +20 deg"}, wait=0.4)
+    assert s.progress == []
+    with s._status_lock:
+        s._follow_status["k1"].append({"state": "following", "vx": 0.12, "req": "k1"})
+    time.sleep(0.5)
+    assert s.progress == [("Following this person now. Send stop to stop me.", True)]
+    _stop(s)
+
+
 def test_telegram_follow_with_the_person_close_says_it_waits_for_them():
     s = _tg_follow({"state": "following", "found": True, "vx": 0.0, "dist": 0.9}, wait=1.2)
     (text, photo), = s.progress

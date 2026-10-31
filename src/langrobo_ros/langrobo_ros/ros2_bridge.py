@@ -1321,7 +1321,8 @@ class ROS2Bridge:
         now = time.monotonic()
         told.setdefault("first", now)
         said = told.get("said")
-        moving = (cur.get("vx") or 0.0) >= self.FOLLOW_MOVING_VX
+        # an escape move (follow.py ESCAPE: 5-10 cm off a wall) is not following yet
+        moving = (cur.get("vx") or 0.0) >= self.FOLLOW_MOVING_VX and not cur.get("escaping")
         stuck = cur.get("blocked") or cur.get("holding")
         waited = now - told["first"]
         if moving and said in (None, "close"):
