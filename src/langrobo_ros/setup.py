@@ -29,6 +29,7 @@ setup(
     entry_points={
         'console_scripts': [
             'agent_node = langrobo_ros.agent_node:main',
+            'keyframe_node = langrobo_ros.keyframe_node:main',
         ],
     },
 )

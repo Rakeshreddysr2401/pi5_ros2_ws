@@ -185,7 +185,66 @@ def _invoke(llm, content: list, history: list | None = None, run_name: str = "as
     return msgs, reply, strip_thought_residue(str(reply.content))
 
 
-def ask(question: str, only: int | None = None, place: bool = True) -> dict:
+# How many of the frame memory's best matches are checked with the VLM (each
+# ~5 s on the cached photo prefix). Only "strong"/"possible" ones: a "weak"
+# hidden white chair got the bag's box from the VLM (2026-10-29).
+MEMORY_HITS = int(os.environ.get("LANGROBO_MEMORY_HITS", "2"))
+_MEMORY_CONFIDENT = ("strong", "possible")
+
+
+def ask(question: str, only: int | None = None, place: bool = True,
+        memory: bool = False) -> dict:
+    """ask_log(), and with memory=True -- the ask_photos tool -- when no
+    photo shows it, the frame memory: every view of the last 10 minutes
+    (keyframe_node on this Pi, its model on the Mac). A remembered frame that
+    the VLM confirms is added to the photo log, so it gets a number like any
+    photo ("send me photo 27", and later "go near it"), and is placed with
+    THAT frame's depth (the Jetson keeps keyframes' depth). The result then
+    carries "from_memory": True. approach.py does not use it yet (owner,
+    2026-10-29: answers and photos first, driving later)."""
+    out = ask_log(question, only=only, place=place)
+    if memory and only is None and (not out.get("ok") or out.get("photo") is None):
+        found, why = _from_memory(question, out.get("object"), place)
+        if found:
+            return found
+        out["memory"] = why
+    return out
+
+
+def _from_memory(question: str, obj: str | None, place: bool) -> tuple:
+    """(result, "") for a remembered frame the VLM confirms, else (None, why)."""
+    bridge = _bridge.get()
+    what = (obj or question).strip()
+    r = bridge.keyframe_query(what, k=MEMORY_HITS)
+    if not r.get("ok"):
+        logger.info("frame memory not asked: %s", r.get("reason"))
+        return None, r.get("reason") or "unavailable"
+    epoch = bridge.get_origin_epoch()
+    now = time.time()
+    hits = [h for h in r.get("hits") or [] if h.get("confidence") in _MEMORY_CONFIDENT]
+    logger.info("frame memory for %r: %d frame(s), %d confident hit(s) of %d",
+                what, r.get("frames", 0), len(hits), len(r.get("hits") or []))
+    for hit in hits:
+        try:
+            jpeg = base64.b64decode(hit["jpeg"])
+            st, robot = hit["stamp"], hit["robot"]
+            rec = _photos.record(jpeg, (int(st["sec"]), int(st["nanosec"])),
+                                 (float(robot["x"]), float(robot["y"]),
+                                  math.degrees(float(robot["yaw"]))),
+                                 now - float(hit["age_s"]), epoch, "memory")
+        except (KeyError, TypeError, ValueError) as e:
+            logger.warning("frame memory hit unusable: %s", e)
+            continue
+        if rec is None:
+            continue
+        res = ask_log(what, only=rec["n"], place=place)
+        if res.get("photo") == rec["n"]:
+            res.update(from_memory=True, object=res.get("object") or what)
+            return res, ""
+    return None, "not_seen" if r.get("frames") else "empty"
+
+
+def ask_log(question: str, only: int | None = None, place: bool = True) -> dict:
     """Answer `question` from the photo log. Pure of LangChain tool plumbing so
     approach.py can use it too. Returns
       {"ok": False, "why": "no_photos"}                      nothing logged
@@ -241,6 +300,8 @@ def ask(question: str, only: int | None = None, place: bool = True) -> dict:
                     box = parse_box(data2.get("box"), width, height) or box
             except Exception as e:             # the first box still stands
                 logger.warning("ask_photos box step failed: %s", e)
+    if box is not None:
+        rec["box"] = box            # send_telegram_photo(photo=n) draws it
     out.update(age_s=now - rec["when"], box=box, width=width)
     if place:
         out.update(_place(bridge, rec, box, width))
@@ -256,7 +317,7 @@ def locate_in(jpeg: bytes, description: str):
     bridge = _bridge.get()
     if rec is None or rec["n"] not in {r["n"] for r in _photos.log(bridge.get_origin_epoch())}:
         raise LookupError("photo not logged")
-    r = ask(description, only=rec["n"], place=False)
+    r = ask_log(description, only=rec["n"], place=False)
     box = r.get("box")
     if r.get("photo") is None or box is None:
         return None
@@ -290,18 +351,36 @@ def _place(bridge, rec: dict, box, width: int) -> dict:
     return res
 
 
+def _the(obj: str | None) -> str:
+    """"bed" -> "the bed"; "my bag" / "a cup" / "the bottle" stay as they are."""
+    o = (obj or "").strip().rstrip("?.!")
+    if not o:
+        return "it"
+    if re.match(r"(?i)(the|a|an|my|your|his|her|their|our|some)\b", o):
+        return o
+    return f"the {o}"
+
+
 def describe(result: dict) -> str:
     """The tool's reply: plain sentences, because it may be spoken as it is."""
     from .locate import describe_bearing
     if not result.get("ok"):
-        return ("I haven't taken any photos since my position was last reset, so "
-                "I have nothing to look back at. I can take a photo now.")
+        mem = (" and nothing like it in what I saw in the last "
+               "10 minutes" if result.get("memory") in ("not_seen", "empty") else "")
+        return ("I haven't taken any photos since my position was last reset" + mem +
+                ", so I have nothing to look back at. I can take a photo now.")
     if result.get("photo") is None:
         n = result["count"]
+        mem = (" nor in what I saw in the last 10 minutes"
+               if result.get("memory") in ("not_seen", "empty") else "")
         return (f"{result['answer']} I checked the {n} photo{'s' if n != 1 else ''} I "
                 f"have, going back to {describe_age(result['oldest_s'])}, and it is in "
-                f"none of them. I haven't looked around just now.")
-    s = f"{result['answer']} I saw it {describe_age(result['age_s'])}, in photo {result['photo']}."
+                f"none of them{mem}. I haven't looked around just now.")
+    if result.get("from_memory"):
+        s = (f"I saw {_the(result.get('object'))} {describe_age(result['age_s'])} "
+             f"(photo {result['photo']}, from what I saw in the last 10 minutes).")
+    else:
+        s = f"{result['answer']} I saw it {describe_age(result['age_s'])}, in photo {result['photo']}."
     if result.get("distance_m") is not None:
         s += (f" From where I am now it is about {result['distance_m']:.1f} m away, "
               f"{describe_bearing(result['bearing_deg'])}.")
@@ -322,10 +401,11 @@ from langchain_core.tools import tool  # noqa: E402
 def ask_photos(question: str) -> str:
     """Answer a question from every photo the robot took this session, without moving or looking again: which photo shows it, how long ago, and how far and which way it is from here now.
     Use for "where did you see my bag?", "was there a cup on the table?",
-    "what was under the bed?". It checks the photos only: something not in
-    any of them may still be in the room -- to check, look again or search."""
+    "what was under the bed?". It checks the photos, then what the robot saw
+    while moving in the last 10 minutes: something in neither may still be in
+    the room -- to check, look again or search."""
     try:
-        return describe(ask(question))
+        return describe(ask(question, memory=True))
     except Exception as e:
         logger.warning("ask_photos failed: %s", e)
         return (f"I couldn't check my photos just now (vision model error: "

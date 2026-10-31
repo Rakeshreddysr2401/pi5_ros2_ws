@@ -83,9 +83,58 @@ _VISION_QUESTION = re.compile(
     r"|what.?s? in front of (you|it)"
     r"|is (it|he|she|that|there) still there"
     r"|look(ing)? again"
-    r"|describe (what|the) (you )?(see|room|scene|surroundings))\b",
+    r"|describe (what|the) (you )?(see|room|scene|surroundings)"
+    # "Can you see my bag" (Telegram, 2026-10-29): present tense, so a CURRENT
+    # view -- it entered chat, which answered from a 34-minute-old photo
+    # (ask_photos) and said the bag was "to your left". "do you see what I
+    # mean" is talk, not a look.
+    r"|(can|do) you (still )?see(?! what i mean)"
+    r"|are you seeing)\b",
     re.IGNORECASE,
 )
+
+
+# A CORRECTION of what the robot just showed or said it saw: "Hey not that
+# black bag" (Telegram, 2026-10-29), right after it had sent a photo -- chat
+# answered "I don't see a black bag in my memory" without looking at all.
+# Two conditions, both deterministic: the user's words open with a correction,
+# and the PREVIOUS turn used a vision tool (so "no, I'm busy" after "what time
+# is it" is not one). A correction always gets a fresh look, however recent the
+# last photo: that photo is the one that was wrong.
+_CORRECTION = re.compile(
+    r"^\W*(?:(?:hey|oh|kino|hi)\W+)*"
+    r"(?:no\b|nope\b|not (?:that|this|it|the one)\b|that'?s not\b|that is not\b|it'?s not\b"
+    r"|wrong\b|not the (?:right|correct)\b)",
+    re.IGNORECASE,
+)
+_CONTEXT_PREFIX = re.compile(r"^\s*(?:\[[^\]]*\]\s*)+")
+# the tools whose result a person can correct by looking: the robot described
+# or sent an image, or set off toward something it saw
+_SIGHTING_TOOLS = frozenset({"look", "ask_photos", "send_telegram_photo",
+                             "approach_described_object", "look_toward", "locate_object",
+                             "scan_surroundings"})
+
+
+def _corrects_a_sighting(state: AgentState) -> bool:
+    """True when this turn's user message corrects a sighting from the turn
+    just before it (see _CORRECTION)."""
+    # The brain prefixes every message with context -- "[Time now: ...] [Robot
+    # now at ...] [Telegram from Rakesh] No, not that one" -- so the correction
+    # opens AFTER those brackets (live test 2026-10-29: missed before this).
+    words = _CONTEXT_PREFIX.sub("", last_user_query(state))
+    if not _CORRECTION.search(words):
+        return False
+    users_seen = 0
+    for msg in reversed(state["messages"]):
+        if isinstance(msg, HumanMessage) and not is_camera_frame(msg):
+            users_seen += 1
+            if users_seen == 2:
+                return False          # back past the previous turn: no vision tool in it
+            continue
+        if users_seen == 1 and isinstance(msg, AIMessage) and any(
+                tc.get("name") in _SIGHTING_TOOLS for tc in (msg.tool_calls or [])):
+            return True
+    return False
 
 
 # Jev (services/jev.py) as a second opinion on "is this a vision question?":
@@ -135,16 +184,20 @@ def _vision_backstop(agent_name: str, state: AgentState, out: dict) -> Command |
     if (state.get("agent_run_counts") or {}).get("local_agent", 0) > 0:
         return None
     query = last_user_query(state)
-    if not (_VISION_QUESTION.search(query) or _jev_says_vision(state)):
+    correction = _corrects_a_sighting(state)
+    if not (_VISION_QUESTION.search(query) or _jev_says_vision(state) or correction):
         return None
 
     attempted = ", ".join(tc.get("name", "?") for tc in tool_calls) or "answered directly"
     logger.warning(
         "Vision backstop: '%s' %s instead of handing over -- forcing "
-        "local_agent (query: %r)", agent_name, attempted, query[:80])
+        "local_agent (query: %r%s)", agent_name, attempted, query[:80],
+        ", a correction" if correction else "")
+    what = ("corrected what the robot had just seen or shown" if correction
+            else "asked a visual question")
     note = SystemMessage(content=(
         f"[Routing note] Control passed to the 'local_agent' agent because: "
-        f"the '{agent_name}' agent tried to handle a visual question itself "
+        f"the user {what}, and the '{agent_name}' agent tried to handle it itself "
         f"({attempted}) instead of handing it over. The user said: "
         f"{query!r}. Call look() and answer from the real image."
     ))
@@ -268,20 +321,25 @@ def _take_look(call_id: str) -> list:
 def _fresh_view_first(agent_name: str, state: AgentState) -> list | None:
     """[look call, its result...] to put in front of local_agent's LLM call,
     or None. Only for a current-view question (_VISION_QUESTION, the user's
-    words), only if this turn has not looked yet, and only when the last view
-    is older than STALE_VIEW_S (or there is none)."""
+    words) or a correction of a sighting (_corrects_a_sighting), only if this
+    turn has not looked yet, and -- for a question -- only when the last view
+    is older than STALE_VIEW_S (or there is none). A correction always looks:
+    the last photo is the one that was wrong."""
     if agent_name != "local_agent":
         return None
-    if not _VISION_QUESTION.search(last_user_query(state)):
+    correction = _corrects_a_sighting(state)
+    if not (correction or _VISION_QUESTION.search(last_user_query(state))):
         return None
     if _looked_this_turn(state):
         return None
     _, when = pose_stamp.last_view()
-    if when is not None and time.time() - when <= STALE_VIEW_S:
+    if not correction and when is not None and time.time() - when <= STALE_VIEW_S:
         return None
     call_id = f"fresh_view_{uuid.uuid4().hex[:12]}"
-    logger.info("Fresh view first: the last photo is %s -- looking before local_agent answers",
-                "missing" if when is None else f"{time.time() - when:.0f} s old")
+    logger.info("Fresh view first: %s -- looking before local_agent answers",
+                "a correction of what was seen" if correction else
+                "the last photo is " + ("missing" if when is None
+                                        else f"{time.time() - when:.0f} s old"))
     call = AIMessage(content="", tool_calls=[
         {"name": "look", "args": {}, "id": call_id, "type": "tool_call"}])
     return [call] + _take_look(call_id)

@@ -119,6 +119,8 @@ class ROS2Bridge:
         # answer.
         self._pixel_lock = threading.Lock()
         self._pixel_results: dict[str, dict] = {}
+        # frame memory (keyframe_node): replies by request id, as above
+        self._keyframe_results: dict[str, dict] = {}
 
         # ── Latest camera frame (bytes, JPEG-encoded) ─────────────────────────
         self._latest_frame: bytes | None = None
@@ -166,6 +168,8 @@ class ROS2Bridge:
 
         # ── Registered callback for navigation completion ──────────────────────
         self._nav_done_callback: Callable[[bool, str], None] | None = None
+        # ...and for a background drive that is struggling (drive_watch.py)
+        self._nav_progress_callback: Callable[[str], None] | None = None
 
         # ── Registered callback for tool-injected [SYSTEM] turns ───────────────
         # Lets pure-zone tools hand a proactive turn to
@@ -198,6 +202,10 @@ class ROS2Bridge:
         self._PointStamped = PointStamped
         self._pixel_query_pub = node.create_publisher(PointStamped, "/vision/pixel_query", 10)
         node.create_subscription(String, "/vision/pixel_result", self._on_pixel_result, 10)
+        # Frame memory: the last 10 min of keyframes, searchable by words
+        # (keyframe_node on this Pi; INTEGRATION_GAPS.md §9).
+        self._keyframe_query_pub = node.create_publisher(String, "/vision/keyframe_query", 5)
+        node.create_subscription(String, "/vision/keyframe_result", self._on_keyframe_result, 5)
         # "Keep the depth and camera pose of THIS photo": sent the moment a
         # frame is taken for the VLM, so the later pixel_query can be grounded
         # at the photo's instant (pixel_to_goal.py AT THE MOMENT OF THE PHOTO).
@@ -544,6 +552,38 @@ class ROS2Bridge:
         """Last commanded (pan_deg, tilt_deg) — open-loop state."""
         return self._pan_tilt
 
+    def _on_keyframe_result(self, msg) -> None:
+        try:
+            data = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError):
+            return
+        req_id = data.get("id")
+        if not req_id:
+            return
+        with self._pixel_lock:
+            while len(self._keyframe_results) >= 8:      # late replies to timed-out asks
+                self._keyframe_results.pop(next(iter(self._keyframe_results)))
+            self._keyframe_results[req_id] = data
+
+    def keyframe_query(self, text: str, k: int = 2, timeout: float = 4.0) -> dict:
+        """The frames of the last 10 minutes that best match `text` (keyframe_node):
+        {"ok": True, "hits": [{stamp, age_s, confidence, jpeg (base64), robot, ...}], ...},
+        or {"ok": False, "reason": ...}: "no_frame_memory" when nothing answered
+        (the node is not running), "embedder_down" when the Mac's model is off."""
+        import uuid
+        req_id = uuid.uuid4().hex[:8]
+        if self._keyframe_query_pub.get_subscription_count() == 0:
+            return {"ok": False, "reason": "no_frame_memory"}
+        self._keyframe_query_pub.publish(String(data=json.dumps(
+            {"id": req_id, "text": text, "k": int(k), "jpeg": True})))
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            with self._pixel_lock:
+                if req_id in self._keyframe_results:
+                    return self._keyframe_results.pop(req_id)
+            time.sleep(0.05)
+        return {"ok": False, "reason": "no_frame_memory"}
+
     def _on_pixel_result(self, msg) -> None:
         """Cache a /vision/pixel_result JSON reply under its request id."""
         try:
@@ -710,6 +750,21 @@ class ROS2Bridge:
     def register_nav_done_callback(self, cb: Callable[[bool, str], None]) -> None:
         """Register a callback(success: bool, message: str) called when navigation ends."""
         self._nav_done_callback = cb
+
+    def register_nav_progress_callback(self, cb: Callable[[str], None]) -> None:
+        """Register a callback(text) for a background drive that is struggling
+        ("Still trying to get near the box: ..."), sent once per drive
+        (utils/drive_watch.py). Called from the drive's thread."""
+        self._nav_progress_callback = cb
+
+    def _fire_nav_progress(self, text: str) -> None:
+        cb = self._nav_progress_callback
+        self._node.get_logger().info(f"nav progress: listener={'yes' if cb else 'NONE'} {text!r}")
+        if cb:
+            try:
+                cb(text)
+            except Exception as e:      # noqa: BLE001 -- a report must never kill the drive
+                self._node.get_logger().warning(f"nav progress callback failed: {e}")
 
     # ── Tool-injected [SYSTEM] turns ────────────────────────────────────────
 
@@ -1089,6 +1144,14 @@ class ROS2Bridge:
                       stamp, key: str, cancel_event: threading.Event) -> None:
         """Background thread: one goal through reach_node, until its final line."""
         dest = f"'{label}'" if label else f"({x:.1f}, {y:.1f})"
+        # Say when it struggles, stop when it is stuck (utils/drive_watch.py):
+        # reach alone tried for 305 s in silence on 2026-10-29.
+        from langrobo_core.utils.drive_watch import DriveWatch
+        watch = DriveWatch(label, (x, y))
+
+        def here_xy():
+            pose = self.get_current_pose()
+            return pose[:2] if pose else None
         try:
             self._reach_goal_pub.publish(self._pose_msg(x, y, math.radians(yaw_deg), stamp))
             t0 = time.monotonic()
@@ -1127,6 +1190,17 @@ class ROS2Bridge:
                             if why else f"Navigation to {dest} failed.{note}")
                     return
                 waited = time.monotonic() - t0
+                act = watch.step(lines, waited, here_xy)
+                if act and act[0] == "progress":
+                    self._fire_nav_progress(act[1])
+                elif act and act[0] == "give_up":
+                    if self._reach_current_key == key:
+                        self._reach_cancel_pub.publish(self._Empty())    # stop the wheels
+                    self._node.get_logger().warning(
+                        f"nav: stuck -- stopping {dest} after {waited:.0f} s ({act[1]})")
+                    self._fire_nav_done(False, f"Navigation to {dest} failed after retrying -- "
+                                               f"{act[1]}.")
+                    return
                 if not lines and waited > 10.0:
                     self._fire_nav_done(
                         False, f"Navigation to {dest} did not start -- the Jetson's "

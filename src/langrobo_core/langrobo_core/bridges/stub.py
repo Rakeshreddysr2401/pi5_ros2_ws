@@ -28,6 +28,7 @@ class StubBridge:
     def __init__(self, known_locations: dict = None):
         self._known_locations = known_locations or {}
         self._nav_done_callback = None
+        self._nav_progress_callback = None
         self._system_turn_callback = None
         self.system_turns: list[str] = []   # tests inspect what was enqueued
         logger.info("StubBridge initialised (no ROS2 — all publishes are logged)")
@@ -92,6 +93,11 @@ class StubBridge:
         return self._known_locations
 
     # ── VLM pixel grounding (Jetson pixel_to_goal) ────────────────────────
+
+    def keyframe_query(self, text: str, k: int = 2, timeout: float = 4.0) -> dict:
+        """No frame memory in Studio: the same shape as the real bridge when
+        keyframe_node is not running."""
+        return {"ok": False, "reason": "no_frame_memory"}
 
     def ground_pixel(self, u: float, v: float, timeout: float = 4.0,
                      stamp: tuple | None = None, box: tuple | None = None, what=None) -> dict:
@@ -161,6 +167,9 @@ class StubBridge:
 
     def register_nav_done_callback(self, cb) -> None:
         self._nav_done_callback = cb
+
+    def register_nav_progress_callback(self, cb) -> None:
+        self._nav_progress_callback = cb
 
     def cancel_navigation(self) -> None:
         logger.info("[STUB] cancel_navigation()")

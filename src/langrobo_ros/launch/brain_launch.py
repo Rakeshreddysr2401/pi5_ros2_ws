@@ -37,6 +37,12 @@ def generate_launch_description():
             description="ESP32's USB serial port (micro-ROS agent, 115200 baud)",
         ),
         DeclareLaunchArgument(
+            "start_frame_memory",
+            default_value="true",
+            description="Also start keyframe_node: the last 10 min searchable by words "
+                        "(model on the Mac, scripts/mac_mini/e2mem; ~/rover/FRAME_MEMORY.md)",
+        ),
+        DeclareLaunchArgument(
             "start_micro_ros",
             default_value="true",
             description="Also start the micro-ROS agent (false when it runs as its own systemd unit)",
@@ -68,5 +74,19 @@ def generate_launch_description():
                 },
             ],
             output="screen",
+        ),
+
+        # ── Frame memory: keyframes of the last 10 min, searchable by words ──
+        # Light here (picks frames, cuts quarters, searches); the model runs on
+        # the Mac, the depth stays on the Jetson. Without the Mac's e2mem it
+        # just keeps no keyframes -- the brain's photo log works as before.
+        Node(
+            package="langrobo_ros",
+            executable="keyframe_node",
+            name="keyframe_memory",
+            output="screen",
+            respawn=True,               # never let one crash end frame memory until the next brain restart
+            respawn_delay=5.0,
+            condition=IfCondition(LaunchConfiguration("start_frame_memory")),
         ),
     ])

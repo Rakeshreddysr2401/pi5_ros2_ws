@@ -112,21 +112,67 @@ def send_telegram_message(recipient: str, message: str,
     return f"Message delivered to {member.name} on Telegram."
 
 
+def boxed(jpeg: bytes, box) -> bytes:
+    """The photo with a thick box drawn around the thing (pixels x0, y0, x1, y1);
+    the photo as it is when there is no box or it cannot be drawn."""
+    if not box:
+        return jpeg
+    try:
+        import io
+
+        from PIL import Image, ImageDraw
+        img = Image.open(io.BytesIO(jpeg)).convert("RGB")
+        x0, y0, x1, y1 = (float(a) for a in box)
+        pad = 4
+        w = max(2, img.width // 150)
+        ImageDraw.Draw(img).rectangle(
+            [max(0, x0 - pad), max(0, y0 - pad), min(img.width - 1, x1 + pad),
+             min(img.height - 1, y1 + pad)], outline=(255, 40, 40), width=w)
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=90)
+        return out.getvalue()
+    except Exception as e:          # noqa: BLE001 -- the plain photo is still worth sending
+        logger.warning("could not draw the box: %s", e)
+        return jpeg
+
+
+def _send_logged_photo(svc, member, sender: str, n: int, caption: str) -> str:
+    """Photo n of the log (ask_photos named it), with its thing boxed."""
+    from . import photos
+    from .photo_recall import describe_age
+    rec = photos.get(int(n))
+    if rec is None:
+        _audit(sender, permissions.CAP_PHOTO, member.name, "photo_gone")
+        return (f"I no longer have photo {n} (I keep only my recent photos). Tell the "
+                f"user; offer to look again now.")
+    age = describe_age(time.time() - rec["when"])
+    err = svc.send_photo(member.chat_id, boxed(rec["jpeg"], rec.get("box")),
+                         caption or f"Photo {n}, {age}")
+    _audit(sender, permissions.CAP_PHOTO, member.name, "error" if err else "sent_logged")
+    if err:
+        return f"{err} Tell the user the photo to {member.name} did not go through."
+    marked = " with the thing marked by a red box" if rec.get("box") else ""
+    return (f"Photo {n} ({age}){marked} sent to {member.name} on Telegram. It is an "
+            f"earlier photo, not the view now.")
+
+
 @tool
 def send_telegram_photo(recipient: str, caption: str,
-                        state: Annotated[dict, InjectedState]) -> str:
-    """Snap the robot's current camera view and send it to a household member's
-    phone via Telegram.
+                        state: Annotated[dict, InjectedState], photo: int = 0) -> str:
+    """Send a photo to a household member's phone via Telegram.
 
-    Use when someone asks for a photo of what the robot sees ("send me a pic of
-    the room"). The photo is taken fresh from where the robot is now; while
-    it drives, it is held and sent on arrival. A photo of another place needs
-    a drive there first (navigate, with `then`). `caption` is a short line
-    describing the shot; pass "" for none."""
+    photo=0 (default): snap the camera view now, for "send me a pic of the room"
+    -- taken fresh from where the robot is; while it drives, it is held and sent
+    on arrival. A photo of another place needs a drive there first (navigate,
+    with `then`). photo=N: send photo N that ask_photos named ("I saw it 4 min
+    ago, in photo 27"), with the thing boxed -- for "send me that pic" / "show
+    me where". `caption` is a short line describing the shot; pass "" for none."""
     sender, _ = _sender(state)
     svc, member, refusal = _gate(state, permissions.CAP_PHOTO, recipient)
     if refusal:
         return refusal
+    if photo:
+        return _send_logged_photo(svc, member, sender, photo, caption)
     bridge = get_bridge()
     from .approach import search_active   # still searching: the drive is coming
     if getattr(bridge, "navigation_active", lambda: False)() or search_active():

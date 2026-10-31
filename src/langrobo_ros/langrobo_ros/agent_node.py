@@ -206,6 +206,8 @@ class AgentNode(Node):
 
         # Register navigation completion callback
         self._bridge.register_nav_done_callback(self._on_nav_done)
+        # ...and "still trying" for a drive that struggles (utils/drive_watch.py)
+        self._bridge.register_nav_progress_callback(self._on_nav_progress)
         self._warn_if_competing_bridge()
         # Let pure-zone tools inject [SYSTEM] turns into the worker queue.
         self._bridge.register_system_turn_callback(self._enqueue_system)
@@ -487,6 +489,16 @@ class AgentNode(Node):
                 f"Voice and Telegram still come here only; but a drive started "
                 f"FROM the Studio page reports its arrival to nobody. To drive "
                 f"from Studio, stop this brain first.")
+
+    def _on_nav_progress(self, text: str) -> None:
+        """A background drive is struggling (ROS2Bridge._reach_worker, once per
+        drive): tell whoever asked, as written -- voice or their Telegram. On
+        2026-10-29 a 305 s failing drive said nothing until it gave up."""
+        from langrobo_core.tools.movement import get_last_nav_requester
+        req = get_last_nav_requester() or {}
+        self.get_logger().info(f"nav progress -> channel={req.get('channel') or 'voice'} "
+                               f"sender={req.get('sender') or '-'}: {text!r}")
+        self._enqueue_notice(text, req)
 
     def _on_nav_done(self, success: bool, message: str) -> None:
         """Called by bridge when Nav2 goal finishes. Injects system message

@@ -1,0 +1,117 @@
+#!/bin/zsh
+# e2mem -- start Kino's FRAME MEMORY model (EmbeddingGemma 2, llama.cpp) on the Mac Mini.
+#
+#   e2mem            start (the first run downloads ~0.9 GB: llama.cpp b11753 + the model)
+#   e2mem stop       stop it
+#   e2mem status     up?, memory, one timed image
+#   e2mem log        follow the server log
+#
+# What it is for: the Pi 5's keyframe_node keeps a frame every 40 cm / 20 deg of the
+# robot's last 10 minutes and sends each one here to be turned into 768 numbers, so
+# "where did you see the bottle?" finds the frame by meaning (~/rover/FRAME_MEMORY.md).
+# On the Jetson the model starved the robot's own pose (2026-10-29), so it runs here.
+#
+# Like e12b5, nothing starts at login: run `e2mem` after a power-on (after e12b5).
+# Without it the robot works as before; it just keeps no frame memory.
+#
+# Why each choice:
+#  - its OWN llama.cpp (official b11753, ~/llama.cpp-embed): EmbeddingGemma 2 needs
+#    b11658 or newer; e12b5's patched b9830 stays as it is, for Gemma.
+#  - CPU by default (-ngl 0): Gemma has the GPU memory (e12b5 raises its limit to 13 GB).
+#    GPU=1 e2mem tries Metal; check `e12b5 status` stays healthy if you do.
+#  - 70 image tokens: what was measured (8/8 right on the test photos); the Pi's
+#    LANGROBO_EMBED_TOKENS must say the same.
+#  - -c 512: an input is one image (~90 tokens) or one short query.
+#  - port 8093 on the LAN (the Pi calls http://singireddys-mac-mini.local:8093).
+set -u
+D=$HOME/llama.cpp-embed
+M=$HOME/llm_models/embeddinggemma-2
+REL=b11753
+PORT=${PORT:-8093}
+TOKENS=${TOKENS:-70}
+LOG=$HOME/Library/Logs/e2mem.log
+BIN=""
+
+find_bin() { BIN=$(find "$D" -name llama-server -type f -perm -u+x 2>/dev/null | head -1); }
+
+setup() {
+  mkdir -p "$D" "$M"
+  find_bin
+  if [[ -z $BIN ]]; then
+    echo "downloading llama.cpp $REL for macOS (~16 MB)..."
+    curl -fL -o "$D/llama.tgz" \
+      "https://github.com/ggml-org/llama.cpp/releases/download/$REL/llama-$REL-bin-macos-arm64.tar.gz" \
+      && tar -xzf "$D/llama.tgz" -C "$D" && rm -f "$D/llama.tgz"
+    xattr -dr com.apple.quarantine "$D" 2>/dev/null
+    find_bin
+    [[ -n $BIN ]] || { echo "llama-server not found after download -- see $D"; return 1; }
+  fi
+  for f in embeddinggemma-2-Q8_0.gguf mmproj-Q8_0.gguf; do
+    if [[ ! -s $M/$f ]]; then
+      echo "downloading $f..."
+      curl -fL -o "$M/$f.part" "https://huggingface.co/unsloth/embeddinggemma-2-GGUF/resolve/main/$f" \
+        && mv "$M/$f.part" "$M/$f" || { echo "download of $f failed"; return 1; }
+    fi
+  done
+}
+
+free_mb() {   # free + inactive + purgeable pages: roughly what a new process can get
+  vm_stat | awk '/page size of/ {ps=$8} /Pages free/ {f=$3} /Pages inactive/ {i=$3} /Pages purgeable/ {p=$3}
+                 END {gsub("\\.","",f); gsub("\\.","",i); gsub("\\.","",p); printf "%d", (f+i+p)*ps/1048576}'
+}
+
+pid_of() { pgrep -f "llama-server .*--port $PORT" | head -1; }
+
+status() {
+  local p; p=$(pid_of)
+  if [[ -n $p ]] && curl -s -m 2 localhost:$PORT/health | grep -q '"ok"'; then
+    ps -o rss= -p $p | awk '{printf "frame memory model: up on :'$PORT', RAM %.1f GB\n", $1 / 1048576}'
+  else
+    echo "frame memory model: NOT answering on :$PORT -- e2mem log"
+  fi
+  echo "Mac memory a new process can still get: ~$(free_mb) MB"
+  # one image, timed: the speed the robot will see
+  python3 - "$PORT" <<'PY' 2>/dev/null || echo "(timing skipped)"
+import base64, io, json, sys, time, urllib.request
+port = sys.argv[1]; u = f"http://127.0.0.1:{port}"
+mark = json.load(urllib.request.urlopen(u + "/props", timeout=5))["media_marker"]
+# a tiny generated JPEG-free test image: 1x1 PNG is enough to time the pipeline
+png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+body = json.dumps({"content": {"prompt_string": mark, "multimodal_data": [base64.b64encode(png).decode()]}}).encode()
+t = time.time()
+urllib.request.urlopen(urllib.request.Request(u + "/embeddings", body, {"Content-Type": "application/json"}), timeout=60).read()
+print(f"one image: {(time.time() - t) * 1000:.0f} ms")
+PY
+}
+
+stop() {
+  local p; p=$(pid_of)
+  [[ -n $p ]] && kill $p && echo "stopped" || echo "was not running"
+}
+
+case ${1:-start} in
+  start)
+    if [[ -n $(pid_of) ]]; then echo "already running"; status; exit 0; fi
+    setup || exit 1
+    local_free=$(free_mb)
+    echo "Mac memory free before start: ~${local_free} MB (the model needs ~1.0-1.5 GB)"
+    if (( local_free < 1500 )); then
+      echo "NOT starting: under 1.5 GB free -- Gemma (e12b5) comes first. Close apps, or check Activity Monitor."
+      exit 1
+    fi
+    if [[ ${GPU:-0} == 1 ]]; then NGL=(-ngl 99); else NGL=(-ngl 0 --no-mmproj-offload); fi
+    nohup "$BIN" -m "$M/embeddinggemma-2-Q8_0.gguf" --mmproj "$M/mmproj-Q8_0.gguf" \
+      --embedding --pooling mean --image-min-tokens $TOKENS --image-max-tokens $TOKENS \
+      -c 512 -ub 512 -b 512 "${NGL[@]}" -t 4 -np 1 \
+      --host 0.0.0.0 --port $PORT >> "$LOG" 2>&1 &
+    for i in {1..60}; do
+      curl -s -m 2 localhost:$PORT/health | grep -q '"ok"' && break
+      sleep 1
+    done
+    status
+    ;;
+  stop) stop ;;
+  status) status ;;
+  log) tail -f "$LOG" ;;
+  *) echo "usage: e2mem [start|stop|status|log]"; exit 2 ;;
+esac
