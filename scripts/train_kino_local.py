@@ -51,7 +51,6 @@ def get_available_voices():
     preferred = ["Rishi", "Samantha", "Daniel", "Karen", "Geeta"]
     avail = []
     for line in out.splitlines():
-        name = line.split()[0] if line else ""
         for pref in preferred:
             if pref in line and pref not in avail:
                 avail.append(pref)

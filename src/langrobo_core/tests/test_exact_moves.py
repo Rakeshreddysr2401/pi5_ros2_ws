@@ -17,7 +17,6 @@ from langrobo_core.tools import movement
 from langrobo_core.tools import approach as ap
 from langrobo_core.tools.movement import move_robot
 
-from test_movement import fake_twist, legs  # noqa: F401 -- fixtures
 
 
 class ExactBridge(StubBridge):

@@ -18,8 +18,7 @@ from langrobo_core.tools import approach as ap
 from langrobo_core.tools import photos as ph
 from langrobo_core.tools.approach import approach_described_object, scan_surroundings
 
-from test_movement import fake_twist  # noqa: F401 -- fixture
-from test_object_memory import STATE, _grounded, robot, scripted  # noqa: F401 -- fixtures
+from test_object_memory import STATE, _grounded
 
 
 def _seen_at(x, y, pose=(0.0, 0.0, 0.0), photo=3, age=120.0):

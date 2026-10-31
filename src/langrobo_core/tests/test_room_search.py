@@ -4,12 +4,11 @@ full circle finds nothing, approach drives to an open, not-yet-searched spot
 (utils/viewpoints.py, from the LiDAR) and looks all around there.
 """
 
-import pytest
 
 from langrobo_core.tools.approach import approach_described_object
 from langrobo_core.utils import viewpoints as vp
 
-from test_object_memory import STATE, _grounded, robot, scripted, fake_twist  # noqa: F401
+from test_object_memory import STATE, _grounded
 
 
 def _room(w=4.0, h=3.0, step=0.1):

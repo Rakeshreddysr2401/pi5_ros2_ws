@@ -8,7 +8,6 @@ stamp, and distance/bearing come from the pose NOW; with its depth gone the
 answer is a direction only, and only if the robot has not moved off.
 """
 import io
-import math
 import time
 
 import pytest

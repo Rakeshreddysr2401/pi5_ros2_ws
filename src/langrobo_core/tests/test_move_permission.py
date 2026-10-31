@@ -14,7 +14,6 @@ import langrobo_core.tools.movement as mv
 from langrobo_core.tools.approach import approach_described_object, scan_surroundings
 from langrobo_core.tools.movement import move_robot, navigate_to_pose, save_location
 
-from test_movement import fake_twist  # noqa: F401 -- fixture
 
 
 def _state(role, name="Mom"):

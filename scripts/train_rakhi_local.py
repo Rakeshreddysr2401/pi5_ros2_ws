@@ -117,7 +117,6 @@ def main():
     import openwakeword.utils as u
 
     # Voice groups
-    telugu_voices = ["Geeta"]
     indian_voices = ["Rishi", "Aman", "Tara", "Lekha"]
     general_voices = ["Samantha", "Daniel", "Karen", "Fred"]
 

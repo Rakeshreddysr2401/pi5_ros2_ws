@@ -11,7 +11,6 @@ fixed the switch, and don't ground the robot when the switch merely can't be
 read.
 """
 
-import pytest
 
 from langrobo_core.bridges import StubBridge
 from langrobo_core.tools import _bridge
@@ -20,7 +19,6 @@ from langrobo_core.tools.movement import blocked_by_manual, move_robot, navigate
 import langrobo_core.tools.approach as ap
 import langrobo_core.tools.movement as mv
 
-from test_movement import fake_twist  # noqa: F401 -- fixture
 
 _bridge._instance = None
 _bridge.init(StubBridge())

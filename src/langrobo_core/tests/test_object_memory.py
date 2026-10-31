@@ -18,12 +18,9 @@ from langrobo_core.bridges import StubBridge
 from langrobo_core.services import object_memory as om
 from langrobo_core.tools import _bridge
 from langrobo_core.tools import approach as ap
-from langrobo_core.tools import locate as lo
 from langrobo_core.tools import movement as mv
 from langrobo_core.tools.approach import approach_described_object
-from langrobo_core.tools.locate import locate_object
 
-from test_movement import fake_twist  # noqa: F401 -- fixture
 
 EPOCH = 1790422385.619
 STATE = {"channel": "voice", "sender_name": "voice", "messages": []}
@@ -134,13 +131,6 @@ def _grounded(x, y, depth=1.2):
             "relative": {"forward_m": depth, "left_m": 0.0, "bearing_deg": 0.0}}
 
 
-
-
-
-# ── locate_object writes memory ─────────────────────────────────────────────
-
-
-
 # ── approach: memory first, then the checker ────────────────────────────────
 
 @pytest.fixture
@@ -160,19 +150,6 @@ def _rotate(bridge, deg):
         x, y, h = bridge.pose
         bridge.pose = (x, y, (h + deg + 180.0) % 360.0 - 180.0)
     return True, ""
-
-
-
-
-
-
-# ── far away: go to where it was, then look (owner, 2026-09-27) ─────────────
-
-
-
-
-
-
 
 
 # ── a depth stall is retried once on a fresh photo ──────────────────────────
@@ -197,10 +174,6 @@ def test_other_depth_failures_are_not_retried(robot, scripted, monkeypatch):
     robot.replies = [{"ok": False, "reason": "no_depth_at_pixel"}]
     out = approach_described_object.invoke({"description": "the orange bottle", "state": dict(STATE)})
     assert "glass, a mirror" in out and len(robot.queries) == 1
-
-
-
-# ── "go near it" means the thing IN THE PHOTO we talked about ───────────────
 
 
 # ── a refused turn does not end the search (floor test 2026-09-27) ──────────
@@ -252,7 +225,6 @@ def test_blocked_both_ways_says_so(robot, scripted, monkeypatch):
     assert "couldn't turn either way" in out and "2 view(s)" in out and not robot.navs
 
 
-
 # ── "go near it" about a photo the survey has already done: no VLM call ─────
 
 def _conversation_photo(jpeg, stamp):
@@ -262,8 +234,6 @@ def _conversation_photo(jpeg, stamp):
     photos.record(jpeg, stamp, (0.0, 0.0, 0.0), time.time() - 30, EPOCH, "look")
     return dict(STATE, messages=[HumanMessage(content=[
         {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()}}])])
-
-
 
 
 def test_objects_from_one_photo_have_their_own_ids():

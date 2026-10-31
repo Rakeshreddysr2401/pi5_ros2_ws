@@ -11,6 +11,13 @@ import os
 
 import pytest
 
+# Fixtures many test files share, registered once here instead of imported
+# into each file: fake_twist (geometry_msgs without ROS) and legs from
+# test_movement; robot (a scripted bridge) and scripted (camera + VLM replies)
+# from test_object_memory.
+from test_movement import fake_twist, legs  # noqa: E402,F401
+from test_object_memory import robot, scripted  # noqa: E402,F401
+
 # Tests never trace. A LangSmith key exported in the developer's shell would
 # otherwise send every test's fake LLM run to the robot's real project.
 for _k in ("LANGSMITH_TRACING", "LANGCHAIN_TRACING_V2", "LANGSMITH_TRACING_V2"):

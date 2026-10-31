@@ -22,8 +22,7 @@ from langrobo_core.tools import telegram as tg
 from langrobo_core.tools.approach import approach_described_object
 from langrobo_core.tools.room_voice import say_in_room
 
-from test_movement import fake_twist  # noqa: F401 -- fixture
-from test_object_memory import _grounded, robot, scripted  # noqa: F401 -- fixtures
+from test_object_memory import _grounded
 
 TELEGRAM = {"channel": "telegram", "sender_name": "Rakesh", "sender_role": "owner",
             "messages": []}

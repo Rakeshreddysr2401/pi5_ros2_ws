@@ -7,7 +7,6 @@ import langrobo_core.tools.movement as mv
 import pytest
 from langrobo_core.bridges.stub import StubBridge
 
-from test_movement import fake_twist  # noqa: F401 -- fixture: geometry_msgs without ROS
 
 pytestmark = pytest.mark.usefixtures("fake_twist")
 

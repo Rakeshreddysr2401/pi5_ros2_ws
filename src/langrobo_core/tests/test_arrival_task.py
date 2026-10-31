@@ -11,12 +11,10 @@ import pytest
 
 from langrobo_core.tools import movement as mv
 from langrobo_core.tools import approach as ap
-from langrobo_core.tools import _bridge
 from langrobo_core.tools.approach import approach_described_object
 from langrobo_core.tools.movement import navigate_to_pose
 
-from test_movement import fake_twist  # noqa: F401 -- fixture
-from test_object_memory import STATE, _grounded, robot, scripted  # noqa: F401 -- fixtures
+from test_object_memory import STATE, _grounded
 
 BOX_TASK = "tell the user what is on the box"
 
