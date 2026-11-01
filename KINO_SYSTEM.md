@@ -18,7 +18,7 @@ navigation and agents are tested there before they reach the real robot.
 |---|---|---|---|---|
 | **Jetson Orin Nano** | 192.168.1.15 · `rakhi-jetson.local` | `ssh rakhi24@192.168.1.15` | `~/rover` → `-langrobo_perception-`, `rover-v1.1.16-review`; also `~/kino_sim` → `main` (the twin's stand-in drivers) | **the body**: camera, lidar, pose, map, nav2, exact moves, photo→goal. All in one Docker container: `rover` (real) or `rover_twin` (twin), image `orin-nav:1.2` (`orin-nav:1.1` = rollback only). Power mode 15 W |
 | **Pi 5** | 192.168.1.16 (fixed) · `rakhi24-desktop.local` | `ssh rakhi24@192.168.1.16` | `~/ros2_ws` → `pi5_ros2_ws`, `dev-1.6.11-review` | **the mind**: LangGraph brain (3 agents), voice, Telegram, teleop page :8091, micro-ROS agent for the ESP32. Services start at boot (systemd) |
-| **Laptop (Isaac)** | DHCP, 192.168.1.9 on 2026-10-18 · user `chotesh` | at its keyboard only (**no ssh server**) | `~/kino_sim` → `mitra_sim` on GitHub (rename to `kino_sim` pending), `main`; `~/IsaacLab` (release/3.0.0) | **the twin**: Isaac Sim 6.2 + Isaac Lab 3.0 in conda env `kino`, RTX 4050 (driver 580, held), ROS domain 42 |
+| **Laptop (Isaac)** | DHCP, 192.168.1.9 on 2026-10-18 · user `chotesh` | from the Jetson: `ssh chotesh@192.168.1.9` (key; ssh server since 2026-11-01) | `~/kino_sim` → `mitra_sim` on GitHub (rename to `kino_sim` pending), `main`; `~/IsaacLab` (release/3.0.0) | **the twin**: Isaac Sim 6.2 + Isaac Lab 3.0 in conda env `kino`, RTX 4050 (driver 580, held), ROS domain 42 |
 | **Old laptop** | DHCP, 192.168.1.8 · user `rakhi24` | through the Jetson: `ssh rakhi24@192.168.1.15`, then `ssh rakhi24@192.168.1.8` | — (files pushed by `./rover view`) | **the RViz station**: `./rover view` (real) / `TWIN=1 ./rover view` (twin) open RViz here |
 | **Mac mini** | DHCP · `singireddys-mac-mini.local:8080` | at the Mac (no ssh set up from the robot machines) | — | llama.cpp: Gemma, LLM + VLM (`--parallel 4`), kino-stt |
 
@@ -27,7 +27,7 @@ navigation and agents are tested there before they reach the real robot.
 | from ↓ to → | Jetson | Pi 5 | old laptop | laptop | GitHub push |
 |---|---|---|---|---|---|
 | laptop | yes | yes | via the Jetson | — | **no** (pushes go through the Jetson's clone: laptop `origin` = `rakhi24@192.168.1.15:kino_sim`) |
-| Jetson | — | yes | yes (`./rover view`) | no (no server) | yes |
+| Jetson | — | yes | yes (`./rover view`) | yes (since 2026-11-01) | yes |
 | Pi 5 | yes, by name (`fleet.sh`; not re-checked today, the Jetson was down) | — | **no** (not set up) | no | yes |
 
 `sudo` needs the owner's password on every machine: the owner runs those commands.
@@ -119,7 +119,11 @@ cd ~/kino_sim && ./sim up home_real     # ~1 min; add follow=true for an Isaac w
 - RViz laptop (old laptop, .8): ROS 2 **Lyrical** beside Jazzy since 2026-11-01
   (`~/rover/phase2/rviz/setup_lyrical_laptop.sh`, run once with sudo); `rover_live.sh` picks
   Lyrical. On Jazzy the camera and the global costmap never reached RViz.
-- Isaac laptop: still Jazzy (Isaac Sim 6.2 bundles Humble/Jazzy only).
+- Isaac laptop: ROS 2 **Lyrical** (system, `/opt/ros/lyrical`) since 2026-11-01; the twin's DDS
+  side runs on it (`./sim`; `KINO_ROS=jazzy` = Isaac's bundled Jazzy, the fallback). Isaac Sim
+  6.2.0 + Isaac Lab 3.0.0 are NVIDIA's latest (checked 2026-11-01). Tested: selftest OK,
+  `TWIN=1 ./rover up` every gate OK, `home_real` 4/4 reached (1 of 2 runs brushed
+  dining_chair_2 by 1.4 cm on goal 1: a nav margin, not the link).
 
 ## 7. Known problems right now
 
