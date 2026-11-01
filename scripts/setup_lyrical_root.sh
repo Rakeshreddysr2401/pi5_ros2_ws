@@ -2,7 +2,8 @@
 # One-time ROOT setup: the Pi 5 moves to ROS 2 Lyrical, the same distro as the Jetson (2026-10-25).
 # Why: Jazzy (Fast DDS 2.14) here vs Lyrical (Fast DDS 3.6) on the Jetson -- the Jetson
 # camera writer (image_bridge) intermittently never matches Pi subscribers, so the brain
-# gets 0 frames. Jazzy stays installed as the rollback; nothing is removed.
+# gets 0 frames. (Jazzy was kept as the rollback by this script, then removed the same
+# night: TODO.md -- Lyrical is the only ROS on the Pi 5.)
 # Run:  sudo ~/ros2_ws/scripts/setup_lyrical_root.sh
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "run it with sudo"; exit 1; }

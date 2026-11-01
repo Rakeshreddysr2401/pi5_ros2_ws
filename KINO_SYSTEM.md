@@ -116,11 +116,11 @@ cd ~/kino_sim && ./sim up home_real     # ~1 min; add follow=true for an Isaac w
   `~/ros2_ws/scripts/ros_env.sh`; builds: `./scripts/build_ws.sh` (build/ install/).
   The wheels' micro-ROS agent (XRCE 3.0.1) bundles Fast DDS 3.6.2 = Lyrical's; the ESP32
   firmware's micro_ros_arduino (jazzy branch) speaks XRCE to it, so it needs no reflash.
-- RViz laptop (old laptop, .8): ROS 2 **Lyrical** beside Jazzy since 2026-11-01
-  (`~/rover/phase2/rviz/setup_lyrical_laptop.sh`, run once with sudo); `rover_live.sh` picks
+- RViz laptop (old laptop, .8): ROS 2 **Lyrical** only since 2026-11-01 (Jazzy removed)
+  (`~/rover/phase2/rviz/setup_lyrical_laptop.sh`, run once with sudo); `rover_live.sh` uses
   Lyrical. On Jazzy the camera and the global costmap never reached RViz.
 - Isaac laptop: ROS 2 **Lyrical** (system, `/opt/ros/lyrical`) since 2026-11-01; the twin's DDS
-  side runs on it (`./sim`; `KINO_ROS=jazzy` = Isaac's bundled Jazzy, the fallback). Isaac Sim
+  side runs on it (`./sim`; Isaac's bundled ROS is not used, Lyrical is the only ROS). Isaac Sim
   6.2.0 + Isaac Lab 3.0.0 are NVIDIA's latest (checked 2026-11-01). Tested: selftest OK,
   `TWIN=1 ./rover up` every gate OK, `home_real` 4/4 reached (1 of 2 runs brushed
   dining_chair_2 by 1.4 cm on goal 1: a nav margin, not the link).
