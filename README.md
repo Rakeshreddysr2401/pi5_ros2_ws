@@ -24,7 +24,8 @@ ESP32     ──────  4-wheel drive chassis, 50 Hz PID (micro-ROS over U
 [TELEGRAM.md](TELEGRAM.md) — chat with the robot from your phone: setup + usage ·
 [docs/voice/PI5_VOICE.md](docs/voice/PI5_VOICE.md) — the Pi5 voice trio (speaker/mic owner, STT, TTS) ·
 [docs/voice/VOICE_ROADMAP.md](docs/voice/VOICE_ROADMAP.md) — the phased voice plan and what is done ·
-[docs/voice/WAKE_WORD_INTEGRATION.md](docs/voice/WAKE_WORD_INTEGRATION.md) — train and plug in the "Kino" wake word
+[docs/voice/WAKE_WORD_INTEGRATION.md](docs/voice/WAKE_WORD_INTEGRATION.md) — train and plug in the "Kino" wake word ·
+[docs/learn/ROADMAP.md](docs/learn/ROADMAP.md) — learning robotics + RL from this robot, aimed at interviews (same file as the Jetson's `~/rover`)
 
 ---
 
