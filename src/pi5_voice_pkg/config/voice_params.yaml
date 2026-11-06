@@ -121,11 +121,11 @@ pi5_stt_node:
     # none. Not [] -- an empty list leaves a ROS string-list parameter
     # uninitialised and stt_node would not start; "" entries are dropped.
     wake_leading_aliases: [""]
-    # ON (owner, 2026-10-20): only a sentence with the name ("Kino, ...") is a
+    # OFF again (owner, 2026-11-01: "for now off the wake word"). Was ON 2026-10-20: only a sentence with the name ("Kino, ...") is a
     # turn, then follow_up_window_s / max_follow_ups for the replies. It was OFF
     # from 2026-10-12 (every sentence went to the brain), and room talk like
     # "Okay." / "Yeah." became queued turns. false = answer everything.
-    require_wake: true
+    require_wake: false
     # 'name' = the name in the text + the follow-up window, nothing else.
     # 'llm' = a sentence without the name is put to the brain's LLM as a yes/no
     # (relevance.py, slot 4) -- it dropped real commands whenever the Mac was
