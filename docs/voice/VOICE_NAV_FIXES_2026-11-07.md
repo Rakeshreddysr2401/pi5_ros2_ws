@@ -43,6 +43,16 @@ processing, Nav2/RL policy, or obstacle threshold was changed.
 - Jetson offline follow tests: **24 passed**. Deployed RL policy inference and
   shield smoke checks passed without a ROS publisher or physical motion.
 
+## Deployment
+
+The workspace is built. Restarting `langrobo-brain` requires interactive OS
+authentication: `sudo -n systemctl restart langrobo-brain` reports that a
+password is required; `systemctl --no-ask-password restart langrobo-brain`
+reports that interactive authentication is required. The owner has been asked
+to run `sudo systemctl restart langrobo-brain` on the Pi5. Until that restart,
+the running Python process retains the previous code. Post-deployment live
+speech verification is pending; it must not be counted as passed.
+
 ## Remaining limits
 
 - Restoring Sarvam requires account credits. Piper fallback remains in use;
