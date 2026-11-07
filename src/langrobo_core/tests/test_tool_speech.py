@@ -96,3 +96,8 @@ def test_failed_muted_run_keeps_its_retry_muted():
     _run(h, "I have turned left ninety degrees.")
     _run(h, "What would you like to do next?")
     assert sent == ["Turned left ninety degrees.", "What would you like to do next?"]
+
+
+def test_fractional_move_is_not_announced_as_a_shorter_integer():
+    assert ts.on_result("move_robot", "Movement done: F:12.5. Measured: F:12.5 (moved 12 cm).") == \
+        "Moved forward 12.5 centimetres."

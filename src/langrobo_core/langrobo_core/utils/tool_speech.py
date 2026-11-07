@@ -51,10 +51,11 @@ def on_result(name: str, content) -> str | None:
         # means this result was handled; mute just the following restatement.
         return ""
     if name == "move_robot" and text.startswith("Movement done: "):
-        steps = text[len("Movement done: "):].split(".")[0].split(", ")
+        # A decimal point is part of the distance, not the sentence boundary.
+        steps = text[len("Movement done: "):].split(". ", 1)[0].rstrip(".").split(", ")
         if len(steps) == 1 and ":" in steps[0]:
             cmd, _, val = steps[0].partition(":")
-            if cmd in _CMD and val.isdigit():
+            if cmd in _CMD and re.fullmatch(r"\d+(?:\.\d+)?", val):
                 verb, unit = _CMD[cmd]
                 return f"{verb} {val} {unit}."
         return "Done."
