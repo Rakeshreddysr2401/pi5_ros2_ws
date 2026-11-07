@@ -63,6 +63,14 @@ class LatencyProbe(Node):
         self._events.append(event)
 
     def inject(self, text: str) -> float:
+        # A freshly created publisher can send its only sample before DDS
+        # discovers agent_node. That used to produce a silent 90 s timeout
+        # while the healthy brain never received a request.
+        deadline = time.monotonic() + 5.0
+        while self._pub.get_subscription_count() == 0 and time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.1)
+        if self._pub.get_subscription_count() == 0:
+            raise RuntimeError("No brain subscriber on /voice/user_input; nothing injected")
         t = time.time()
         self._pub.publish(String(data=text))
         return t

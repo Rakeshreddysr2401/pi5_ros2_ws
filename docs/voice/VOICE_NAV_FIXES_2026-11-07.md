@@ -17,6 +17,7 @@ Jetson evidence: `~/rover/docs/VOICE_NAV_AUDIT_2026-11-07.md`.
 | Sarvam balance exhausted, actual provider hard to inspect | `/status` includes last observed STT/TTS configured/actual providers, fallback reason, success and observation age. | Status tests distinguish unknown state and working Piper fallback with HTTP 402. |
 | Fleet status falsely showed visual odometry down | Recognize Isaac's `vslam_container` as well as the old `vo_node`. | Live status lists every Jetson layer up. |
 | Four-second `/slots` timeout prescribed restarting a working Mac | Bounded read retry, list validation, and a diagnostic that distinguishes unreadable status from insufficient slots. | Reproduced a nearly four-second slot read while inference was active; full fleet check subsequently ALL OK with five slots. |
+| A fresh latency probe could publish before DDS discovered the brain | Wait for a subscriber before the one-shot injection, with a bounded timeout and a clear failure if absent. | Live replay received the request and measured the actual graph/speech events. |
 
 Other agents and replies after tool results retain streaming. No ROS topic,
 speech delimiter, KV slot, image-history projection, STT model, microphone
@@ -45,13 +46,21 @@ processing, Nav2/RL policy, or obstacle threshold was changed.
 
 ## Deployment
 
-The workspace is built. Restarting `langrobo-brain` requires interactive OS
-authentication: `sudo -n systemctl restart langrobo-brain` reports that a
-password is required; `systemctl --no-ask-password restart langrobo-brain`
-reports that interactive authentication is required. The owner has been asked
-to run `sudo systemctl restart langrobo-brain` on the Pi5. Until that restart,
-the running Python process retains the previous code. Post-deployment live
-speech verification is pending; it must not be counted as passed.
+The build and owner-authorized restart completed. `langrobo-brain` started at
+**21:59:29 IST on 2026-11-07**, with main PID 39322, and the new
+`runtime.voice` fields were verified from the running process. The complete
+post-restart fleet check was **ALL OK**.
+
+A live `/voice/user_input` replay of "Kino, what is twelve times seven?"
+returned **"Eighty-four."** without a tool call or movement. First speech
+publication was **2.688 s** while the startup cache warmer was finishing;
+the warm repeat was **1.517 s**, within the 2 s budget. Both had
+`respoke_chars=0`. Recent TTS metadata confirmed `piper`, `fell_back=true`,
+`ok=true`; Sarvam still returned HTTP 402. The replay skipped microphone/STT,
+and no `tts_audio_start` event was received, so these measurements are to
+speech publication, not acoustic speaker onset or microphone-to-audio latency.
+Telegram polling restarted; a single startup connection reset was logged and
+its retry remained active. No outbound Telegram test message was sent.
 
 ## Remaining limits
 
