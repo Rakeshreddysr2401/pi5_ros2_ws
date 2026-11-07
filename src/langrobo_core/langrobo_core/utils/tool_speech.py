@@ -45,6 +45,11 @@ def on_call(name: str, args: dict) -> str | None:
 
 def on_result(name: str, content) -> str | None:
     text = content if isinstance(content, str) else ""
+    if name == "approach_described_object" and text.startswith("Looking for the ") \
+            and "searching in the background" in text:
+        # on_call already said "Looking for the X". An empty line still
+        # means this result was handled; mute just the following restatement.
+        return ""
     if name == "move_robot" and text.startswith("Movement done: "):
         steps = text[len("Movement done: "):].split(".")[0].split(", ")
         if len(steps) == 1 and ":" in steps[0]:

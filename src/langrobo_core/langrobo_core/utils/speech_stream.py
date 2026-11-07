@@ -239,8 +239,22 @@ class SpeechStreamHandler(BaseCallbackHandler):
         rest = self._buf.pop(run_id, "").strip()
         if rest and run_id not in self._muted:
             self._send(rest)
+        was_muted = run_id in self._muted
         self._muted.discard(run_id)
         full = self._full.pop(run_id, "")
+        if was_muted and not full:
+            # Non-streaming retries/backups have no token callbacks. Keep
+            # their intentionally muted reply covered by unspoken(), too,
+            # or agent_node publishes the whole restatement at turn end.
+            try:
+                message = response.generations[0][0].message
+                content = message.content
+                if isinstance(content, str):
+                    full = content
+                if not content and not getattr(message, "tool_calls", None):
+                    self._mute_next = True  # the factory will retry this blank reply
+            except (AttributeError, IndexError, TypeError):
+                pass
         if full.strip():
             self._completed.append(_norm(full))
 
@@ -248,6 +262,8 @@ class SpeechStreamHandler(BaseCallbackHandler):
         # Drop the partial sentence — agent_node speaks the fallback message.
         self._buf.pop(run_id, None)
         self._full.pop(run_id, None)
+        if run_id in self._muted:
+            self._mute_next = True  # retry/backup is the same logical restatement
         self._muted.discard(run_id)
 
     # ── Turn-level API (agent_node) ────────────────────────────────────────

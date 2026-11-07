@@ -64,3 +64,35 @@ def test_only_ONE_run_is_muted_so_a_second_step_is_still_heard():
     _run(h)                                     # navigate: a handover call, no text
     _run(h, "I can see a door and a chair.")
     assert sent == ["Turned left 90 degrees.", "I can see a door and a chair."]
+
+
+def test_nonstreaming_restatement_is_not_republished_at_turn_end():
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, LLMResult
+    sent = []
+    h = SpeechStreamHandler(sent.append)
+    h.say("Moved back ten centimetres.", mute_next_run=True)
+    run = uuid4()
+    h.on_chat_model_start(None, None, run_id=run)
+    reply = "I have moved back ten centimetres."
+    h.on_llm_end(LLMResult(generations=[[ChatGeneration(message=AIMessage(reply))]]), run_id=run)
+    assert h.unspoken(reply) == ""
+    assert sent == ["Moved back ten centimetres."]
+
+
+def test_background_search_is_already_announced_but_failure_is_not_hidden():
+    assert ts.on_result("approach_described_object",
+                        "Looking for the door now -- searching in the background. The result ...") == ""
+    assert ts.on_result("approach_described_object", "I couldn't find the door.") is None
+
+
+def test_failed_muted_run_keeps_its_retry_muted():
+    sent = []
+    h = SpeechStreamHandler(sent.append)
+    h.say("Turned left ninety degrees.", mute_next_run=True)
+    run = uuid4()
+    h.on_chat_model_start(None, None, run_id=run)
+    h.on_llm_error(RuntimeError("lost connection"), run_id=run)
+    _run(h, "I have turned left ninety degrees.")
+    _run(h, "What would you like to do next?")
+    assert sent == ["Turned left ninety degrees.", "What would you like to do next?"]

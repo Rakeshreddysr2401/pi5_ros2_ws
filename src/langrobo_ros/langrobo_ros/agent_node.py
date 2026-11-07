@@ -1453,8 +1453,9 @@ class AgentNode(Node):
         from langchain_core.messages import ToolMessage
         if isinstance(msg, ToolMessage):
             line = tool_speech.on_result(msg.name, msg.content)
-            if line:
-                self.get_logger().info(f"→ TTS (from {msg.name}): {line}")
+            if line is not None:
+                if line:
+                    self.get_logger().info(f"→ TTS (from {msg.name}): {line}")
                 speech_stream.say(line, mute_next_run=True)
             return
         for tc in getattr(msg, "tool_calls", None) or []:
