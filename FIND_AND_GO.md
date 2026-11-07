@@ -65,6 +65,12 @@ so I'm looking around", "Still looking for the X", "I saw the X over there
 3 min ago. Going to check.", "The X isn't around here. I'll look from another
 spot."
 
+The tool waits at most 0.5 seconds for an immediate result before returning
+the background-search acknowledgement (`LANGROBO_APPROACH_QUICK_S` overrides
+this). Search completion still goes to the original asker through the notice
+path, including later errands. This releases the conversation sooner; it does
+not shorten the underlying camera, VLM or navigation work.
+
 ## Where each piece lives
 
 | piece | Pi 5 (`~/ros2_ws`) | Jetson (`~/rover`) |

@@ -252,6 +252,29 @@ excluded: they quote errands ("you were asked to go to the kitchen — NOT
 done"), and re-driving a trip that just failed is not a backstop's call.
 Tests: `tests/test_motion_backstop.py`.
 
+### 3.8 Navigation replies and startup readiness (2026-11-07)
+
+The agent factory derives movement ownership from the bound `move_robot` tool.
+Before this turn has a non-handover tool result, that agent's response is
+collected without streaming. Tool calls pass through; unsupported plain text
+becomes a request for clarification. Earlier turns and handover receipts do
+not count as evidence. Deliberate silence and service-offline messages remain
+available. This prevents a tool-free "I will try to move back again" from
+being spoken or saved as if it were an action. Other agents and replies after
+tool results keep sentence streaming.
+
+This first navigation call also bans the thinking opener. Unlike streamed
+calls, the non-streaming reply preserves text after Gemma's closing channel
+marker, which is cleaned before use. This addresses the repeated thinking
+markers reproduced on unclear fragments without changing the Mac's flags or
+KV slot assignments. Tests: `test_navigation_reply.py`, plus the real-model
+`scripts/gemma_flow_eval.py` adjustment cases on spare slot 4.
+
+The real bridge returns `not_ready` when exact movement has no listener. It
+does not opt into the offline stub's timed fallback; movement and search turns
+refuse until the checked motion service is available. Stop remains available.
+Test: `langrobo_ros/test/test_motion_readiness.py`.
+
 ---
 
 ## 4. Latency: where the seconds go, and what buys them back
@@ -395,6 +418,11 @@ mute_next_run=True)` mutes exactly the next LLM run -- it only restated the
 result (measured: first word 13.5 s -> ~2.5 s for "find the helmet"); a run
 after that (a handover's answer) is spoken. Failures return None: the model
 explains them.
+
+Since 2026-11-07 an empty result line means the background search was already
+announced on call: mute its restatement without speaking a second line.
+Non-streaming restatements are recorded as muted too, and retries retain the
+mute. A later tool step or handover answer remains audible.
 
 **`[silent]`** (2026-10-12). The voice pre-filter is off; every sentence
 reaches the graph. SPEECH_STYLE lets an agent answer exactly `[silent]` when

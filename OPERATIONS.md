@@ -93,6 +93,13 @@ since 2026-10-02 -- the robot's memory is the photo log, `ask_photos`;
 `LANGROBO_PHOTO_SURVEY=1` brings the object list back). Without `LANGROBO_API_TOKEN` the API binds
 localhost-only; a LAN bind without a token is refused at startup (fail-fast).
 
+`runtime.voice.stt` and `.tts` show the last observed `provider`,
+`configured_provider`, `fell_back`, `ok`, `fallback_reason` and `age_s`.
+Null means no metadata has arrived since brain startup; age distinguishes an
+old observation from a fresh one. A working Piper fallback does not mean
+Sarvam's credit balance has recovered. Check these fields before changing the
+audio devices or speech models.
+
 ## .env reference
 
 `agent_node` loads `~/ros2_ws/.env` itself (`LANGROBO_ENV_FILE` overrides).
