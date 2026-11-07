@@ -775,7 +775,9 @@ class ROS2Bridge:
     #   {"ok": bool, "result": "reached" | "refused" | "stalled" | "failed" |
     #    "cancelled" | "interrupted" | "timeout" | "no_answer" | "no_pose" |
     #    "unavailable", "why": str, "turned_deg": float, "moved_cm": float}
-    # "unavailable" = goal_exec is not running; the caller may fall back.
+    # Missing goal_exec is "not_ready", never "unavailable": the latter
+    # enables the offline stub's timed fallback in movement.py. Real wheels
+    # must not bypass pose and obstacle checks while the Jetson starts.
 
     def _on_status(self, msg, store: dict, key_field: str = "goal_stamp") -> None:
         try:
@@ -828,8 +830,9 @@ class ROS2Bridge:
     def _run_goal_exec(self, pub, x: float, y: float, yaw_rad: float,
                        timeout: float, start: tuple) -> dict:
         if pub.get_subscription_count() == 0:
-            return {"ok": False, "result": "unavailable",
-                    "why": "goal_exec is not running on the Jetson (./rover nav)"}
+            return {"ok": False, "result": "not_ready",
+                    "why": "exact movement is not ready on the Jetson (./rover nav); "
+                           "nothing was moved. Wait for startup to finish and try again"}
         stamp, key = self._stamp_now()
         pub.publish(self._pose_msg(x, y, yaw_rad, stamp))
         t0 = time.monotonic()
