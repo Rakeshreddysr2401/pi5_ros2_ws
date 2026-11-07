@@ -152,3 +152,70 @@ manufacture a pass. Keep collision margins and stop behavior intact.
 The overnight run can qualify a simulation candidate. Real-time CPU inference
 can be measured on the Jetson without moving the rover. Real-world navigation
 reliability still needs those supervised physical runs.
+
+## 6. Owner addition: hybrid navigation through blockers and zigzags
+
+Owner request: make the rover travel smoothly to locations despite many
+obstacles, zigzags and difficult approaches. Treat this as an end-to-end
+navigation requirement, not only a higher RL training score. The target is
+reliable arrival at physically reachable, sensed goals; completely blocked
+routes, insufficient gaps and unseen hazards do not become feasible because
+a learned policy is enabled.
+
+### Responsibilities and handover
+
+| Component | Required responsibility |
+|---|---|
+| Nav2/global route | Choose a route through the mapped free space; find alternatives around clutter and blocked passages. |
+| Learned local driver | Negotiate narrow passages, S-bends, chair feet and alignment maneuvers using the same shield and real sensor inputs as deployment. |
+| Exact controller | Finish position and heading when the outline fits; report a substituted nearby goal or incomplete finish honestly. |
+| Obstacle shield/collision checks | Check commanded motion and stop when unsafe or when inputs are stale; constraints remain in force during recovery and controller transitions. |
+| Recovery manager in real rover code | Detect lack of progress, choose another route or a checked retreat along available space, and stop repeating ineffective maneuvers. |
+
+Inspect and measure the existing handover before changing it. Use route
+feasibility, sensed clearance and progress to decide when Nav2 should yield;
+camera-only obstacles must not leave it dithering for tens of seconds. Measure
+handover delay explicitly. Prevent rapid switching, contradictory velocity
+publishers, repeated identical failures and repeated zero-distance escapes.
+Retreat/backtracking must be obstacle-checked; reversing is not automatically
+safe. If no checked maneuver is available, stop and give a clear reason.
+
+### Mandatory scenario coverage
+
+Extend the existing worlds only where a required situation is missing; keep
+each world's drawn geometry and contact judge generated from one source.
+Do not change measured hardware behavior to make the policy pass.
+
+| Situation | Required result to measure |
+|---|---|
+| Dense static clutter with several routes | Select a feasible route, avoid contacts, and arrive without excessive repeated recovery. |
+| Consecutive left/right zigzags and S-corridors | Complete the bends in both directions, including narrow approaches and difficult starting headings. |
+| Doorways, chair gaps and offset openings | Align, pass and finish without clipping corners; include the existing 44/45/49/50/60 cm cases where physically feasible. |
+| Blocked preferred route with an alternative | Replan and complete the alternative; compare additional time and distance with the baseline. |
+| Dead end or a start pinned near an obstacle | Use a checked escape/backtrack when feasible; otherwise refuse without contact or endless retries. |
+| Goal behind obstacles or requiring temporary movement away from it | Follow a route around the blockage rather than treating direct-distance reduction as the only progress. |
+| Obstacle introduced/removed during a run | Stop appropriately, update/replan on real sensor evidence, and resume only when clear. Use a controlled reproducible scripted obstruction; if not implemented/tested, report this coverage incomplete. |
+| Completely sealed route, too-small gap or ledge | Stop/refuse with a truthful reason; do not count a refusal as arrival. |
+| Repeated goals through multiple rooms | Maintain localization and obstacle consistency across a sequence; record cumulative drift and any degradation. |
+| Stop/cancel during each controller and during handover | Halt promptly without a stale controller resuming the old goal; record actual stop latency. |
+
+Use several starts/headings and held-out layouts; compare both policies on
+identical cases. Include perception/localization effects in full-stack tests:
+a correct policy on perfect points does not qualify the complete rover.
+Separate incorrect object selection, stale/false obstacles, pose drift and
+control/policy failures in the report. RL cannot repair missing sensor data.
+
+### Additional acceptance metrics
+
+Keep all earlier collision, feasibility, timing and coverage gates. Also
+report per scenario: path length, controller handovers and their delay,
+recovery count, repeated-failure count, shield interventions, minimum true
+clearance, position/heading error, and commanded/measured motion smoothness.
+Identify oscillation and unnecessary forward/reverse shuffling from traces.
+Do not trade clearance or contact rate for a smoother-looking or faster run.
+
+This is an overnight priority order, not permission to mark unfinished work
+passed: reproduce the current failures first, qualify the highest-value
+changes, and list any missing scenarios or remaining failures in the morning
+report. Validate a simulation-qualified candidate on the real floor with the
+owner before making a real-world reliability claim.
