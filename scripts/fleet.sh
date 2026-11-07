@@ -97,7 +97,9 @@ jetson_status() {
         return
     fi
     $SSH $JETSON 'for p in vo_node fusion2 sllidar slam_toolbox nvblox controller_server goal_exec reach_node image_bridge pixel_to_goal; do
-        docker exec rover pgrep -f "$p" >/dev/null 2>&1 && s=up || s=--
+        pattern="$p"
+        [ "$p" = vo_node ] && pattern="vo_node|vslam_container"
+        docker exec rover pgrep -f "$pattern" >/dev/null 2>&1 && s=up || s=--
         printf "%s=%s " "$p" "$s"; done; echo' 2>/dev/null | sed 's/^/jetson: /'
 }
 
