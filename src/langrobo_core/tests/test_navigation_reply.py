@@ -71,3 +71,19 @@ def test_streaming_backup_cannot_bypass_validation(monkeypatch):
     msg, _ = run(monkeypatch, AIMessage("unused"), [HumanMessage("go back")])
     assert msg.content == factory._MOTION_CLARIFICATION
     assert backup.calls == [False]
+
+
+def test_first_navigation_call_prevents_the_thinking_loop(monkeypatch):
+    asked = []
+    fake = _FakeLLM([AIMessage("<channel|>Could you repeat the complete request?")])
+
+    def client(*args, **kwargs):
+        asked.append(kwargs)
+        return fake.model_copy(update={"streaming": kwargs.get("streaming", True)})
+
+    monkeypatch.setattr(factory, "get_llm", client)
+    node, _ = factory.build_agent(SPECS["navigate"])
+    out = node({"messages": [HumanMessage("Started")]})
+    assert {"streaming": False, "ban_thinking": True} in asked
+    assert fake.calls == [False]
+    assert out["messages"][0].content == factory._MOTION_CLARIFICATION

@@ -103,7 +103,11 @@ def build_agent(spec: AgentSpec):
             # A tool-free "I'll move back" used to reach the speaker before
             # anyone checked it. Validate this first navigation step before
             # speaking. Tool results and other agents still stream normally.
-            llm = get_llm(spec.name, streaming=False).bind_tools(spec.tools)
+            # The opener can loop until max_tokens on fragments ("Started",
+            # 2026-11-07). Banning it on STREAMED calls loses replies after
+            # a closing marker; this validated, unstreamed call preserves
+            # those replies and strip_thought_residue cleans them below.
+            llm = get_llm(spec.name, streaming=False, ban_thinking=True).bind_tools(spec.tools)
         # Naming the agent is what puts the right llama.cpp slot in the log
         # line: slot_for(None) reports the GLOBAL slot and would misattribute
         # e.g. local_agent's calls (slot 1) to chat's slot 0.
