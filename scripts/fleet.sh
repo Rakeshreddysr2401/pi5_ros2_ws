@@ -285,10 +285,20 @@ print("%s object(s) remembered; survey: %s" % (r.get("objects_remembered", "?"),
           || echo "http://singireddys-mac-mini.local:8080 5 Mac_Mini e12b5")
     read -r llm_root llm_slots llm_where llm_start <<<"$llm"
     printf "  %-34s --    %s\n" "LLM server (LANGROBO_LLM)" "${llm_where//_/ } at $llm_root"
-    n=$(curl -s -m4 "$llm_root/slots" | python3 -c "import sys,json;print(len(json.load(sys.stdin)))" 2>/dev/null || true)
+    # A cold prefill can hold /slots beyond four seconds even while the
+    # server is answering real turns. Retry the read; don't prescribe a
+    # server restart from a single timed-out diagnostic request.
+    n=$(curl -fsS --max-time 12 --retry 1 --retry-delay 1 --retry-all-errors "$llm_root/slots" 2>/dev/null \
+        | python3 -c 'import sys,json; r=json.load(sys.stdin); print(len(r)) if isinstance(r,list) else sys.exit(1)' 2>/dev/null || true)
     # Mac: 5 = chat, local_agent, navigate, photo questions, the voice "is this for me?" check
     # (CLAUDE.md rule 2). Laptop: 4 -- the voice check is off since 2026-10-12.
-    at_least "$n" "$llm_slots" && ok "LLM KV slots" "$n (need $llm_slots)" || bad "LLM KV slots" "${n:-none} -- start it: ${llm_start//_/ }; see OPERATIONS.md"
+    if [ -z "$n" ]; then
+        bad "LLM KV slots" "could not read $llm_root/slots -- server may be busy or unreachable; retry check before restarting it"
+    elif at_least "$n" "$llm_slots"; then
+        ok "LLM KV slots" "$n (need $llm_slots)"
+    else
+        bad "LLM KV slots" "$n -- need $llm_slots; start it: ${llm_start//_/ }; see OPERATIONS.md"
+    fi
     m=$(curl -s -m4 localhost:8091/mode || true)
     case "$m" in *'"manual": false'*|*'"manual":false'*) ok "teleop" "AUTO" ;;
                  "") bad "teleop :8091" "not answering (~/langrobo_teleop/teleop_web.py)" ;;
