@@ -38,6 +38,11 @@ each other. Before anything else, decide whether a spoken message was said TO YO
   request a home robot could answer or do.
 - Unsure: ask one short question, "Were you talking to me?"
 Never [silent] on a [SYSTEM] or Telegram turn.
+An incomplete fragment such as "Me" or "Started", or an unclear request such
+as "call the door", needs clarification. Do not turn it into a movement or
+reuse an old movement request. Ask them to repeat the complete request.
+"Call the door" does not mean look at it or go to it: ask "Do you mean go
+to the door?" without calling a tool. "Me" alone is not "come to me".
 """
 
 # ── Spoken-output contract ───────────────────────────────────────────────────
@@ -236,7 +241,11 @@ Right now you handle navigation — you control how the robot moves.
 
 {tools}
 == RULES ==
-1. FIRST: is this turn about MOVING the robot? You stay active after a move, so
+1. FIRST: is the request clear? "Me", "Started" and "call the door" are
+   unclear: ask the user to repeat. Do NOT call a tool or hand over for those
+   fragments. In particular, "call the door" is NOT a request to go to it or
+   look at it. Clarify before doing anything.
+   For a clear request: is this turn about MOVING the robot? You stay active after a move, so
    the next turn lands here even when it is not. If it is not, do NOT answer it
    and do NOT say you can't -- hand over and say nothing yourself:
    - what the robot sees now ("what do you see?", "what is that?") ->
@@ -250,6 +259,11 @@ Right now you handle navigation — you control how the robot moves.
    - move_robot — exact distances, rotations, stopping. Several steps are ONE
      call, comma-separated in order: "forward 60 then left then forward 30" is
      move_robot("F:60,L:90,F:30"). "Turn around" alone is move_robot("L:180").
+     "A little", "a bit" or "nudge" means 10 cm for a straight move unless
+     they give a distance: "come little back" is move_robot("B:10"),
+     "move forward a bit" is move_robot("F:10"). If neither a distance nor
+     a small-move word was given, ask how far; never guess 50 cm.
+     "Move back" or "move forward" alone: ask "How far?" without a tool call.
    - navigate_to_pose — a saved place (list_saved_locations if unsure; a place
      you don't have: say so and offer to save the current spot).
    - approach_described_object — anything described but not saved ("the red

@@ -27,6 +27,7 @@ prompt (~20-30 s); the rest take ~2-3 s each.
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -46,6 +47,7 @@ from langrobo_core.prompts import render_tools, render_web_rules    # noqa: E402
 from langrobo_core.registry import SPECS                            # noqa: E402
 from langrobo_core.tools.handover import handover                   # noqa: E402
 from langrobo_core.utils.message_utils import prepare_messages_for_agent  # noqa: E402
+from langrobo_core.utils.speech_stream import strip_thought_residue       # noqa: E402
 
 T = "[Time now: 4:30 PM, say: half past four in the afternoon] "
 POSE = "[Robot now at x=1.20 y=0.34 heading=45°] "
@@ -189,7 +191,50 @@ def arrivals():
     ]
 
 
-SETS = {"turns": turns, "hops": hops, "arrival": arrivals}
+def adjustments():
+    """2026-11-07 voice failures, plus explicit distances and follow controls.
+
+    These inspect model decisions only; no tool is ever executed.
+    """
+    def clarifies(resp):
+        if resp.tool_calls:
+            return is_call("handover", next_agent="chat")(resp)
+        text = str(resp.content).lower()
+        return "?" in text or "repeat" in text or text.startswith("please tell me")
+
+    def small_move(command):
+        # Asking for a precise amount is also a valid outcome for a vague
+        # nudge. A guessed larger drive must fail this check.
+        expected = is_call("move_robot", command=lambda c:
+                           (c or "").replace(" ", "") == command)
+        return lambda resp: expected(resp) or (not resp.tool_calls and clarifies(resp))
+
+    small = [
+        ("Can you come little back?", "B:10"),
+        ("move forward a bit", "F:10"),
+        ("nudge backwards", "B:10"),
+        ("move back 50 centimetres", "B:50"),
+        ("move a little forward, twenty centimetres", "F:20"),
+    ]
+    out = [("navigate", text, after_move() + [HumanMessage(T + text)],
+            small_move(cmd) if i < 3 else
+            is_call("move_robot", command=lambda c, want=cmd:
+                    (c or "").replace(" ", "") == want))
+           for i, (text, cmd) in enumerate(small)]
+    out += [("navigate", "no distance: " + text, after_move() + [HumanMessage(T + text)], clarifies)
+            for text in ("Can you move forward?", "move back")]
+    for agent in ("chat", "navigate"):
+        for text in ("Me", "Started", "Okay, can you call the door?"):
+            out.append((agent, "unclear: " + text,
+                        after_move() + [HumanMessage(T + "[Telegram from Rakesh] " + text)],
+                        clarifies))
+    out += [("navigate", "clear: " + text, after_move() + [HumanMessage(T + text)],
+             is_call("follow_person", mode=mode)) for text, mode in
+            (("come here to me", "come"), ("follow me", "follow"))]
+    return out
+
+
+SETS = {"turns": turns, "hops": hops, "arrival": arrivals, "adjustments": adjustments}
 
 
 # ── run ──────────────────────────────────────────────────────────────────────
@@ -214,7 +259,15 @@ def main():
         if spec.context:
             prompt += spec.context()
         clean = prepare_messages_for_agent(msgs, keep_images=spec.keep_images)
-        return llm.bind_tools(spec.tools).invoke([SystemMessage(prompt)] + clean)
+        body = {"id_slot": args.slot}
+        if any(t.name == "move_robot" for t in spec.tools):
+            # Match factory's validated, first navigation step: non-streaming
+            # and no thinking opener. No robot tool is executed by this script.
+            body["logit_bias"] = [["<|channel>", False]]
+        response = llm.bind_tools(spec.tools, extra_body=body).invoke([SystemMessage(prompt)] + clean)
+        if isinstance(response.content, str):
+            response = response.model_copy(update={"content": strip_thought_residue(response.content)})
+        return response
 
     total = passed = 0
     for name in args.sets or list(SETS):
@@ -222,12 +275,14 @@ def main():
         ok = 0
         print(f"== {name} ==")
         for agent, label, msgs, want in cases:
+            started = time.monotonic()
             resp = ask(agent, msgs)
+            duration = time.monotonic() - started
             got, detail = first_step(resp)
             good = want(resp) if callable(want) else got in want.split("|")
             ok += good
             shown = "check" if callable(want) else want
-            print(f"{'PASS' if good else 'FAIL'} {agent:11} {label[:48]:48} want {shown:24} got {got}",
+            print(f"{'PASS' if good else 'FAIL'} {agent:11} {label[:48]:48} want {shown:24} got {got} ({duration:.1f}s)",
                   flush=True)
             if not good:
                 print("      ", str(detail)[:200])
