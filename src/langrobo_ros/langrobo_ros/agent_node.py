@@ -243,6 +243,7 @@ class AgentNode(Node):
         # next voice turn's trace. Stale ones are dropped: a Telegram turn (or a
         # turn minutes later) must not inherit an old utterance's STT cost.
         self._stt_meta: tuple[float, dict] | None = None
+        self._tts_meta: tuple[float, dict] | None = None
         # The trace id of the turn in flight, readable from the ROS spin thread
         # (new_trace()'s contextvar is worker-thread-local, so /voice/tts_meta
         # arriving on the spin thread cannot see it).
@@ -361,11 +362,30 @@ class AgentNode(Node):
             "telegram": self._telegram.status(),
             "odom_origin_epoch": self._bridge.get_origin_epoch(),
             "navigating": self._bridge.navigation_active(),
+            "voice": self._voice_status(),
             **self._perception_status(),
             "jev": jev.status(),
             "intent": intent_routing.status(),
             "memory": {"facts": self._memory_count(), "embedder": embedder.status()},
         }
+
+    def _voice_status(self) -> dict:
+        """Last observed providers, including a cloud quota fallback.
+
+        Age is explicit: a quiet speaker must not look like a fresh health
+        probe, and this endpoint must never make a paid synthesis request.
+        """
+        out = {}
+        for leg in ("stt", "tts"):
+            sample = getattr(self, f"_{leg}_meta", None)
+            if sample is None:
+                out[leg] = None
+                continue
+            at, meta = sample
+            out[leg] = {key: meta.get(key) for key in
+                        ("provider", "configured_provider", "fell_back", "ok", "fallback_reason")}
+            out[leg]["age_s"] = round(max(0.0, time.time() - at), 1)
+        return out
 
     @staticmethod
     def _memory_count():
@@ -638,6 +658,7 @@ class AgentNode(Node):
         except Exception:
             self.get_logger().debug("bad /voice/tts_meta payload")
             return
+        self._tts_meta = (time.time(), meta)
         self._fallback_notice("tts", meta)
         trace = self._trace_for_tts
         with self._trace_span(
