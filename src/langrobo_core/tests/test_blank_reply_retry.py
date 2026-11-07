@@ -36,7 +36,7 @@ def _run(monkeypatch, replies):
     fake = _FakeLLM(replies)
     asked.clear()
     monkeypatch.setattr(factory, "get_llm", lambda name, **kw: asked.append(kw) or fake)
-    node, _ = factory.build_agent(SPECS["navigate"])
+    node, _ = factory.build_agent(SPECS["chat"])
     out = node({"messages": [HumanMessage(content="go near the white chair")]})
     return out["messages"][0], fake.calls
 

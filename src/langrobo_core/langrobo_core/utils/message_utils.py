@@ -33,7 +33,7 @@ _ALL_DOWN_MESSAGE = (
 
 
 def safe_invoke(llm, messages: list, logger: logging.Logger, retries: int = 1,
-                agent: str | None = None) -> AIMessage:
+                agent: str | None = None, allow_streaming: bool = True) -> AIMessage:
     """invoke() with retry + local-first cloud fallback (services.llm policy).
 
     1. Primary first (one retry — a transient hiccup shouldn't surface as a
@@ -52,6 +52,10 @@ def safe_invoke(llm, messages: list, logger: logging.Logger, retries: int = 1,
     from ..services import llm as llm_service
 
     fallback = llm_service.get_fallback_llm()
+    if not allow_streaming and getattr(fallback, "streaming", False):
+        # The navigation factory validates its first reply before speech.
+        # A primary outage must not let a streaming backup bypass that check.
+        fallback = fallback.model_copy(update={"streaming": False})
     primary_error: Exception | None = None
 
     if llm_service.primary_available() or fallback is None:

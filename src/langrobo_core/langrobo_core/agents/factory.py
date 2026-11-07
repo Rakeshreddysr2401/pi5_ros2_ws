@@ -14,15 +14,33 @@ the cached static prefix in front of it survives.
 import logging
 import re
 
-from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from ..prompts import render_tools, render_web_rules
 from ..registry import AgentSpec
 from ..services.llm import get_llm
-from ..utils.message_utils import prepare_messages_for_agent, safe_invoke
-from ..utils.speech_stream import strip_thought_residue
+from ..utils.message_utils import (
+    prepare_messages_for_agent, safe_invoke,
+    _FALLBACK_MESSAGE, _OFFLINE_MESSAGE, _ALL_DOWN_MESSAGE,
+)
+from ..utils.speech_stream import is_silent, strip_thought_residue
+from ..utils.history import is_camera_frame
 
 logger = logging.getLogger(__name__)
+
+_MOTION_CLARIFICATION = (
+    "Please tell me the direction and distance, or what you want me to go near."
+)
+
+
+def _has_turn_result(messages: list) -> bool:
+    """A handover or an earlier turn is not evidence that anything was done."""
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage) and not is_camera_frame(msg):
+            break
+        if isinstance(msg, ToolMessage) and msg.name != "handover":
+            return True
+    return False
 
 
 # Sentences in a tool result that talk TO THE MODEL, not to the user.
@@ -65,6 +83,7 @@ def build_agent(spec: AgentSpec):
     # bind_tools converts every tool to its JSON schema: done once per client,
     # not on every call (get_llm returns the same client until reconfigured).
     bound: list = [None, None]          # [client, client.bind_tools(...)]
+    moves = any(t.name == "move_robot" for t in spec.tools)
 
     def build_llm_call(messages: list):
         base = get_llm(spec.name)
@@ -79,10 +98,17 @@ def build_agent(spec: AgentSpec):
 
     def node(state) -> dict:
         llm, msgs = build_llm_call(state["messages"])
+        needs_result = moves and not _has_turn_result(state["messages"])
+        if needs_result:
+            # A tool-free "I'll move back" used to reach the speaker before
+            # anyone checked it. Validate this first navigation step before
+            # speaking. Tool results and other agents still stream normally.
+            llm = get_llm(spec.name, streaming=False).bind_tools(spec.tools)
         # Naming the agent is what puts the right llama.cpp slot in the log
         # line: slot_for(None) reports the GLOBAL slot and would misattribute
         # e.g. local_agent's calls (slot 1) to chat's slot 0.
-        response = safe_invoke(llm, msgs, logger, agent=spec.name)
+        response = safe_invoke(llm, msgs, logger, agent=spec.name,
+                               allow_streaming=not needs_result)
         if _is_blank(response):
             # Gemma 4 on this llama.cpp sometimes wraps its answer in channel
             # markers; STREAMED, the server then files the whole answer as
@@ -96,7 +122,8 @@ def build_agent(spec: AgentSpec):
             retry = get_llm(spec.name, ban_thinking=True)
             if getattr(retry, "streaming", False):
                 retry = retry.model_copy(update={"streaming": False})
-            response = safe_invoke(retry.bind_tools(spec.tools), msgs, logger, agent=spec.name)
+            response = safe_invoke(retry.bind_tools(spec.tools), msgs, logger, agent=spec.name,
+                                   allow_streaming=not needs_result)
             if _is_blank(response) and msgs and isinstance(msgs[-1], ToolMessage):
                 # Still nothing, straight after a tool: the tool's own words
                 # are the answer ("I can see the white box -- about 1.1 m
@@ -111,6 +138,13 @@ def build_agent(spec: AgentSpec):
             cleaned = strip_thought_residue(response.content)
             if cleaned != response.content:   # never spoken, sent or kept in history
                 response = response.model_copy(update={"content": cleaned})
+        if (needs_result and not response.tool_calls and response.content
+                and not is_silent(response.content)
+                and response.content not in (_FALLBACK_MESSAGE, _OFFLINE_MESSAGE, _ALL_DOWN_MESSAGE)):
+            # navigate either uses a tool (including handover), or clarifies.
+            # Never turn its unsupported prose into a drive or a promise.
+            logger.warning("tool-free navigation reply replaced with clarification")
+            response = response.model_copy(update={"content": _MOTION_CLARIFICATION})
         return {"messages": [response], "active_agent": spec.name}
 
     node.__name__ = f"{spec.name}_node"
