@@ -414,11 +414,14 @@ def approach_described_object(description: str,
 # table" blocked for 2 min, the door's arrival report waited behind it and
 # landed AFTER "heading toward the dining table" -- the owner, confused, asked
 # again, which cancelled the drive that had just begun. Now the tool returns
-# within a few seconds; the search goes on in a thread and its result is a
+# within half a second; the search goes on in a thread and its result is a
 # notice (services/notices.py) to whoever asked. A quick answer (the person-
 # only refusal, MANUAL, a photo-memory hit close by) still comes back as the
 # tool's own result.
-_QUICK_S = float(os.environ.get("LANGROBO_APPROACH_QUICK_S", "8"))
+# Eight seconds kept the voice turn/mic busy while a slow vision request was
+# already running independently. Leave only a short window for instant
+# refusals/cache hits; the existing notice path delivers every slower result.
+_QUICK_S = float(os.environ.get("LANGROBO_APPROACH_QUICK_S", "0.5"))
 _STARTED = "On my way; I'll say when I'm there."
 _job_lock = threading.Lock()
 _job: dict | None = None

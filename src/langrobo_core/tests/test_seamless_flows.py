@@ -61,13 +61,12 @@ def test_a_slow_search_returns_at_once_and_reports_by_notice(robot, scripted, mo
     gate = threading.Event()
     real = ap._vlm_locate
     monkeypatch.setattr(ap, "_vlm_locate", lambda f, d: (gate.wait(5), real(f, d))[1])
-    monkeypatch.setattr(ap, "_QUICK_S", 0.05)
     vlm.append((448.0, 250.0, None))
     robot.replies = [_grounded(2.0, 0.0, depth=2.9)]
     t0 = time.time()
     out = approach_described_object.invoke({"description": "the dining table",
                                             "state": dict(TELEGRAM)})
-    assert time.time() - t0 < 2.0
+    assert time.time() - t0 < 2.0  # production default, not a test-only short wait
     assert "Looking for the dining table now" in out and "do NOT say you have found" in out
     assert ap.search_active()
     gate.set()
