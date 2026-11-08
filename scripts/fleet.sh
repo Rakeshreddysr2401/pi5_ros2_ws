@@ -256,7 +256,7 @@ check)
     done
     [ "$(systemctl --user is-active langrobo-voice)" = active ] && ok "langrobo-voice" "" \
         || bad "langrobo-voice" "systemctl --user restart langrobo-voice"
-    audio=$(journalctl --user -u langrobo-voice -b -o cat 2>/dev/null | grep -E "audio ready:|no audio device" | tail -1 | sed 's/.*pi5_audio_device\]: //' || true)
+    audio=$(journalctl --user -u langrobo-voice -b -o cat 2>/dev/null | grep -E "audio ready:|audio lost:|no audio device" | tail -1 | sed 's/.*pi5_audio_device\]: //' || true)
     case "$audio" in *"audio ready"*) ok "speaker + mic" "${audio#audio ready: }" ;;
                      *) bad "speaker + mic" "${audio:-none yet} -- switch the earbuds/speaker on (/bt-audio)" ;; esac
     # `|| true` on every probe: under set -e a probe of something that is DOWN
