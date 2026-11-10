@@ -3,7 +3,7 @@
 
 The sensors (HC-SR04 type, front corners, 6.5 cm up, 28 cm apart; ~/rover
 description/params.yaml `sonar`) are read by their OWN ESP32 running MicroPython
-(~/rover/phase1/firmware/sonar/main.py), USB to this Pi 5. It prints a line per
+(~/rover/firmware/sonar/main.py), USB to this Pi 5. It prints a line per
 reading, alternating, ~15 Hz each:  "S1 1234" (mm) / "S2 -1" (no echo).
 
 Here: each line -> one Range in frame sonar_left / sonar_right (the rover URDF),

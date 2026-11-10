@@ -17,11 +17,11 @@ Pi 5      ──────  THIS REPO — LangGraph brain + STT/TTS + micro-RO
 ESP32     ──────  4-wheel drive chassis, 50 Hz PID (micro-ROS over USB serial to the Pi 5)
 ```
 
-**Docs:** [HOW_IT_WORKS.md](HOW_IT_WORKS.md) — end-to-end walkthrough (start here) ·
-**[ARCHITECTURE_LLD.md](ARCHITECTURE_LLD.md) — the low-level design: every file, the turn lifecycle, where the latency goes** ·
-[INTEGRATION_GAPS.md](INTEGRATION_GAPS.md) — what this brain asks of the rover that the rover does not answer ·
-[OPERATIONS.md](OPERATIONS.md) — deploy, systemd, health API, troubleshooting ·
-[TELEGRAM.md](TELEGRAM.md) — chat with the robot from your phone: setup + usage ·
+**Docs:** [HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) — end-to-end walkthrough (start here) ·
+**[ARCHITECTURE_LLD.md](docs/ARCHITECTURE_LLD.md) — the low-level design: every file, the turn lifecycle, where the latency goes** ·
+[INTEGRATION_GAPS.md](docs/plans/INTEGRATION_GAPS.md) — what this brain asks of the rover that the rover does not answer ·
+[OPERATIONS.md](docs/OPERATIONS.md) — deploy, systemd, health API, troubleshooting ·
+[TELEGRAM.md](docs/TELEGRAM.md) — chat with the robot from your phone: setup + usage ·
 [docs/voice/PI5_VOICE.md](docs/voice/PI5_VOICE.md) — the Pi5 voice trio (speaker/mic owner, STT, TTS) ·
 [docs/voice/VOICE_ROADMAP.md](docs/voice/VOICE_ROADMAP.md) — the phased voice plan and what is done ·
 [docs/voice/WAKE_WORD_INTEGRATION.md](docs/voice/WAKE_WORD_INTEGRATION.md) — train and plug in the "Kino" wake word ·
@@ -53,6 +53,7 @@ scripts/               fleet.sh (whole robot) · run_*.sh (systemd entry points)
 notebooks/             train_kino_wakeword.ipynb (the supported wake-word trainer — docs/voice/WAKE_WORD_INTEGRATION.md)
 data/test_neg          wake-word spot-check clips (negatives; record positives with scripts/wake_record_clips.py)
 graph_studio.py        LangGraph Studio entry point (langgraph dev)
+docs/                  every document (index: docs/README.md) · scripts by purpose: scripts/README.md
 ```
 
 The split is the architecture: **`langrobo_core` never imports rclpy** — the
@@ -94,9 +95,9 @@ cp example.env .env    # then fill in keys as they become available
 
 Claude Code skills wrap these with the troubleshooting steps: `/robot-start`,
 `/robot-stop`, `/bt-audio`. Then talk to it — say **"Kino"** in the sentence —
-or message it on Telegram ([TELEGRAM.md](TELEGRAM.md)). How the machines find
-each other: [NETWORKING.md](NETWORKING.md). The Jetson side (`~/rover` there)
-has its own README.md and STARTUP.md.
+or message it on Telegram ([TELEGRAM.md](docs/TELEGRAM.md)). How the machines find
+each other: [NETWORKING.md](docs/NETWORKING.md). The Jetson side (`~/rover` there)
+has its own README.md and docs/STARTUP.md.
 
 **This Pi 5's own services:**
 

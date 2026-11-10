@@ -76,14 +76,14 @@ not shorten the underlying camera, VLM or navigation work.
 | piece | Pi 5 (`~/ros2_ws`) | Jetson (`~/rover`) |
 |---|---|---|
 | photo stamp + pose register | `tools/photos.py` | — |
-| hold a photo's depth + pose | `bridge.hold_frame` | `phase4/nodes/pixel_to_goal.py` snapshots (24; depth-gap fallback) |
+| hold a photo's depth + pose | `bridge.hold_frame` | `perception/nodes/pixel_to_goal.py` snapshots (24; depth-gap fallback) |
 | pixel/box -> room x, y | `bridge.ground_pixel` | `pixel_to_goal.py` `_on_query` (nearest solid slab in the box) |
 | photo log + questions | `tools/photos.py`, `tools/photo_recall.py` (`ask_photos`, `locate_in`; vision-tool slot 3, photos kept cached) | — |
 | old object list (OFF) | `tools/survey.py` + `services/object_memory.py`, only with `LANGROBO_PHOTO_SURVEY=1` | same queries |
 | the steps above | `tools/approach.py` | — |
-| drive, waited on | `bridge.reach_and_wait` | `phase3/nodes/reach_node.py` |
+| drive, waited on | `bridge.reach_and_wait` | `nav/nodes/reach_node.py` |
 | drive, in background | `bridge.start_nav_to_pose` | same |
-| see it | RViz: orange dots (`/brain/objects`), magenta goal arrow | `phase2/rviz/rover_live.rviz` |
+| see it | RViz: orange dots (`/brain/objects`), magenta goal arrow | `mapping/rviz/rover_live.rviz` |
 
 ## Reading a run
 

@@ -3,7 +3,7 @@
 Bound to navigate only with LANGROBO_FOLLOW=1 (FOLLOW_AND_FAST_EYES.md): with
 it off, no schema is shipped and every prompt is byte-identical to before.
 
-The Jetson does the work (phase3/nodes/follow_node.py): it picks the person nearest
+The Jetson does the work (nav/nodes/follow_node.py): it picks the person nearest
 the middle of the camera view, keeps ~1 m from them at <= 0.3 m/s, checks the
 way ahead every step, and stops on its own when they are lost or the way is
 blocked. Here: who may ask, and the honest first answer.

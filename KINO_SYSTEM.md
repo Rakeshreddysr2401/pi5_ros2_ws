@@ -39,7 +39,7 @@ navigation and agents are tested there before they reach the real robot.
 | Intel RealSense **D555** | PoE, own subnet (192.168.11.55), to the Jetson | stereo IR 896x504 @30 (emitter OFF, passive), depth, colour 448x252 @15, IMU 200 Hz (the gyro is used) |
 | Slamtec **RPLidar C1** | USB on the Jetson | 360° scans, 10 Hz, 720 beams: the pose reference |
 | **ESP32** (firmware v2) | USB serial to the Pi 5, socket `usb-0:2:1.0` (run_microros.sh opens it by-path), 115200, micro-ROS | 4-wheel PID at 50 Hz, encoders, `/cmd_vel` with a 500 ms watchdog, `/wheel_state`, `/wheel_ticks` |
-| 2× **HC-SR04** ultrasonic (front corners, 6.5 cm up, 28 cm apart; built 2026-10-19) | their OWN ESP32 (MicroPython, `~/rover/phase1/firmware/sonar/`) on USB socket `usb-0:1:1.0` (the wheels' ESP32 stays in `usb-0:2:1.0`: both CP2102 boards share one by-id) | `scripts/sonar_node.py` (service langrobo-sonar) -> `/sonar/left`, `/sonar/right` (`sensor_msgs/Range`, frames sonar_left / sonar_right, fov 0.52 rad), `/sonar/status`; +inf while the board is missing. Used by nav2's collision monitor and by reach / goal_exec (~/rover NAV_PLAN.md) |
+| 2× **HC-SR04** ultrasonic (front corners, 6.5 cm up, 28 cm apart; built 2026-10-19) | their OWN ESP32 (MicroPython, `~/rover/firmware/sonar/`) on USB socket `usb-0:1:1.0` (the wheels' ESP32 stays in `usb-0:2:1.0`: both CP2102 boards share one by-id) | `scripts/sonar_node.py` (service langrobo-sonar) -> `/sonar/left`, `/sonar/right` (`sensor_msgs/Range`, frames sonar_left / sonar_right, fov 0.52 rad), `/sonar/status`; +inf while the board is missing. Used by nav2's collision monitor and by reach / goal_exec (~/rover NAV_PLAN.md) |
 | Pi 5 speaker + mic | the Pi 5 | voice (STT/TTS, wake word "Kino") |
 
 ## 3. Start and stop
@@ -101,8 +101,8 @@ cd ~/kino_sim && ./sim up home_real     # ~1 min; add follow=true for an Isaac w
 
 | repo | read first | then |
 |---|---|---|
-| Jetson `~/rover` | `STARTUP.md` (after a power-on: all boxes, in order, what good looks like), `SYSTEM_OVERVIEW.md` (how it all fits, the topic contract), `OPEN_ISSUES.md` (what is open) | `OPERATIONS.md` (the runbook: calibration, diagnosis), `ARCHITECTURE.md`, `NAV_GUIDE.md`, `LOCALIZATION.md`, `ISAAC_ROS_5_UPGRADE.md` (the 5.0 move + Part B features), `docker/2.0/README.md` (the image) |
-| Pi 5 `~/ros2_ws` | `README.md`, `HOW_IT_WORKS.md`, `TODO.md` (open items at the top) | `ARCHITECTURE_LLD.md`, `OPERATIONS.md` (systemd, health API), `NETWORKING.md`, `INTEGRATION_GAPS.md`, `TELEGRAM.md`, `MAC_MINI_TASKS.md`, `docs/voice/` |
+| Jetson `~/rover` (documents in `docs/`, index `docs/README.md`; code in `pose/ mapping/ nav/ perception/`) | `STARTUP.md` (after a power-on: all boxes, in order, what good looks like), `SYSTEM_OVERVIEW.md` (how it all fits, the topic contract), `OPEN_ISSUES.md` (what is open) | `OPERATIONS.md` (the runbook: calibration, diagnosis), `ARCHITECTURE.md`, `NAV_GUIDE.md`, `LOCALIZATION.md`, `ISAAC_ROS_5_UPGRADE.md` (the 5.0 move + Part B features), `docker/2.0/README.md` (the image) |
+| Pi 5 `~/ros2_ws` (documents in `docs/`, index `docs/README.md`; scripts by purpose `scripts/README.md`) | `README.md`, `HOW_IT_WORKS.md`, `TODO.md` (open items at the top) | `ARCHITECTURE_LLD.md`, `OPERATIONS.md` (systemd, health API), `NETWORKING.md`, `INTEGRATION_GAPS.md`, `TELEGRAM.md`, `MAC_MINI_TASKS.md`, `docs/voice/` |
 | Laptop `~/kino_sim` | `README.md`, `CLAUDE.md` (rules for the twin), `docs/STATUS.md` (where things stand, sim-real gaps) | `docs/IMPROVEMENT_LOOP.md` (the method), `docs/PLAN_AGENTS_NAV.md` (the plan), `docs/VERSIONS.md` (exact versions) |
 
 ## 6. Versions (2026-10-25)
@@ -117,7 +117,7 @@ cd ~/kino_sim && ./sim up home_real     # ~1 min; add follow=true for an Isaac w
   The wheels' micro-ROS agent (XRCE 3.0.1) bundles Fast DDS 3.6.2 = Lyrical's; the ESP32
   firmware's micro_ros_arduino (jazzy branch) speaks XRCE to it, so it needs no reflash.
 - RViz laptop (old laptop, .8): ROS 2 **Lyrical** only since 2026-11-01 (Jazzy removed)
-  (`~/rover/phase2/rviz/setup_lyrical_laptop.sh`, run once with sudo); `rover_live.sh` uses
+  (`~/rover/mapping/rviz/setup_lyrical_laptop.sh`, run once with sudo); `rover_live.sh` uses
   Lyrical. On Jazzy the camera and the global costmap never reached RViz.
 - Isaac laptop: ROS 2 **Lyrical** (system, `/opt/ros/lyrical`) since 2026-11-01; the twin's DDS
   side runs on it (`./sim`; Isaac's bundled ROS is not used, Lyrical is the only ROS). Isaac Sim

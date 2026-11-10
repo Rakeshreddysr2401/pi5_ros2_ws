@@ -6,7 +6,7 @@ the narrative; this is the reference.
 
 Scope: `pi5_ros2_ws` only. The rover's perception stack (cuVSLAM, nvblox,
 Nav2) lives in the `-langrobo_perception-` repo; where the two meet is
-[INTEGRATION_GAPS.md](INTEGRATION_GAPS.md).
+[INTEGRATION_GAPS.md](plans/INTEGRATION_GAPS.md).
 
 ---
 

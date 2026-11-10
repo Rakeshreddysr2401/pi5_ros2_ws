@@ -6,7 +6,7 @@
 #   ./scripts/run_microros.sh udp [port]      # the old WiFi link, UDP 8888
 #
 # The transport must match the firmware's UROS_SERIAL switch
-# (~/rover/phase1/firmware/rover_firmware_v2.ino on the Jetson): 1 = serial,
+# (~/rover/firmware/rover_firmware_v2.ino on the Jetson): 1 = serial,
 # 0 = WiFi. A mismatch is silent -- the agent runs, /wheel_state never appears.
 # Serial needs rakhi24 in the dialout group (sudo usermod -aG dialout rakhi24).
 

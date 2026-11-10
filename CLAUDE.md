@@ -1,5 +1,10 @@
 # LangRobo Pi5 brain — project guide
 
+> **Where things are (2026-11-10):** every document except this file, `README.md` and `KINO_SYSTEM.md`
+> is under `docs/` (index: `docs/README.md`); a bare name below such as `OPERATIONS.md` or `TODO.md` means
+> `docs/OPERATIONS.md`, and the plans are in `docs/plans/`. Scripts by purpose: `scripts/README.md`.
+> On the Jetson, `~/rover`: `phase1`-`phase4` are now `pose/ mapping/ nav/ perception/`.
+
 Home robot "Kino" (renamed from "Rakhi" 2026-09-20; the `rakhi24` username and `rakhi-jetson` hostname are unrelated and unchanged). Four machines:
 
 - **Pi 5** (this repo) — the LangGraph brain, **three agents**, plus a CPU-only
@@ -296,14 +301,14 @@ host files bind-mounted read-only, so edit on the host and restart the layer
 (`./rover <layer>`); compiled packages are built INSIDE the image with `--user $(id -u)`.
 Test over ROS 2 topics from this machine, commit in `~/rover` over ssh.
 Close quarters (2026-10-03): nvblox gets depth only while the rover is not
-turning (`phase2/nodes/depth_gate.py`); goal_exec / reach / pass judge
+turning (`mapping/nodes/depth_gate.py`); goal_exec / reach / pass judge
 obstacles on nvblox's fused map, not single depth frames
-(`phase3/nodes/fused_obstacles.py`, `ROVER_OBSTACLES=depth` reverts); nav2
+(`nav/nodes/fused_obstacles.py`, `ROVER_OBSTACLES=depth` reverts); nav2
 routes keep 4 cm, tighter gaps go to reach's look + straight pass.
 Since 2026-10-04 that map is `/ghost_clear/grid`: nvblox with the marks of
 moved things erased (a mark the LiDAR also saw, then sees through -- people;
-low things stay; `phase2/nodes/ghost_clear.py`). And on "no path" reach drives
-back along its own trail (`phase3/nodes/trail.py`); the same failure 3 times
+low things stay; `mapping/nodes/ghost_clear.py`). And on "no path" reach drives
+back along its own trail (`nav/nodes/trail.py`); the same failure 3 times
 from one spot ends the goal, with a `note` saying why the way back failed.
 
 The topic contract between the repos is in INTEGRATION_GAPS.md (brain side) and
@@ -315,7 +320,7 @@ no longer exist.
 
 ## Gotchas
 
-- **Read [INTEGRATION_GAPS.md](INTEGRATION_GAPS.md) before building anything
+- **Read [INTEGRATION_GAPS.md](docs/plans/INTEGRATION_GAPS.md) before building anything
   that touches the world.** It is the cross-repo view neither repo's own tests
   can produce: which topics have publishers, the drive calibration, the frame
   rule, and the voice gates.

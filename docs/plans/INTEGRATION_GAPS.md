@@ -12,7 +12,7 @@ tests can see it — `langrobo_core`'s tests all pass against a StubBridge that
 answers every topic perfectly.
 
 **Paths in this file span two repos.** `src/…`, `scripts/…` and the docs are
-in `pi5_ros2_ws`; anything under `phase1/`, `phase3/`, `phase4/`, `logs/` or
+in `pi5_ros2_ws`; anything under `pose/`, `nav/`, `perception/`, `logs/` or
 `./rover` is in `-langrobo_perception-` on the Jetson side.
 
 **How to read the status column:** ✅ fixed in this commit · ⬜ open, needs
@@ -28,7 +28,7 @@ hardware or a decision.
 > needed them (`approach_object`, `where_is`, `world_model`,
 > `navigate_to_visible_object`, `tools/music.py`) are gone. Finding things
 > is the photo path now (`ask_photos` + `/vision/pixel_query`, §7). The
-> Jetson DOES have a publisher, `phase4/nodes/detections_3d.py`, started
+> Jetson DOES have a publisher, `perception/nodes/detections_3d.py`, started
 > only by `./rover detect` (not part of `./rover up`): wiring it back in is
 > rover INTELLIGENCE_PLAN.md B4 (a TensorRT detector feeding memory). The
 > pan/tilt publisher remains, gated off by `LANGROBO_PAN_TILT=0`.
@@ -58,7 +58,7 @@ things are. With no publisher:
 
 Only `approach_described_object` works today, because it does not use
 detections at all: it asks the VLM for a pixel and grounds that pixel through
-`phase4/nodes/pixel_to_goal.py`. **That is the whole working object-approach
+`perception/nodes/pixel_to_goal.py`. **That is the whole working object-approach
 path on this rover right now.** It costs one VLM round-trip (~10–40 s) per
 look, against ~0 s for a detection lookup.
 
@@ -182,7 +182,7 @@ in the rover repo produce the numbers. Three tests now fail if the commanded
 speed and the speed used to compute durations ever disagree again.
 
 ⬜ **Still open, and now load-bearing on the rover side.** Nav2's
-`velocity_smoother` caps angular at 1.5 rad/s (`phase3/config/nav2.yaml`). If
+`velocity_smoother` caps angular at 1.5 rad/s (`nav/config/nav2.yaml`). If
 2.0 rad/s cannot pivot this chassis, 1.5 certainly cannot — so Nav2's in-place
 rotations are likely curving too, which would explain heading error that
 survives a good position fix.
@@ -193,8 +193,8 @@ conflict and the conflict is exactly the open question here:
 
 | source | date | claim at wz ≈ 2.0 |
 |---|---|---|
-| `phase1/teleop/teleop_web.py` | 2026-08-22 | 47% duty, **cannot break four tyres loose** — a pivot becomes a curve |
-| `phase3/config/nav2.yaml` sweep | 2026-08-23 | commanded 2.0 → **0.59 rad/s measured** on `/odom` |
+| `teleop/teleop_web.py` | 2026-08-22 | 47% duty, **cannot break four tyres loose** — a pivot becomes a curve |
+| `nav/config/nav2.yaml` sweep | 2026-08-23 | commanded 2.0 → **0.59 rad/s measured** on `/odom` |
 
 These may both be right. The sweep read **yaw rate off `/odom`, which cannot
 tell a pivot from an arc** — a curving turn produces the same yaw rate. And
@@ -293,7 +293,7 @@ slam_toolbox publishes `map → odom` (LiDAR scan matching, every scan);
 cuVSLAM's loop closure is switched off so the two do not fight. nav2 still
 plans in `odom`, so every goal this brain sends must stay in `odom`. The
 CLAUDE.md rule stands until the Jetson makes the driven change in
-`phase2/config/SLAM.md` — both repos together, with a tape.
+`mapping/config/SLAM.md` — both repos together, with a tape.
 
 **`move_robot`'s turns are timed at 5.0 rad/s — graded, and unpredictable.** `L:`/`R:` are
 *timed* turns at `_ANGULAR_VEL_RS = 5.0`, on the 2026-08-22 teleop finding that
@@ -362,8 +362,8 @@ retried against them for minutes.
 ## 7. The find-and-go wire contract (brain side) ✅
 
 What `ros2_bridge.py` sends and which reply fields the tools read, for the
-flow in FIND_AND_GO.md. The Jetson half is `~/rover/phase4/nodes/pixel_to_goal.py`
-and `~/rover/phase3/nodes/reach_node.py` / goal_exec — **change both or
+flow in FIND_AND_GO.md. The Jetson half is `~/rover/perception/nodes/pixel_to_goal.py`
+and `~/rover/nav/nodes/reach_node.py` / goal_exec — **change both or
 neither.** Every pose is in `NAV_FRAME` (`odom`).
 
 | topic | type | brain sends / reads |
@@ -387,7 +387,7 @@ worker (`start_nav_to_pose` and `reach_and_wait` both do), or the old worker's
 
 "Kino, follow me" / "come to me": `tools/follow.py` `follow_person` (navigate
 agent, behind `LANGROBO_FOLLOW=1`) -> `ROS2Bridge.start_follow`. The Jetson half
-is `~/rover/phase3/nodes/follow_node.py` (driving) + `phase4/nodes/person_tracker.py`
+is `~/rover/nav/nodes/follow_node.py` (driving) + `perception/nodes/person_tracker.py`
 inside `detections_3d.py` (YOLO people with ids) -- started by `./rover follow`,
 part of `./rover up` since 2026-10-11. **Change both or neither.**
 
@@ -396,7 +396,7 @@ part of `./rover up` since 2026-10-11. **Change both or neither.**
 | `/follow/start` | String (JSON) | sent: `{"req": "<key>", "stop_at_gap": false}` = follow; `true` = come to me (stop at the 1.0 m gap). Nobody in view: follow_node turns to FIND someone (`"find": false` = the old "nobody" at once). No subscriber = "the Jetson's follow node is not running" |
 | `/follow/status` | String (JSON) | read, ~2 Hz while finding / following: `req`, `state` (`finding` -- turning to find someone, rover-v1.1.15; `following`; `done` ends it), `result` (`reached`, `nobody`, `lost`, `blocked`, `timeout` (10 min), `pose unsure`, `no people`, `taken over`, `cancelled`; the sentences are `ROS2Bridge._FOLLOW_ENDS`), `target`, `why`; while following, optional `holding` (blocked but within 0.5 m of the gap -- not a failure; "come to me" ends `reached` on it) and `searching` (`turn` / `go` / `spin`, with `turned` degrees) -- rover-v1.1.14/15; `found: true` once the target was found by turning (the brain says "There you are", and photographs the person as any follow begins: photo log source `follow`) |
 | `/follow/cancel` | Empty | sent on any other drive, a stop word, or a new follow |
-| `/vision/people` | String (JSON) | not read by the brain: follow_node's input, 5 Hz while subscribed: `people[]` with `id`, odom `x/y`, `vx/vy`, `dist`, `bearing`, `lost_s`, `box`, `look` (22 numbers: the clothes' colours, `phase4/nodes/person_look.py`) |
+| `/vision/people` | String (JSON) | not read by the brain: follow_node's input, 5 Hz while subscribed: `people[]` with `id`, odom `x/y`, `vx/vy`, `dist`, `bearing`, `lost_s`, `box`, `look` (22 numbers: the clothes' colours, `perception/nodes/person_look.py`) |
 
 follow_node drives `/cmd_vel` itself (1.0 m gap, <= 0.3 m/s, stops on the fused
 obstacle map) and only after `/follow/start`. A lost person is searched for

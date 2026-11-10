@@ -14,7 +14,7 @@
 - Hardware: two HC-SR04-type sensors (run at 3.3 V, no dividers needed there) on their
   OWN ESP32 in USB socket `usb-0:1:1.0` (keep the wheels' ESP32 in `usb-0:2:1.0`: the
   two CP2102 boards share one by-id name; run_microros.sh uses by-path).
-- Firmware: MicroPython 1.24 + `~/rover/phase1/firmware/sonar/main.py` (update over USB
+- Firmware: MicroPython 1.24 + `~/rover/firmware/sonar/main.py` (update over USB
   with `upload_main.py`). Node: `scripts/sonar_node.py` -> `/sonar/left`, `/sonar/right`.
 - Service installed and enabled 2026-10-25 (`scripts/setup_lyrical_root.sh`): /sonar/left and
   /sonar/right at 15 Hz, and they come back after a reboot.
@@ -83,7 +83,7 @@ RViz is NOT set up on that laptop yet (no ROS there). To finish it:
    move to Lyrical is the next step after the robot (2026-10-25).
 2. Then on the laptop: `cd ~/kino_sim && ./sim rviz` (the twin, domain 42) or
    `./sim rviz real` (the real robot, domain 0). Both fetch the layout from the
-   Jetson (`~/rover/phase2/rviz/rover_live.rviz`) every time; the twin window adds
+   Jetson (`~/rover/mapping/rviz/rover_live.rviz`) every time; the twin window adds
    the true world and the rover's true outline (green). Built, but untested
    until ROS is installed.
 3. `TWIN=1 ./rover view` on the Jetson still pushes RViz over ssh to

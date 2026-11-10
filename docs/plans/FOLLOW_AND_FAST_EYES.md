@@ -67,14 +67,14 @@ Roadmap page for people: https://claude.ai/artifact/E7o4XrtZ93i6b4wVCLTope
 ## 2. Phase A — follow me, end to end (now)
 
 ### Jetson (`rover-v1.1.9-follow-me`)
-- [x] `phase4/nodes/person_tracker.py` + `/vision/people` (58e3e63)
-- [x] `phase3/nodes/follow.py`, `follow_node.py`, tests; dedupe; TF own node (4bd0a97)
+- [x] `perception/nodes/person_tracker.py` + `/vision/people` (58e3e63)
+- [x] `nav/nodes/follow.py`, `follow_node.py`, tests; dedupe; TF own node (4bd0a97)
 - [ ] `./rover` stops nodes gently: `kill_match` sends SIGINT, waits, then -9.
       (2026-10-10: repeated -9 restarts left FastDDS shared memory unusable for
       every NEW process in the container; only a container restart cured it.)
 - [ ] `./rover follow`: starts detections_3d if needed + follow_node, with a
       gate (follow listening, people publishing). NOT part of `./rover up`.
-- [ ] `phase3/tools/virtual_person.py`: publishes `/vision/people` for a
+- [ ] `nav/tools/virtual_person.py`: publishes `/vision/people` for a
       person standing still at a chosen odom point, computed from live `/odom`.
       Lets the real follower be floor-tested with nobody in the room, and is
       repeatable.

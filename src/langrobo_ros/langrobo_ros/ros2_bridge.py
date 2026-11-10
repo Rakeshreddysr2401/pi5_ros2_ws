@@ -77,7 +77,7 @@ class ROS2Bridge:
         # home = {"room": id, "map": [x, y, yaw_deg]}: the same spot in the saved
         # room's map frame, when the Jetson announced one (/home/room). That is
         # what lets a place survive a power cycle: odom restarts at 0 every
-        # boot, the room's map frame does not (rover phase2/tools/relocalize.py
+        # boot, the room's map frame does not (rover mapping/tools/relocalize.py
         # finds the rover in it at start-up). 2026-10-18, real robot: every
         # saved place was dropped at each power cycle as "a different origin".
         self._room = None                  # the live /home/room: {"id", "frame", "state"}
@@ -195,7 +195,7 @@ class ROS2Bridge:
         self._pan_tilt_state_pub = node.create_publisher(String, "/camera/pan_tilt_state", 10)
 
         # VLM pixel grounding (Jetson pixel_to_goal): PointStamped pixel query
-        # in, JSON result out — see ~/rover phase4/nodes/pixel_to_goal.py (Jetson).
+        # in, JSON result out — see ~/rover perception/nodes/pixel_to_goal.py (Jetson).
         from geometry_msgs.msg import PointStamped
         self._PointStamped = PointStamped
         self._pixel_query_pub = node.create_publisher(PointStamped, "/vision/pixel_query", 10)
@@ -216,7 +216,7 @@ class ROS2Bridge:
         node.create_subscription(String, "/audio/state", self._on_audio_state, _latched)
         node.create_subscription(String, "/audio/music_state", self._on_audio_state, _latched)
 
-        # ── Exact motion on the Jetson (rover repo phase3/) ──────────────────
+        # ── Exact motion on the Jetson (rover repo nav/) ──────────────────
         # goal_exec: turns and short straight moves closed on the fused pose
         # (~1.4 cm, heading within 2 deg), outline-checked against LiDAR and
         # depth. reach: nav2 for the route, goal_exec to finish, and on failure
@@ -237,7 +237,7 @@ class ROS2Bridge:
                                  lambda m: self._on_status(m, self._goal_exec_status), 10)
         node.create_subscription(String, "/reach/status",
                                  lambda m: self._on_status(m, self._reach_status), 10)
-        # follow: "follow me" / "come to me" (Jetson phase3/nodes/follow_node.py).
+        # follow: "follow me" / "come to me" (Jetson nav/nodes/follow_node.py).
         # Its status lines echo the "req" we send, as goal_stamp does above.
         self._follow_start_pub = node.create_publisher(String, "/follow/start", 10)
         self._follow_cancel_pub = node.create_publisher(Empty, "/follow/cancel", 10)

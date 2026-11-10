@@ -4,7 +4,7 @@ Written 2026-11-06 for the owner: *"make a syllabus / roadmap for complete robot
 
 > **One file, two repos:** Jetson `~/rover/docs/learn/ROADMAP.md` and Pi 5
 > `~/ros2_ws/docs/learn/ROADMAP.md` hold the same text (like KINO_SYSTEM.md). Paths such as
-> `phase3/...` or `RL_PLAN.md` are in the **Jetson's `~/rover`**; Pi 5 paths start with `~/ros2_ws`.
+> `nav/...` or `RL_PLAN.md` are in the **Jetson's `~/rover`**; Pi 5 paths start with `~/ros2_ws`.
 > Change it in one, copy it to the other.
 
 **The idea:** every topic is something this robot already does. Learn the theory, then open the
@@ -28,7 +28,7 @@ Each module ends with a **checkpoint**: if you can do it without notes, move on.
 | 5 | SLAM and mapping | 2 | slam_toolbox, cuVSLAM, nvblox |
 | 6 | Path planning | 2 | Smac lattice, `tight_route.py`, `house_route.py` |
 | 7 | Control | 1.5 | ESP32 PID, MPPI, `goal_exec.py` |
-| 8 | Navigation systems (nav2, behaviour trees, recovery) | 1 | `reach_node.py`, `phase3/bt/` |
+| 8 | Navigation systems (nav2, behaviour trees, recovery) | 1 | `reach_node.py`, `nav/bt/` |
 | 9 | Perception and deep learning | 2 | YOLO, `pixel_to_goal.py`, TensorRT |
 | 10 | **Reinforcement learning** | 3 | `RL_PLAN.md` |
 | 11 | Simulation: Isaac Sim and Isaac Lab | 1.5 | `~/kino_sim` |
@@ -51,7 +51,7 @@ Each module ends with a **checkpoint**: if you can do it without notes, move on.
 - *Mathematics for Machine Learning*, Deisenroth, Faisal, Ong (free PDF)
 
 **On your rover**
-- Read `phase3/nodes/goal_exec.py` lines 1–90: rotation matrices `R(a)`, solving `P = (I - R(a))^-1 d`
+- Read `nav/nodes/goal_exec.py` lines 1–90: rotation matrices `R(a)`, solving `P = (I - R(a))^-1 d`
 - `git log --oneline | head -30` in `~/rover`: read how commits explain *why*
 
 **Checkpoint:** derive the 2D rotation matrix; explain why `P = (I − R(a))⁻¹ d` gives the pivot point.
@@ -77,7 +77,7 @@ docker exec -it rover bash
 ros2 node list; ros2 topic list; ros2 topic hz /scan; ros2 topic echo /odom --once
 ros2 run tf2_tools view_frames      # draws your TF tree
 ```
-- Read `phase1/nodes/gyro_node.py`: a small, complete node
+- Read `pose/nodes/gyro_node.py`: a small, complete node
 
 **Checkpoint:** write a node that subscribes to `/scan` and publishes the closest obstacle distance at 10 Hz; explain why `/scan` uses best-effort QoS.
 
@@ -113,7 +113,7 @@ ros2 run tf2_tools view_frames      # draws your TF tree
 **On your rover**
 - `lidar/README.md`, `./rover lidar --calibrate` (LiDAR yaw), `./rover camera --floor` / `--lidar`
 - `./rover values` — every sensor's reading in one place
-- `phase3/nodes/sonar_witness.py` — rules for trusting a sonar
+- `nav/nodes/sonar_witness.py` — rules for trusting a sonar
 - Your D555 story: jumbo frames over PoE (memory note; `WAVESHARE_SWITCH_TEST.md`)
 
 **Checkpoint:** explain why depth error grows with distance; name three ways each sensor lies and how this rover catches each.
@@ -132,7 +132,7 @@ ros2 run tf2_tools view_frames      # draws your TF tree
 - *Probabilistic Robotics*, Thrun, Burgard, Fox — chapters 2–4, 8
 
 **On your rover**
-- `phase1/nodes/fusion2.py`: LiDAR odometry + gyro + VO + wheels, each **gated**
+- `pose/nodes/fusion2.py`: LiDAR odometry + gyro + VO + wheels, each **gated**
 - `LOCALIZATION.md` (the numbers), `LOCALIZATION_GAPS.md`
 - `./rover grade` — scoring each estimate against LiDAR truth
 
@@ -153,7 +153,7 @@ ros2 run tf2_tools view_frames      # draws your TF tree
 
 **On your rover**
 - `./rover slam` (slam_toolbox), `./rover slam --check`, saved room `maps/last`
-- `./rover map` (nvblox), `phase2/nodes/ghost_clear.py` (erasing what moved)
+- `./rover map` (nvblox), `mapping/nodes/ghost_clear.py` (erasing what moved)
 - `lidar_odom.py`: LiDAR odometry
 
 **Checkpoint:** explain loop closure and why the map → odom transform jumps; why nvblox needs the fused pose, not raw VO ("a teleport smears the map").
@@ -172,8 +172,8 @@ ros2 run tf2_tools view_frames      # draws your TF tree
 - Red Blob Games, *Introduction to A\** (free, interactive)
 
 **On your rover**
-- `phase3/nodes/tight_route.py`: A* over (x, y, θ) with real turn/drive moves
-- `phase3/nodes/house_route.py`, `widest.py` (max-min path)
+- `nav/nodes/tight_route.py`: A* over (x, y, θ) with real turn/drive moves
+- `nav/nodes/house_route.py`, `widest.py` (max-min path)
 - `NAV_GUIDE.md` §2–3: costmaps, inflation table, Smac lattice
 
 **Checkpoint:** code A* on a grid in 30 minutes (interview classic); explain why the planner says "no valid path" for a 42 cm gap when the rover is 38 cm.
@@ -192,8 +192,8 @@ ros2 run tf2_tools view_frames      # draws your TF tree
 - *Underactuated Robotics*, Russ Tedrake (MIT, free online) — selected chapters
 
 **On your rover**
-- `phase1/firmware/`: the ESP32 PID per wheel, 500 ms watchdog
-- `phase3/nodes/turn_shaper.py` (lifting small turns over the deadband)
+- `firmware/`: the ESP32 PID per wheel, 500 ms watchdog
+- `nav/nodes/turn_shaper.py` (lifting small turns over the deadband)
 - `NAV_GUIDE.md` §4: MPPI critics and every speed limit
 
 **Checkpoint:** explain integral windup and a fix; explain how MPPI picks a command each 0.1 s.
@@ -207,8 +207,8 @@ ros2 run tf2_tools view_frames      # draws your TF tree
 - Designing for failure: retries, recoveries, giving up honestly
 
 **On your rover**
-- `phase3/bt/navigate_to_pose.xml`, `phase3/config/nav2.yaml` (every value says why)
-- `phase3/nodes/reach_node.py` header: the recovery chain
+- `nav/bt/navigate_to_pose.xml`, `nav/config/nav2.yaml` (every value says why)
+- `nav/nodes/reach_node.py` header: the recovery chain
 - `NAV_GUIDE.md` §8 exercises — do all five
 
 **Checkpoint:** follow one goal through `/reach/status → /plan → /cmd_vel_nav → /cmd_vel` and say where the speed dropped.
@@ -226,7 +226,7 @@ ros2 run tf2_tools view_frames      # draws your TF tree
 - fast.ai *Practical Deep Learning* (free) or Andrej Karpathy, *Neural Networks: Zero to Hero* (YouTube)
 
 **On your rover**
-- `phase4/nodes/yolo_backend.py`, `detections_3d.py`, `pixel_to_goal.py`
+- `perception/nodes/yolo_backend.py`, `detections_3d.py`, `pixel_to_goal.py`
 - `./rover engine` (building a TensorRT engine)
 
 **Checkpoint:** project a pixel (u, v) with depth d into the robot frame using the intrinsics and the camera's TF.
@@ -316,7 +316,7 @@ cd ~/IsaacLab
 - Jetson: CUDA, shared CPU/GPU memory, load and its effects
 
 **On your rover**
-- `phase1/firmware/`, `phase1/firmware/HARDWARE.md`; `./rover wheels`
+- `firmware/`, `firmware/HARDWARE.md`; `./rover wheels`
 - `rover` script lines 370–392 (the `docker run`); `docker/2.0/Dockerfile`
 - `./rover net`, `./rover health`; the D555 jumbo-frame story
 
