@@ -38,8 +38,8 @@ rosenv() {
   set +u
   source "$(dirname "${BASH_SOURCE[0]}")/ros_env.sh"
   set -u
-  export ROS_DOMAIN_ID="$DOMAIN" RMW_IMPLEMENTATION=rmw_fastrtps_cpp PYTHONUNBUFFERED=1
-  unset ROS_DISCOVERY_SERVER ROS_LOCALHOST_ONLY FASTRTPS_DEFAULT_PROFILES_FILE
+  kino_dds "$DOMAIN"
+  export PYTHONUNBUFFERED=1
 }
 
 alive() { local p; p=$(cat "$PIDF" 2>/dev/null) && [ -n "$p" ] && kill -0 "$p" 2>/dev/null; }

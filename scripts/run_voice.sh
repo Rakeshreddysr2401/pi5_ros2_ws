@@ -17,12 +17,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/ros_env.sh"
 set -u
 
 export PYTHONUNBUFFERED=1
-# Match the brain's DDS config EXACTLY (scripts/run_brain.sh): multicast on
-# domain 0, Fast DDS, no discovery server — or the voice nodes end up on a
-# graph the brain cannot see.
-export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-unset ROS_DISCOVERY_SERVER || true
-unset ROS_LOCALHOST_ONLY
+kino_dds          # the brain's DDS setup exactly (ros_env.sh), or the voice nodes are on a graph it cannot see
 
 exec ros2 launch pi5_voice_pkg voice_launch.py

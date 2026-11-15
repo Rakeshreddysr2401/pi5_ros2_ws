@@ -79,8 +79,7 @@ reachable() { timeout 4 ping -c1 -W2 "$1" >/dev/null 2>&1; }
 # layer up to the last one came up.
 ros_env() {
     source "$(dirname "${BASH_SOURCE[0]}")/ros_env.sh"
-    unset ROS_DISCOVERY_SERVER FASTRTPS_DEFAULT_PROFILES_FILE
-    export ROS_DOMAIN_ID=0 RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+    kino_dds 0
 }
 jetson_stack_up() {
     ( ros_env
@@ -108,8 +107,7 @@ jetson_status() {
 # so nothing here needs ssh into the laptop. -> the JSON, or nothing.
 twin_announced() {
     ( source "$(dirname "${BASH_SOURCE[0]}")/ros_env.sh"
-      unset ROS_DISCOVERY_SERVER FASTRTPS_DEFAULT_PROFILES_FILE
-      export ROS_DOMAIN_ID=$TWIN_DOMAIN RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+      kino_dds "$TWIN_DOMAIN"
       timeout 15 ros2 topic echo --once --qos-durability transient_local --qos-reliability reliable \
           --full-length --field data /sim/hardware std_msgs/msg/String 2>/dev/null | grep -m1 '^{' ) || true
 }

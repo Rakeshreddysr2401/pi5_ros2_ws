@@ -24,6 +24,8 @@ ESP32_DEV="${ESP32_DEV:-/dev/serial/by-path/platform-xhci-hcd.0-usb-0:2:1.0-port
 SERIAL_DEV="${2:-$ESP32_DEV}"
 UDP_PORT="${2:-8888}"
 
+# Not ros_env.sh / kino_dds: this agent is standalone (its own bundled Fast DDS, no ROS
+# libraries on its path). Keep these three lines the same as kino_dds.
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 # MULTICAST, not the discovery server (changed 2026-07-16): the Jetson
@@ -31,8 +33,7 @@ export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 # discovery-server clients cannot see), so the ESP32 bridge must join the
 # same multicast plane or /cmd_vel from Nav2/the brain never reaches it.
 # Multicast across this WiFi AP is verified working (Jetson<->Pi5).
-unset ROS_DISCOVERY_SERVER || true
-unset ROS_LOCALHOST_ONLY
+unset ROS_DISCOVERY_SERVER ROS_LOCALHOST_ONLY FASTRTPS_DEFAULT_PROFILES_FILE
 
 # XRCE Agent v3.0.1 standalone, no ROS needed (it bundles Fast DDS 3.6.2 = Lyrical's):
 # the ROS-wrapped agent (XRCE 2.4.3) stack-smashes on this ESP32 client session

@@ -22,10 +22,8 @@ fi
 # discovery; a stale ROS_DISCOVERY_SERVER gives a bridge that starts perfectly
 # cleanly and silently sees no robot at all.
 source "$(dirname "${BASH_SOURCE[0]}")/ros_env.sh" >/dev/null
-export ROS_DOMAIN_ID=0
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+kino_dds 0
 export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
-unset ROS_DISCOVERY_SERVER FASTRTPS_DEFAULT_PROFILES_FILE
 
 # The robot CALIBRATION lives in ~/.langrobo/brain.env, which systemd loads for
 # langrobo-brain.service via EnvironmentFile=. Studio is not started by systemd,

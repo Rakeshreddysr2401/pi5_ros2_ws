@@ -21,17 +21,7 @@ set -u
 # rover was undiagnosable while it was actually driving. Line-buffer it.
 export PYTHONUNBUFFERED=1
 
-export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-# MULTICAST, not the discovery server (changed 2026-07-16): the Jetson
-# perception stack MUST run plain multicast — the D555 is a raw DDS
-# participant on the wire that discovery-server clients cannot see, so the
-# whole Jetson side leaves ROS_DISCOVERY_SERVER unset. A client here would
-# put this node on a separate discovery plane, invisible to the Jetson
-# (this exact split silently isolated the brain until 2026-07-16).
-# Multicast across this WiFi AP is verified working (Jetson<->Pi5).
-unset ROS_DISCOVERY_SERVER || true
-unset ROS_LOCALHOST_ONLY
+kino_dds          # domain + multicast discovery: ros_env.sh
 
 # .env (API keys, LANGROBO_* service settings) is loaded by agent_node itself
 # via LANGROBO_ENV_FILE (default ~/ros2_ws/.env) — no wholesale `source` here,

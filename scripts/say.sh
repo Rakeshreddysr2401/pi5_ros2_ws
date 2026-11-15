@@ -11,7 +11,6 @@
 set -eo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$(dirname "${BASH_SOURCE[0]}")/ros_env.sh"
-unset ROS_DISCOVERY_SERVER
-export ROS_DOMAIN_ID=0
+kino_dds 0
 if [ "${1:-}" = "--listen" ]; then exec python3 "$HERE/twin_chat.py" --real --listen "${2:-120}"; fi
 exec python3 "$HERE/twin_chat.py" --real "$@"
