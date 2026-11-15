@@ -1,5 +1,28 @@
 # TODO — pending on-device work
 
+## 2026-11-15 — Pi 5 + Jetson check (code, links, wasted CPU)
+
+Checked: pyflakes clean (the 7 "unused" imports are re-exports / fixtures), 895 tests pass
+(core 722, voice 143, bridge 30), every service up, and seen from the Jetson: `/wheel_state`
+20.0 Hz, `/sonar/*` 15.3 Hz, clocks 8-10 ms apart. The Jetson's side: `~/rover/docs/OPEN_ISSUES.md`.
+
+- **Fixed** `scripts/sonar_node.py` (307bd53): a 100 Hz timer polled the serial port, 7.6 % of a
+  core and this Pi's largest idle load; a reader thread now sleeps until data comes: 1.5 %.
+- **Fixed** the DDS setup (df254f4): domain / RMW / the variables to unset were copied into nine
+  scripts, not all alike. One place now: `kino_dds [domain]` in `scripts/ros_env.sh`.
+- **New on the Jetson**: `./rover clock` (also a gate in `./rover up`) -- nav2 drops our sonar
+  stamps when the two clocks are more than 0.2 s apart.
+- **Owner, please look**: `scripts/servo/sts_bench.py`, `sts_chain.py`, `sts_range.py`,
+  `sts_test.py` are EMPTY files (0 bytes, dated 2026-11-12 22:53; only the README has text).
+  They were never committed, so git has no copy. Most likely a brown-out before the files
+  reached the SD card (item 0 below). They need to be written again.
+- Still under-powered: 3 "Undervoltage detected!" in the first 2 minutes of today's boot (item 0).
+- Memory, all in use: `stt_node` 1.3 GB (the sherpa fallback model is loaded at start so a
+  fallback turn is instant), `tts_node` 0.45 GB, `agent_node` 0.45 GB, desktop ~0.4 GB;
+  4.6 GB free. Loading the fallback only on first use would free ~0.9 GB at the cost of a
+  few seconds on the first fallback turn: owner's call.
+
+
 ## NOW — open items, 2026-10-25 (most urgent first)
 
 ### 0. This Pi 5 is UNDER-POWERED (found 2026-10-19 night) -- most urgent
