@@ -29,6 +29,7 @@ from ..services import object_memory
 from . import _bridge
 from . import movement as _mv
 from . import photo_recall as _recall
+from . import memory_lookup as _memory_lookup
 from .look import look
 
 logger = logging.getLogger(__name__)
@@ -59,9 +60,13 @@ def where(description: str) -> tuple[float | None, str]:
     bridge = _bridge.get()
     pose, epoch = bridge.get_current_pose(), bridge.get_origin_epoch()
     if pose is not None and epoch is not None:
-        hits = object_memory.recall(description, epoch)
-        if hits:
-            rel = object_memory.relative(hits[0], pose)
+        try:                                                # by meaning too ("tv" -> "television")
+            hit = _memory_lookup.find(description, epoch)
+        except Exception as e:                              # noqa: BLE001
+            logger.warning("look_toward: memory lookup failed: %s", e)
+            hit = None
+        if hit:
+            rel = object_memory.relative(hit, pose)
             if rel:
                 return rel[1], "memory"
     try:

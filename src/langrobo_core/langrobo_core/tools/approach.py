@@ -35,6 +35,7 @@ from langgraph.prebuilt import InjectedState
 from ..services import notices as _notices
 from ..services import object_memory
 from . import _bridge
+from . import memory_lookup as _memory_lookup
 from . import movement as _mv
 from . import photo_recall as _recall
 from . import photos as _photos
@@ -362,6 +363,22 @@ def _names_a_person_only(description: str) -> bool:
     return all(w in who or w in _PERSON_WORDS or w in _FILLER for w in words)
 
 
+def _from_memory(bridge, description: str) -> tuple:
+    """(answer, entry) from long-term object memory in photo_recall.ask's shape, or (None, None)."""
+    try:
+        e = _memory_lookup.find(description, bridge.get_origin_epoch())
+    except Exception as ex:                 # memory is a shortcut: the search still works
+        logger.warning("approach: memory lookup failed: %s", ex)
+        return None, None
+    if not e:
+        return None, None
+    rel = object_memory.relative(e, bridge.get_current_pose())
+    return ({"ok": True, "photo": None, "from_memory": True,
+             "age_s": max(0.0, time.time() - e.get("seen_at", time.time())),
+             "distance_m": rel[0] if rel else None, "bearing_deg": rel[1] if rel else None,
+             "placed": {"x": e["x"], "y": e["y"]}}, e)
+
+
 @tool
 def approach_described_object(description: str,
                               state: Annotated[dict, InjectedState],
@@ -582,6 +599,13 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
         last_seen = None # the vision model failed: the search still works
     if not (last_seen and last_seen.get("ok") and last_seen.get("photo") is not None):
         last_seen = None
+    # Not in the photos of this session: long-term object memory (seen hours or days
+    # ago, before a power-off; matched by meaning -- tools/memory_lookup.py). The same
+    # shape as the photo answer, so the same steps follow: face it or drive to a
+    # viewpoint, and LOOK before going near.
+    from_memory = None
+    if last_seen is None:
+        last_seen, from_memory = _from_memory(bridge, description)
     placed = (last_seen or {}).get("placed")
     if last_seen is not None:
         age = _recall.describe_age(last_seen["age_s"])
@@ -658,6 +682,14 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
             at_its_spot = True
             note = (f"The {name} wasn't where I saw it {age}, so I'm looking "
                     f"around. ")
+
+    # Looked where memory put it, and it is not there: things move -- forget that
+    # sighting, so it is not offered again (the search below may find it anew).
+    if from_memory is not None and uv is None and at_its_spot:
+        try:
+            object_memory.forget(from_memory["id"], bridge.get_origin_epoch())
+        except Exception:
+            pass
 
     # ── 2. Search: the view ahead, then exact 45 degree turns ────────────────
     # Views are kept as headings relative to where the search started. Left

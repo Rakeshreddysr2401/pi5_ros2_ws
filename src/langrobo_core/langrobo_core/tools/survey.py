@@ -167,10 +167,66 @@ class paused:
             _cv.notify_all()
 
 
-# OFF by default since 2026-10-02: the robot's memory is its photos, asked
-# about directly (tools/photo_recall.py), not a list of objects at coordinates
-# (owner, 2026-10-01). LANGROBO_PHOTO_SURVEY=1 brings the list back.
-ENABLED = os.environ.get("LANGROBO_PHOTO_SURVEY", "0").strip().lower() in ("1", "true", "yes", "on")
+# ON again since 2026-11-16 (owner: the robot should know its surroundings and find
+# anything it has seen, not only what was saved or what is in the last photos). It was
+# off from 2026-10-02 to 2026-11-16 (owner, 2026-10-01: the photos, asked directly, were
+# the memory); the photo log still answers questions about this session's photos, and
+# object memory now lasts across power-off in the house map (services/object_memory.py).
+# LANGROBO_PHOTO_SURVEY=0 turns it off.
+ENABLED = os.environ.get("LANGROBO_PHOTO_SURVEY", "1").strip().lower() in ("1", "true", "yes", "on")
+# Survey photos taken by the robot itself, as the view changes (AutoLook below).
+AUTO_LOOK = os.environ.get("LANGROBO_AUTO_LOOK", "1").strip().lower() in ("1", "true", "yes", "on")
+
+
+class AutoLook:
+    """When to take a survey photo by itself: the view has changed (moved MOVE_M or
+    turned TURN_DEG since the last one), at most one per MIN_GAP_S, only while the
+    brain is idle and the survey has room. So whatever the robot drives past ends up
+    in object memory -- not only what someone asked it to look at. Pure."""
+    MOVE_M = 0.8
+    TURN_DEG = 40.0
+    MIN_GAP_S = 8.0
+
+    def __init__(self):
+        self.last_pose, self.last_t = None, -1e9
+
+    def due(self, pose, now: float, idle: bool, queued: int) -> bool:
+        if not idle or pose is None or queued >= MAX_QUEUE // 2:
+            return False
+        if now - self.last_t < self.MIN_GAP_S:
+            return False
+        if self.last_pose is None:
+            return True
+        import math
+        moved = math.hypot(pose[0] - self.last_pose[0], pose[1] - self.last_pose[1])
+        turned = abs((pose[2] - self.last_pose[2] + 180.0) % 360.0 - 180.0)
+        return moved >= self.MOVE_M or turned >= self.TURN_DEG
+
+    def taken(self, pose, now: float) -> None:
+        self.last_pose, self.last_t = pose, now
+
+
+_auto = AutoLook()
+
+
+def auto_look_tick(bridge, idle: bool, now: float | None = None) -> bool:
+    """Called ~1 Hz by agent_node: take a survey photo if the view has changed.
+    Not put in the photo log (tools/photos.py): those photos are what the user's
+    questions are read against, and a photo per metre would bury them."""
+    if not (ENABLED and AUTO_LOOK) or VISION_TOOL_SLOT is None:
+        return False
+    now = time.time() if now is None else now
+    pose = bridge.get_current_pose()
+    with _cv:
+        queued = len(_queue)
+    if not _auto.due(pose, now, idle and not _should_yield(), queued):
+        return False
+    frame, stamp = bridge.get_frame_stamped(max_age_s=1.0)
+    if not frame or not stamp:
+        return False
+    bridge.hold_frame(stamp)
+    _auto.taken(pose, now)
+    return submit(frame, stamp, pose, "auto", when=now, epoch=bridge.get_origin_epoch())
 
 
 def submit(frame: bytes, stamp, pose, source: str, when: float | None = None,

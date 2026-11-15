@@ -217,6 +217,10 @@ class AgentNode(Node):
         # Background photo survey (every photo -> object memory) waits while
         # a turn is running: the Mac runs one model and the turn comes first.
         _survey.set_busy_probe(lambda: self._turn_active or self._user_pending is not None)
+        # ... and the robot takes survey photos by itself as the view changes
+        # (survey.AutoLook): what it drives past ends up in object memory.
+        self._auto_look_err = None
+        self.create_timer(1.0, self._auto_look)
         # Teleop flipped to MANUAL mid-move = a person taking control: stop
         # whatever the brain is driving, as a new utterance does.
         threading.Thread(target=self._watch_manual, daemon=True, name="manual_watch").start()
@@ -474,6 +478,16 @@ class AgentNode(Node):
         self._start_cache_warm()
 
     # ── Navigation done callback (background nav thread → worker) ─────────
+
+    def _auto_look(self) -> None:
+        from langrobo_core.tools import survey as _survey
+        try:
+            _survey.auto_look_tick(self._bridge, idle=not (self._turn_active or self._user_pending is not None))
+        except Exception as e:     # a background extra: log once per kind, never break the node
+            kind = type(e).__name__
+            if kind != self._auto_look_err:
+                self._auto_look_err = kind
+                self.get_logger().warning(f"auto look failed: {kind}: {e}")
 
     def _warn_if_competing_bridge(self) -> None:
         """Say so if another graph is on the bus driving the same robot.

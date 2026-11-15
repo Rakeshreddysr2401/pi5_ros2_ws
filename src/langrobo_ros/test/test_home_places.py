@@ -85,3 +85,16 @@ def test_old_four_field_files_still_load(tmp_path):
     b = bridge(tmp_path, epoch=111, room="r1", map_in_odom=(0.0, 0.0, 0.0))
     load(b)
     assert b.get_known_locations()["sofa"] == (1, 2, 3)
+
+
+# ── object memory uses the same house map (2026-11-16) ──────────────────────
+
+def test_object_memory_gets_the_room_and_the_map_frame(tmp_path):
+    s = types.SimpleNamespace(NAV_FRAME="odom", _room=None)
+    s._tf_pose = lambda parent, child: (0.5, -1.0, 30.0) if (parent, child) == ("odom", "map") else None
+    s._memory_home = types.MethodType(ROS2Bridge._memory_home, s)
+    assert s._memory_home() is None, "no room announced: odom-only"
+    s._room = {"id": "35b7c60b9a1b", "frame": "map", "state": "resumed"}
+    assert s._memory_home() == {"room": "35b7c60b9a1b", "map_in_odom": (0.5, -1.0, 30.0)}
+    s._tf_pose = lambda parent, child: None
+    assert s._memory_home() is None, "map -> odom not known yet"

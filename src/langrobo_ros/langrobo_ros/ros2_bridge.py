@@ -282,6 +282,10 @@ class ROS2Bridge:
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self._objects_sig = None
         node.create_timer(2.0, self._publish_object_markers)
+        # Object memory across power-off: it keeps every sighting in the saved house map
+        # too, and brings it back after a restart through map -> odom (services/object_memory.py).
+        from langrobo_core.services import object_memory as _om
+        _om.set_home(self._memory_home)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 1 — Topics
@@ -309,8 +313,8 @@ class ROS2Bridge:
             out = [clear]
             stamp = self._node.get_clock().now().to_msg()
             for i, (e, lab) in enumerate(zip(entries, labels)):
-                # Fresh sightings solid, hour-old ones faint (MAX_AGE_S drops them).
-                alpha = max(0.35, 1.0 - (now - e.get("seen_at", now)) / object_memory.MAX_AGE_S)
+                # Fresh sightings solid, a day old faint (MAX_AGE_S drops them).
+                alpha = max(0.35, 1.0 - (now - e.get("seen_at", now)) / object_memory.FADE_S)
                 for kind in ("dot", "label"):
                     m = M()
                     m.header.frame_id, m.header.stamp = self.NAV_FRAME, stamp
@@ -431,6 +435,13 @@ class ROS2Bridge:
                     if len(v) >= 5 and v[4] and v[4].get("room") == room["id"])
             self._node.get_logger().info(
                 f"home room {room['id']} ({room.get('state')}): {n} saved place(s) belong to it")
+
+    def _memory_home(self):
+        """For object memory: the saved room and where its map frame is in odom, or None."""
+        if not self._room or not self._room.get("id"):
+            return None
+        t = self._tf_pose(self.NAV_FRAME, "map")
+        return {"room": self._room["id"], "map_in_odom": t} if t is not None else None
 
     def _tf_pose(self, parent: str, child: str):
         import rclpy.time
