@@ -88,9 +88,9 @@ curl -s -H "Authorization: Bearer $LANGROBO_API_TOKEN" localhost:8090/metrics  #
 `/status` reports: LLM primary health + fallback state, Telegram channel
 state, sticky agent, last-turn timestamp/duration, camera frame age, robot
 body, queued system/Telegram events, the odom origin epoch, whether a drive is
-running, and the old photo survey's counters (`photo_survey`: off by design
-since 2026-10-02 -- the robot's memory is the photo log, `ask_photos`;
-`LANGROBO_PHOTO_SURVEY=1` brings the object list back). Without `LANGROBO_API_TOKEN` the API binds
+running, and the photo survey's counters (`photo_survey`: ON since 2026-11-16, fed by
+every photo and by the robot's own photos as the view changes; object memory lasts
+across power-off in the house map. `LANGROBO_PHOTO_SURVEY=0` turns it off). Without `LANGROBO_API_TOKEN` the API binds
 localhost-only; a LAN bind without a token is refused at startup (fail-fast).
 
 `runtime.voice.stt` and `.tts` show the last observed `provider`,

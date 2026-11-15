@@ -229,8 +229,16 @@ that moves wheels).
   The log is append-only and drops 8 at a time so the Mac keeps the photos
   cached (~4-5 s a question warm); what follows the photos must stay < ~420
   tokens -- the Mac is not `--swa-full` (it can't fit) and loses the cache on a longer rewind.
-  The old background object list (`tools/survey.py`) is OFF
-  (`LANGROBO_PHOTO_SURVEY=1`). The search is 8 views, 45 deg apart.
+  **Object memory that knows the house** (2026-11-16, owner): the photo survey
+  (`tools/survey.py`) is ON again and the robot takes survey photos by itself as the
+  view changes (`survey.AutoLook`: moved 0.8 m / turned 40 deg, idle only); every
+  object goes to `services/object_memory.py`, kept 14 days and across power-off in the
+  saved house map (`/home/room` + map -> odom, like saved places). "go near X": the
+  photos first, then long-term memory found BY MEANING (`tools/memory_lookup.py`:
+  words, else the sentence model shortlists and the language model picks), then the
+  search; a remembered spot is looked at before going and forgotten if empty.
+  `LANGROBO_PHOTO_SURVEY=0` / `LANGROBO_AUTO_LOOK=0` turn them off. The search is 8
+  views, 45 deg apart.
   **Errands and arrival** (2026-10-02): the drive tools take `then` ("go to the
   box and tell me what is on it"), carried to the [SYSTEM] arrival report by
   `movement.arrival_task_note` (done on arrival / "NOT done" on failure /

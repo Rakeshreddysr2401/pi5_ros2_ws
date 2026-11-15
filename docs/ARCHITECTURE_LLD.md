@@ -464,11 +464,12 @@ Driving is not gated. Test: `test_addressing.py`.
 | `tools/approach.py` | `approach_described_object(description, then)`: the photos first (`photo_recall.ask`) → face / drive over / confirm → 45° search (spoken progress on voice) → drive; `arrival_check` on arrival; `then` = the errand done on arrival. FIND_AND_GO.md is its walkthrough. |
 | `tools/photo_recall.py` | `ask_photos(question)` (all three agents): the VLM over every logged photo in one request on slot 3, then that photo again for a tight box; the Jetson places it with THAT photo's depth and pose. `locate_in` = one photo, "is it clearly visible?". Keeps the photos cached (THE REWIND LIMIT). |
 | `tools/photos.py` | the photo log -- the robot's short-term memory: every photo with number, image, camera stamp, pose, time and odom epoch. Append-only, 24 kept (the Jetson's snapshot count), dropped 8 at a time for the cache. |
-| `tools/survey.py` | the vision-tool slot (`VISION_TOOL_SLOT`), and the old background object survey -- OFF since 2026-10-02 (`LANGROBO_PHOTO_SURVEY=1`). |
+| `tools/survey.py` | the vision-tool slot (`VISION_TOOL_SLOT`), and the background object survey -- ON again since 2026-11-16 (`LANGROBO_PHOTO_SURVEY=0` turns it off), fed also by the robot's own photos as the view changes (`AutoLook`, `LANGROBO_AUTO_LOOK`). |
+| `tools/memory_lookup.py` | find a remembered object by meaning ("tv" -> "television"): words first, else a sentence-model shortlist decided by the language model. |
 | `tools/movement.py` | `move_robot` (exact goal_exec moves, timed fallback), `navigate_to_pose(location, then)`, `save_location`, the MANUAL guard, and the requester of the current drive (`remember_requester`, `arrival_task_note`: the errand carried to the arrival report). |
 | `services/` | state that outlives a turn: `config`, `llm`, `telegram`, `permissions`, `health`, `logging`, `metrics`, `object_memory`. |
 | `services/jev.py` | TypeSafe's Jev decision model: route + vision read per turn, "finished?" for endpointing. `LANGROBO_JEV` off/shadow/on; off without `TYPESAFE_API_KEY`. §4.3c. |
-| `services/object_memory.py` | where things were seen, in odom, one file (`~/.langrobo/object_memory.json`) shared by agent_node and Studio. Emptied when the odom origin (`/fusion/status` origin_epoch) changes. A hint, never a fact: callers look again before driving. |
+| `services/object_memory.py` | where things were seen, in odom AND in the saved house map, one file (`~/.langrobo/object_memory.json`) shared by agent_node and Studio. Kept 14 days and across power-off (since 2026-11-16): a new odom origin brings same-room entries back through map -> odom; entries without a house-map spot die with their origin. A hint, never a fact: callers look again before driving. |
 | `utils/` | pure helpers: history trimming, message projection, sentence streaming, timing. |
 | `bridges/stub.py` | the no-ROS bridge. Must mirror `ROS2Bridge`'s public surface. |
 
