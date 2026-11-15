@@ -14,4 +14,5 @@ documents call them by these paths. Everything sources `ros_env.sh` (ROS 2 Lyric
 | **Audio devices** | `bt_speaker.sh` + `bt_pair.py`, `mic_check.sh`, `aec_probe.py`, `capture_ring.py` |
 | **Wake word** | `wake_switch.py`, `wake_report.py`, `wake_test.sh`, `wake_live_score.py`, `wake_score.py`, `wake_record_clips.py`, `wake_train_verifier.py`, `train_kino_local.py`, `train_rakhi_local.py`, `test_mic_kino.py` |
 | `voice_lab/` | STT / turn-end experiments and benches (its own README) |
+| `servo/` | Feetech STS bus-servo bench tests (SmartElex board, `/dev/ttyACM0`; its own README) |
 | `mac_mini/` | what runs on the Mac mini: the llama.cpp build + patch, `e12b5`, the STT server |
