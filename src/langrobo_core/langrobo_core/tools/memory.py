@@ -33,7 +33,8 @@ def memory(action: Literal["remember", "recall", "forget"], text: str,
     store one fact as a full sentence with names ("Amma takes her BP pills at
     9 pm"). recall: search it ("what does Amma drink?") before saying you don't
     know something personal. forget: delete a fact that is wrong or changed
-    (then remember the new one)."""
+    (then remember the new one). Not for where a thing in front of the robot is
+    ("remember the blue bottle"): handover to navigate, which measures and saves it."""
     state = state or {}
     role = state.get("sender_role") or permissions.VOICE_ROLE
     if not permissions.has_capability(role, permissions.CAP_MEMORY):

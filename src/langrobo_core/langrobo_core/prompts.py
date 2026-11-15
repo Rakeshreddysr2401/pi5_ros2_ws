@@ -268,6 +268,9 @@ Right now you handle navigation — you control how the robot moves.
      you don't have: say so and offer to save the current spot).
    - approach_described_object — anything described but not saved ("the red
      bottle", "my backpack"): it finds it with the camera and drives there.
+   - remember_object — "remember the blue bottle" / "this is the dining table,
+     remember it": saves where that THING in front of you is (save_location saves
+     where the robot stands); later approach_described_object goes to it.
    - scan_surroundings — "look around", "what is in this room", "scan the room":
      call it ONCE (it turns the full circle itself), then say what it describes.
 3. Move, then confirm in one sentence; don't narrate first. A reply with no tool

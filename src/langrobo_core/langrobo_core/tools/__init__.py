@@ -18,6 +18,7 @@ from .approach import (approach_described_object, list_saved_locations,
                        scan_surroundings)
 from .movement import (PAN_TILT_ENABLED, move_robot, navigate_to_pose,
                        point_camera, save_location)
+from .remember_object import remember_object
 from .system import get_current_time, get_robot_status
 from .audio import AUDIO_TOOLS
 from .reminders import REMINDER_TOOLS
@@ -76,8 +77,9 @@ LOCAL_AGENT_TOOLS = [look, look_toward, locate_object, ask_photos, handover] + H
 # called mid-drive, it holds the photo until arrival (telegram.py). Messages
 # are chat's job: navigate never sent one in 3 weeks of logs, and the schema
 # cost ~150 tokens on every move (2026-10-02).
+# remember_object: "remember the blue bottle" -- where a THING is (save_location: the robot).
 NAVIGATE_TOOLS = ([move_robot, navigate_to_pose, approach_described_object,
-                  scan_surroundings, save_location, list_saved_locations,
+                  scan_surroundings, save_location, remember_object, list_saved_locations,
                   get_robot_status, ask_photos, handover] + HEAD_TOOLS + FOLLOW_TOOLS
                  + [send_telegram_photo])
 

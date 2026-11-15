@@ -275,8 +275,8 @@ def recall(query: str, epoch, now: float | None = None, max_age_s: float = MAX_A
     now = time.time() if now is None else now
     out = []
     for e in _load(epoch):
-        if now - e.get("seen_at", 0) > max_age_s:
-            continue
+        if now - e.get("seen_at", 0) > max_age_s and not e.get("pinned"):
+            continue                       # pinned = the user said "remember the X": never ages out
         s = 1.0 if not query.strip() else match_score(query, e["description"])
         if s >= 0.5:
             out.append((s, e.get("seen_at", 0), e))
@@ -304,7 +304,7 @@ def labels(epoch, now: float | None = None, max_age_s: float = MAX_AGE_S) -> dic
     now = time.time() if now is None else now
     out: dict = {}
     for e in sorted(_load(epoch), key=lambda e: -e.get("seen_at", 0)):
-        if now - e.get("seen_at", 0) <= max_age_s:
+        if now - e.get("seen_at", 0) <= max_age_s or e.get("pinned"):
             out.setdefault(e["description"], []).append(e)
     return out
 

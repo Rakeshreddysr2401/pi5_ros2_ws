@@ -152,7 +152,7 @@ _SPECS: tuple[AgentSpec, ...] = (
         # off, chat's routing table is byte-identical to before.
         description=("moving the robot — driving somewhere, going to a saved place, approaching a described object, "
                      + ("following a person, " if FOLLOW_ENABLED else "")
-                     + "turning, scanning the surroundings, saving a location, stopping"),
+                     + "turning, scanning the surroundings, saving a location, remembering where a thing is, stopping"),
         examples=["go to the kitchen", "come closer", "go to the red bottle",
                   "turn left 90 degrees", "save this spot as dining area", "stop"]
                  + (["follow me"] if FOLLOW_ENABLED else []),
@@ -170,6 +170,9 @@ _SPECS: tuple[AgentSpec, ...] = (
         sticky=True,
         intent_examples=(
             "save this spot as dining area", "move forward one metre",
+            # remember_object (2026-11-16): where a THING in front of it is, to go to later
+            "remember the blue bottle", "remember this bottle", "remember where my bag is",
+            "this is the dining table remember it", "remember this chair",
             "go back 50 centimetres", "rotate 180 degrees", "come here",
             "go near the chair", "can you go near to the bottle", "drive to the door",
             "turn right a little", "go back to where you started", "move back a bit",
