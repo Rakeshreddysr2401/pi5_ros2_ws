@@ -19,10 +19,15 @@ topics say +inf (no echo) at 10 Hz meanwhile, nothing else is touched -- the whe
 never depend on this. A board that opens but stays SILENT (2026-10-19: started in the
 Pi's first minute after boot, open, 0 lines for minutes, while a restart read 15 Hz)
 counts as lost after SILENT_S without a line.
+
+The board is read in its own thread that SLEEPS in the read until a byte arrives
+(2026-11-15: a 100 Hz timer polling the port was this Pi's largest idle load, 7-9 %
+of a core, for 30 lines a second). The ROS executor only runs the 1 Hz status.
 """
 import json
 import math
 import os
+import threading
 import time
 
 import rclpy
@@ -35,6 +40,7 @@ PORT = os.environ.get('SONAR_DEV', '/dev/serial/by-path/platform-xhci-hcd.0-usb-
 LEFT_IS_S1 = os.environ.get('SONAR_LEFT_IS_S1', '1') == '1'
 FOV, RMIN, RMAX = 0.52, 0.02, 4.0                  # params.yaml sonar.fov / min_range / max_range
 SILENT_S = 1.0                                     # open but no line this long -> close, re-open (it sends ~30/s)
+READ_WAIT_S = 0.1                                  # longest sleep in one read: how fast silence / shutdown is noticed
 
 
 class SonarNode(Node):
@@ -49,14 +55,16 @@ class SonarNode(Node):
         self.count = {'S1': 0, 'S2': 0}
         self.last = {'S1': 0.0, 'S2': 0.0}
         self.version = ''
-        self.opened = self.last_line = 0.0
-        self.create_timer(0.01, self.poll)
+        self.opened = self.last_line = self.last_none = 0.0
+        self.stop = threading.Event()
+        self.reader = threading.Thread(target=self.read_loop, daemon=True)
+        self.reader.start()
         self.create_timer(1.0, self.status)
 
     def open(self):
         try:
             s = serial.Serial()
-            s.port, s.baudrate, s.timeout = PORT, 115200, 0
+            s.port, s.baudrate, s.timeout = PORT, 115200, READ_WAIT_S
             s.dtr = False
             s.rts = False
             s.open()
@@ -67,19 +75,33 @@ class SonarNode(Node):
             self.next_open = time.time() + 2.0
             self.get_logger().warning(f'sonar board not available ({e}); retrying every 2 s', throttle_duration_sec=30)
 
+    def read_loop(self):
+        while not self.stop.is_set():
+            try:
+                self.poll()
+            except Exception as e:   # noqa: BLE001 - the reader must outlive a bad line or a ROS hiccup
+                self.get_logger().error(f'sonar reader: {e!r}', throttle_duration_sec=10)
+                time.sleep(0.5)
+
     def poll(self):
+        """One step of the reader thread: at most READ_WAIT_S long."""
         if self.ser is None:
             # board missing: say "no echo" for both at ~10 Hz, so a last close reading
             # never lingers in nav2's collision monitor (it does not time sonars out)
-            if time.time() - getattr(self, 'last_none', 0.0) >= 0.1:
+            if time.time() - self.last_none >= 0.1:
                 self.last_none = time.time()
                 for k in ('S1', 'S2'):
                     self.publish(k, math.inf)
             if time.time() >= self.next_open:
                 self.open()
+            if self.ser is None:
+                self.stop.wait(0.1)
             return
         try:
-            self.buf += self.ser.read(4096)
+            data = self.ser.read(1)                    # sleeps here until a byte or READ_WAIT_S
+            if data and self.ser.in_waiting:
+                data += self.ser.read(self.ser.in_waiting)
+            self.buf += data
         except (serial.SerialException, OSError) as e:
             self.get_logger().warning(f'sonar board lost: {e}')
             self.ser = None
@@ -137,6 +159,8 @@ def main():
     except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     finally:
+        n.stop.set()
+        n.reader.join(timeout=1.0)
         if n.ser:
             n.ser.close()
 
