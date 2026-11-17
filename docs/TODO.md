@@ -1,5 +1,22 @@
 # TODO — pending on-device work
 
+## 2026-11-17 — Jetson <-> Pi 5 on the Ethernet cable (live)
+
+Robot traffic (ROS, domain 0) now runs on a direct cable, not WiFi: Jetson 10.0.0.1, Pi 5
+10.0.0.2, both NM profile `kino-link`, MTU 1500. 935 Mbit/s vs 135 on WiFi; the Jetson sees all
+7 Pi 5 nodes and `/sonar/left` 15.2 Hz. How and why: [NETWORKING.md](NETWORKING.md) "The Jetson
+<-> Pi 5 cable". The D555 is on the Jetson's USB 3 since 2026-11-16.
+
+- **Owner will say when**: test with WiFi off on both (robot body + nav should keep working;
+  Mac Mini, internet, phone teleop and RViz will not).
+- Not tested: full `./rover up` + driving with the Pi 5 on the cable.
+- The RViz laptop (WiFi only) no longer sees the Pi 5's own topics; `KINO_LINK=wifi` for one run.
+- **Away from home WiFi (owner's goal):** still needs WiFi today: Mac Mini by mDNS name
+  (`singireddys-mac-mini.local` :8080/:8091), internet (web search, api.sarvam.ai), phone teleop,
+  RViz. Proposed: a travel router on the robot (its own network, uplink = phone hotspot) +
+  Tailscale (reach the Mac Mini at home from anywhere), brain tries local -> Tailscale -> says
+  "offline". Waiting on the owner: does the Mac Mini travel or stay home; buy a router or not.
+
 ## 2026-11-15 — Pi 5 + Jetson check (code, links, wasted CPU)
 
 Checked: pyflakes clean (the 7 "unused" imports are re-exports / fixtures), 895 tests pass

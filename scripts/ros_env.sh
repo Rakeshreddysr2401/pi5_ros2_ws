@@ -25,5 +25,11 @@ unset _kino_u
 kino_dds() {
   export ROS_DOMAIN_ID="${1:-${ROS_DOMAIN_ID:-0}}"
   export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-  unset ROS_DISCOVERY_SERVER ROS_LOCALHOST_ONLY FASTRTPS_DEFAULT_PROFILES_FILE
+  unset ROS_DISCOVERY_SERVER ROS_LOCALHOST_ONLY FASTRTPS_DEFAULT_PROFILES_FILE FASTDDS_DEFAULT_PROFILES_FILE
+  # Real robot + Jetson cable up (eth0 = 10.0.0.2, NM profile kino-link): ROS only on the cable,
+  # see scripts/fastdds_cable.xml. Twin (other domains) and KINO_LINK=wifi keep plain WiFi.
+  if [ "$ROS_DOMAIN_ID" = 0 ] && [ "${KINO_LINK:-cable}" != wifi ] \
+     && ip -4 -br addr show eth0 2>/dev/null | grep -q " 10\.0\.0\.2/"; then
+    export FASTDDS_DEFAULT_PROFILES_FILE="$KINO_WS/scripts/fastdds_cable.xml"
+  fi
 }

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- Real robot (domain 0) on the Jetson <-> Pi 5 Ethernet cable (Jetson 10.0.0.1, Pi 10.0.0.2,
+     2026-11-17). Used by kino_dds (scripts/ros_env.sh) when eth0 has 10.0.0.2.
+
+     Without this, Fast DDS announces BOTH the cable and the WiFi address and sends every message
+     to both: measured 2026-11-17, 4 MB/s test topic Pi -> Jetson = 4.2 MB/s on the cable AND
+     8.3 MB/s on WiFi. With UDP limited to the cable (+ loopback) and shared memory for nodes on
+     this Pi, robot traffic stays on the cable and the robot works with no WiFi at all.
+     Cost: a machine that is only on WiFi (the RViz laptop) does not see this Pi's topics.
+     Twin (domain 42, sim laptop on WiFi) does not use this file. KINO_LINK=wifi turns it off. -->
+<dds xmlns="http://www.eprosima.com">
+  <profiles>
+    <transport_descriptors>
+      <transport_descriptor>
+        <transport_id>cable_udp</transport_id>
+        <type>UDPv4</type>
+        <interfaceWhiteList>
+          <address>10.0.0.2</address>
+          <address>127.0.0.1</address>
+        </interfaceWhiteList>
+      </transport_descriptor>
+      <transport_descriptor>
+        <transport_id>local_shm</transport_id>
+        <type>SHM</type>
+      </transport_descriptor>
+    </transport_descriptors>
+    <participant profile_name="kino_cable" is_default_profile="true">
+      <rtps>
+        <userTransports>
+          <transport_id>cable_udp</transport_id>
+          <transport_id>local_shm</transport_id>
+        </userTransports>
+        <useBuiltinTransports>false</useBuiltinTransports>
+      </rtps>
+    </participant>
+  </profiles>
+</dds>
