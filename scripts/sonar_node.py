@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """sonar_node.py -- the two front sonars on ROS: /sonar/left, /sonar/right (sensor_msgs/Range).
 
-The sensors (HC-SR04 type, front corners, 6.5 cm up, 28 cm apart; ~/rover
+The sensors (HC-SR04 type, front, 9.5 cm up, 18 cm apart since 2026-11-17; ~/rover
 description/params.yaml `sonar`) are read by their OWN ESP32 running MicroPython
 (~/rover/firmware/sonar/main.py), USB to this Pi 5. It prints a line per
 reading, alternating, ~15 Hz each:  "S1 1234" (mm) / "S2 -1" (no echo).
