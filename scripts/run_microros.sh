@@ -16,11 +16,13 @@ TRANSPORT="${1:-serial}"
 # front-sonar ESP32 (a second board, same CP2102 chip) has the SAME by-id
 # (...CP2102..._0001: a generic serial number), so with both plugged in by-id
 # could open the sonar board and the wheels would never connect. by-path names
-# the physical socket: keep the wheels' board in THIS one (it has been since
-# 2026-10-12), the sonar board in any other. Moved: this path is missing and the
+# the physical socket: keep the wheels' board in THIS one, the sonar board in its
+# own (xhci-hcd.0-usb-0:1:1.0, sonar_node.py). Moved: this path is missing and the
 # service says so -- `ls -l /dev/serial/by-path/` shows the new one.
+# 2026-11-17: the owner re-plugged the wheels' board (front sonar work) into
+# xhci-hcd.1-usb-0:2:1.0; it was xhci-hcd.0-usb-0:2:1.0 from 2026-10-12.
 # ESP32_DEV=... in the environment overrides it.
-ESP32_DEV="${ESP32_DEV:-/dev/serial/by-path/platform-xhci-hcd.0-usb-0:2:1.0-port0}"
+ESP32_DEV="${ESP32_DEV:-/dev/serial/by-path/platform-xhci-hcd.1-usb-0:2:1.0-port0}"
 SERIAL_DEV="${2:-$ESP32_DEV}"
 UDP_PORT="${2:-8888}"
 
@@ -34,6 +36,10 @@ export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 # same multicast plane or /cmd_vel from Nav2/the brain never reaches it.
 # Multicast across this WiFi AP is verified working (Jetson<->Pi5).
 unset ROS_DISCOVERY_SERVER ROS_LOCALHOST_ONLY FASTRTPS_DEFAULT_PROFILES_FILE
+# On the Jetson cable like every other node here (2026-11-17: this agent alone stayed on
+# WiFi + cable). dds_link.sh needs no ROS; its profile is read by the agent's own Fast DDS.
+source "$(dirname "$0")/dds_link.sh"
+kino_link
 
 # XRCE Agent v3.0.1 standalone, no ROS needed (it bundles Fast DDS 3.6.2 = Lyrical's):
 # the ROS-wrapped agent (XRCE 2.4.3) stack-smashes on this ESP32 client session

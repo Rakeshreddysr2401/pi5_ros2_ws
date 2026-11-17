@@ -22,14 +22,10 @@ unset _kino_u
 # participant that discovery-server clients cannot see). A stale ROS_DISCOVERY_SERVER, a
 # localhost-only switch or a profiles file puts a node on a graph nobody else is on: it starts
 # cleanly and sees no robot (this split silently isolated the brain until 2026-07-16).
+source "$KINO_WS/scripts/dds_link.sh"
 kino_dds() {
   export ROS_DOMAIN_ID="${1:-${ROS_DOMAIN_ID:-0}}"
   export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-  unset ROS_DISCOVERY_SERVER ROS_LOCALHOST_ONLY FASTRTPS_DEFAULT_PROFILES_FILE FASTDDS_DEFAULT_PROFILES_FILE
-  # Real robot + Jetson cable up (eth0 = 10.0.0.2, NM profile kino-link): ROS only on the cable,
-  # see scripts/fastdds_cable.xml. Twin (other domains) and KINO_LINK=wifi keep plain WiFi.
-  if [ "$ROS_DOMAIN_ID" = 0 ] && [ "${KINO_LINK:-cable}" != wifi ] \
-     && ip -4 -br addr show eth0 2>/dev/null | grep -q " 10\.0\.0\.2/"; then
-    export FASTDDS_DEFAULT_PROFILES_FILE="$KINO_WS/scripts/fastdds_cable.xml"
-  fi
+  unset ROS_DISCOVERY_SERVER ROS_LOCALHOST_ONLY FASTRTPS_DEFAULT_PROFILES_FILE
+  kino_link      # scripts/dds_link.sh: on the Jetson cable when it is up (real robot only)
 }

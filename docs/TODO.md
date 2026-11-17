@@ -52,7 +52,7 @@ Checked: pyflakes clean (the 7 "unused" imports are re-exports / fixtures), 895 
 
 ### 0b. Front ultrasonic sensors -- BUILT 2026-10-19
 - Hardware: two HC-SR04-type sensors (run at 3.3 V, no dividers needed there) on their
-  OWN ESP32 in USB socket `usb-0:1:1.0` (keep the wheels' ESP32 in `usb-0:2:1.0`: the
+  OWN ESP32 in USB socket `usb-0:1:1.0` (keep the wheels' ESP32 in `xhci-hcd.1-usb-0:2:1.0` since 2026-11-17: the
   two CP2102 boards share one by-id name; run_microros.sh uses by-path).
 - Firmware: MicroPython 1.24 + `~/rover/firmware/sonar/main.py` (update over USB
   with `upload_main.py`). Node: `scripts/sonar_node.py` -> `/sonar/left`, `/sonar/right`.

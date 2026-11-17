@@ -58,7 +58,10 @@ topic: Pi 5 -> Jetson went over the cable *and* twice over WiFi. Two pieces fix 
 `kino_dds` (scripts/ros_env.sh) uses the profile only when **domain 0** and
 **eth0 has 10.0.0.2** and `KINO_LINK` is not `wifi`. So the twin (domain 42, the
 sim laptop is on WiFi) is unchanged, and with the cable out at start the Pi 5
-falls back to WiFi. Every run script goes through `kino_dds`, and so does
+falls back to WiFi. The logic is `kino_link` in `scripts/dds_link.sh` (no ROS in it): it waits up to
+20 s for the cable address just after boot or with a cable plugged in (2026-11-17: the voice
+service started 2 s before eth0 and came up on WiFi). Every run script goes through `kino_dds`,
+the standalone micro-ROS agent (`run_microros.sh`) calls `kino_link` itself, and so does
 `~/langrobo_teleop/run_teleop.sh` (not in git, changed 2026-11-17, backup
 `run_teleop.sh.bak-20261117`). After changing any of this, restart the services:
 `sudo systemctl restart langrobo-brain langrobo-sonar langrobo-teleop` and
