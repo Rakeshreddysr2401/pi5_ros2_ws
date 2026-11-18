@@ -7,8 +7,10 @@ from langrobo_core.registry import SPECS
 from test_blank_reply_retry import _FakeLLM
 
 
-def run(monkeypatch, reply, messages):
-    fake = _FakeLLM([reply])
+def run(monkeypatch, reply, messages, retry=None):
+    # a tool-free first reply is asked once more (the nudge); by default the
+    # retry says the same thing again
+    fake = _FakeLLM([reply, retry if retry is not None else reply])
     monkeypatch.setattr(factory, "get_llm", lambda *args, **kwargs:
                         fake.model_copy(update={"streaming": kwargs["streaming"]})
                         if "streaming" in kwargs else fake)
@@ -65,12 +67,12 @@ def test_offline_message_is_not_replaced_with_a_direction_question(monkeypatch):
 
 def test_streaming_backup_cannot_bypass_validation(monkeypatch):
     from langrobo_core.services import llm as service
-    backup = _FakeLLM([AIMessage("I will move back again.")])
+    backup = _FakeLLM([AIMessage("I will move back again.")] * 2)
     monkeypatch.setattr(service, "primary_available", lambda: False)
     monkeypatch.setattr(service, "get_fallback_llm", lambda: backup)
     msg, _ = run(monkeypatch, AIMessage("unused"), [HumanMessage("go back")])
     assert msg.content == factory._MOTION_CLARIFICATION
-    assert backup.calls == [False]
+    assert backup.calls == [False, False]
 
 
 def test_first_navigation_call_prevents_the_thinking_loop(monkeypatch):
@@ -87,3 +89,22 @@ def test_first_navigation_call_prevents_the_thinking_loop(monkeypatch):
     assert {"streaming": False, "ban_thinking": True} in asked
     assert fake.calls == [False]
     assert out["messages"][0].content == factory._MOTION_CLARIFICATION
+
+
+def test_a_repeated_command_answered_in_prose_is_retried_into_a_tool_call(monkeypatch):
+    """2026-11-18: "turn left 90 degrees" twice in a row; the second answer was
+    the first reply copied as text, and the user heard a direction question."""
+    turn = AIMessage("", tool_calls=[{"name": "move_robot", "args": {"command": "L:90"}, "id": "2"}])
+    msg, calls = run(monkeypatch, AIMessage("Turned left 90 degrees."), [
+        HumanMessage("turn left 90 degrees"),
+        ToolMessage("Movement done: L:90", tool_call_id="1", name="move_robot"),
+        AIMessage("Turned left 90 degrees."),
+        HumanMessage("turn left 90 degrees"),
+    ], retry=turn)
+    assert msg == turn and calls == [False, False]
+
+
+def test_no_nudge_without_a_movement_request(monkeypatch):
+    """'call the tool now' after 'thanks' could push the model into moving."""
+    msg, calls = run(monkeypatch, AIMessage("You're welcome."), [HumanMessage("thanks")])
+    assert msg.content == factory._MOTION_CLARIFICATION and calls == [False]

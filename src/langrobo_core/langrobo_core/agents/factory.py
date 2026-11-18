@@ -33,6 +33,13 @@ _MOTION_CLARIFICATION = (
 )
 
 
+
+_NO_TOOL_NUDGE = (
+    "[Note] That reply called no tool, so nothing has happened. Treat the user's "
+    "last message as a new request, even if it repeats an earlier one: call the "
+    "tool that does it now. Only if it is truly unclear, ask one short question.")
+
+
 def _has_turn_result(messages: list) -> bool:
     """A handover or an earlier turn is not evidence that anything was done."""
     for msg in reversed(messages):
@@ -147,8 +154,29 @@ def build_agent(spec: AgentSpec):
                 and response.content not in (_FALLBACK_MESSAGE, _OFFLINE_MESSAGE, _ALL_DOWN_MESSAGE)):
             # navigate either uses a tool (including handover), or clarifies.
             # Never turn its unsupported prose into a drive or a promise.
-            logger.warning("tool-free navigation reply replaced with clarification")
-            response = response.model_copy(update={"content": _MOTION_CLARIFICATION})
+            # One retry first (2026-11-18): the SAME "turn left 90 degrees" sent
+            # twice in a row -- the model answered the second with prose (its
+            # last reply, copied), and the user heard "Please tell me the
+            # direction and distance" to a perfectly clear command. Told that
+            # nothing happened, it calls the tool. The note goes only to this
+            # call (append-only: the cache is extended, not rewritten).
+            # Only for a MOVEMENT request in the user's own words (the graph's
+            # motion backstop test): a nudge to "call the tool now" after
+            # "thanks" could push the model into moving. A question is already
+            # a clarification: only a statement is retried.
+            from ..graph.build import _MOTION_REQUEST
+            from ..graph.handover_resolver import last_user_query
+            retry = None
+            if (_MOTION_REQUEST.search(last_user_query(state) or "")
+                    and not str(response.content).rstrip().endswith("?")):
+                logger.warning("tool-free navigation reply -- retrying once with a nudge")
+                retry = safe_invoke(llm, msgs + [response, SystemMessage(content=_NO_TOOL_NUDGE)],
+                                    logger, agent=spec.name, allow_streaming=False)
+            if retry is not None and retry.tool_calls:
+                response = retry
+            else:
+                logger.warning("tool-free navigation reply replaced with clarification")
+                response = response.model_copy(update={"content": _MOTION_CLARIFICATION})
         return {"messages": [response], "active_agent": spec.name}
 
     node.__name__ = f"{spec.name}_node"
