@@ -218,3 +218,32 @@ def test_one_shot_vision_calls_never_use_the_agents_slot(monkeypatch):
     assert sv.vision_tool_llm().extra_body["id_slot"] == 3
     assert llm.get_llm("local_agent").extra_body["id_slot"] == SLOTS["local_agent"]
     assert 3 not in SLOTS.values()
+
+
+def test_list_objects_keeps_one_event_loop_for_the_cached_client(monkeypatch):
+    """get_llm() caches the client, and its async HTTP pool belongs to the loop
+    that opened the connection. A new loop per photo (asyncio.run) made every
+    second survey call fail with 'Connection error' (Event loop is closed),
+    2026-11-18. Every photo on one thread must run on the same, open loop."""
+    import asyncio
+    import io
+
+    from PIL import Image
+
+    loops = []
+
+    class LoopLLM:
+        async def ainvoke(self, msgs, config=None):
+            loops.append(asyncio.get_running_loop())
+
+            class R:
+                content = '{"objects": []}'
+            return R()
+
+    monkeypatch.setattr(sv, "vision_tool_llm", lambda **kw: LoopLLM())
+    buf = io.BytesIO()
+    Image.new("RGB", (32, 18)).save(buf, "JPEG")
+    for _ in range(3):
+        assert sv.list_objects(buf.getvalue()) == []
+    assert len(loops) == 3 and loops[0] is loops[1] is loops[2]
+    assert not loops[0].is_closed()

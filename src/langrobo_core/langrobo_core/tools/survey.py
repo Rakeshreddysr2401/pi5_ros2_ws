@@ -318,8 +318,26 @@ def list_objects(frame: bytes) -> list:
         {"type": "text", "text": _PROMPT.format(n=MAX_OBJECTS)},
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
     ])]
-    reply = asyncio.run(_invoke_unless_needed(llm, msgs))
+    reply = _thread_loop().run_until_complete(_invoke_unless_needed(llm, msgs))
     return parse_objects(strip_thought_residue(str(reply.content)), width, height)
+
+
+_loops = threading.local()
+
+
+def _thread_loop():
+    """ONE event loop per thread, kept for the thread's life. get_llm() hands
+    back a cached client whose async HTTP pool keeps its keep-alive connections
+    tied to the loop that opened them. asyncio.run() made a new loop per photo
+    and closed it after, so every second photo picked up a connection from a
+    dead loop and failed with "APIConnectionError: Connection error." (cause:
+    RuntimeError 'Event loop is closed') -- 15 of 31 survey photos on
+    2026-11-18. Reusing one loop keeps those connections valid."""
+    import asyncio
+    loop = getattr(_loops, "loop", None)
+    if loop is None or loop.is_closed():
+        loop = _loops.loop = asyncio.new_event_loop()
+    return loop
 
 
 async def _invoke_unless_needed(llm, msgs):
