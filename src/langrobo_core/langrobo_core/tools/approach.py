@@ -87,6 +87,30 @@ def compute_standoff_goal(rx: float, ry: float, ox: float, oy: float,
     return (rx + dx * scale, ry + dy * scale, yaw_deg)
 
 
+# ── Stop where the camera can still see it (2026-11-18) ────────────────────────
+# "go near the blue bottle": found on top of a box stack on a shelf, parked at
+# 0.45 m -- and the arrival photo showed only the boxes under it. The camera is
+# 0.16 m ahead of base_link and ~0.18 m up, with ~29 deg of view above and below
+# centre (D555 colour, fy 225 px over 252 rows): at 0.45 m it is ~0.29 m from the
+# object, and anything more than ~0.16 m above the lens is out of the frame. The Jetson
+# reports the object's height (object.z) and the photo's camera position
+# (camera.t, both odom), so the brain parks far enough back to keep the object
+# within VIEW_HALF_DEG of the image centre -- the margin keeps its BODY in frame.
+_CAM_AHEAD_M = float(os.environ.get("LANGROBO_CAM_AHEAD_M", "0.16"))
+_VIEW_HALF_DEG = float(os.environ.get("LANGROBO_VIEW_HALF_DEG", "20"))
+_MAX_VIEW_STANDOFF_M = 1.2
+
+
+def view_standoff(object_z: float | None, camera_z: float | None) -> float:
+    """How far (base_link to object, metres) to park so the camera sees the object:
+    _STANDOFF_M, or more for a thing well above or below the lens. Pure."""
+    if object_z is None or camera_z is None:
+        return _STANDOFF_M
+    dz = abs(object_z - camera_z)
+    need = dz / math.tan(math.radians(_VIEW_HALF_DEG)) + _CAM_AHEAD_M
+    return min(max(_STANDOFF_M, need), _MAX_VIEW_STANDOFF_M)
+
+
 # ── VLM pixel grounding ─────────────────────────────────────────────────────
 
 # A BOX, not a point (floor test 2026-09-26): Gemma's x is good to ~5 px but
@@ -166,6 +190,52 @@ def _vlm_locate(frame: bytes, description: str) -> tuple | None:
     if not (0 <= x <= 1000 and 0 <= y <= 1000):
         return None
     return (x * sx, y * sy, None)
+
+
+# ── Find trail (2026-11-18) ───────────────────────────────────────────────────
+# "go near the helmet" drove to a black bag and the log said only "I can see the
+# helmet -- about 0.8 m away": which photo, which box, what the memory said were
+# nowhere, and the photos live only in this process. Every step now logs one
+# "find:" line, and every photo the vision model judged is kept (box drawn,
+# found = green) in <state dir>/find_debug, the newest FIND_DEBUG_KEEP.
+FIND_DEBUG_KEEP = int(os.environ.get("LANGROBO_FIND_DEBUG_KEEP", "30"))
+
+
+def _trail(step: str, description: str, frame: bytes | None = None,
+           uv: tuple | None = None, **facts) -> None:
+    """One log line per find step; the judged photo saved beside it. Never raises."""
+    try:
+        logger.info("find: %s %r %s", step, description,
+                    " ".join(f"{k}={v}" for k, v in facts.items()))
+        if frame is None or FIND_DEBUG_KEEP <= 0:
+            return
+        import io
+
+        from PIL import Image, ImageDraw
+
+        from ..services.config import state_path
+        d = state_path("find_debug")
+        os.makedirs(d, exist_ok=True)
+        im = Image.open(io.BytesIO(frame)).convert("RGB")
+        if uv is not None:
+            box = uv[2] if len(uv) > 2 and uv[2] else (uv[0] - 6, uv[1] - 6, uv[0] + 6, uv[1] + 6)
+            ImageDraw.Draw(im).rectangle(box, outline=(0, 255, 0), width=3)
+        slug = re.sub(r"[^a-z0-9]+", "_", description.lower()).strip("_")[:30]
+        im.save(os.path.join(d, f"{time.strftime('%Y%m%d-%H%M%S')}_{step}_{slug}"
+                                f"_{'found' if uv else 'none'}.jpg"), quality=80)
+        old = sorted(os.listdir(d))
+        for f in old[:max(0, len(old) - FIND_DEBUG_KEEP)]:
+            os.remove(os.path.join(d, f))
+    except Exception as e:                      # a debug aid must never break a search
+        logger.debug("find trail failed: %s", e)
+
+
+def _locate(frame: bytes, description: str, step: str) -> tuple | None:
+    """_vlm_locate, with the find trail."""
+    uv = _vlm_locate(frame, description)
+    _trail(step, description, frame, uv,
+           found=uv is not None, at=None if uv is None else (round(uv[0]), round(uv[1])))
+    return uv
 
 
 def _capture(bridge, settle_s: float = 2.5, source: str = "search") -> tuple:
@@ -273,7 +343,7 @@ def _ground_retrying(bridge, description: str, uv: tuple, capture: dict | None) 
     if frame is None:
         return res, capture
     try:
-        uv2 = _vlm_locate(frame, description)
+        uv2 = _locate(frame, description, "remeasure")
     except Exception:
         return res, capture
     if uv2 is None:
@@ -607,6 +677,11 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
     if last_seen is None:
         last_seen, from_memory = _from_memory(bridge, description)
     placed = (last_seen or {}).get("placed")
+    _trail("recall", description, source="memory" if from_memory else ("photos" if last_seen else "none"),
+           photo=(last_seen or {}).get("photo"), dist=(last_seen or {}).get("distance_m"),
+           bearing=(last_seen or {}).get("bearing_deg"),
+           placed=None if not placed else (round(placed["x"], 2), round(placed["y"], 2)),
+           memory=None if not from_memory else from_memory.get("description"))
     if last_seen is not None:
         age = _recall.describe_age(last_seen["age_s"])
         dist, bearing = last_seen.get("distance_m"), last_seen.get("bearing_deg")
@@ -626,7 +701,7 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
                     return ("My camera feed isn't giving me a fresh image right now, "
                             "so I can't look for it.")
                 try:
-                    uv = _vlm_locate(frame, description)
+                    uv = _locate(frame, description, "from_here")
                 except Exception as e:
                     return (f"I couldn't analyse the camera image (vision model error: "
                             f"{type(e).__name__}). Try again in a moment.")
@@ -669,7 +744,7 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
                     return ("My camera feed isn't giving me a fresh image right now, "
                             "so I can't look for it.")
                 try:
-                    uv = _vlm_locate(frame, description)
+                    uv = _locate(frame, description, "at_its_spot")
                 except Exception as e:
                     return (f"I couldn't analyse the camera image (vision model error: "
                             f"{type(e).__name__}). Try again in a moment.")
@@ -741,7 +816,7 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
                 return ("My camera feed isn't giving me a fresh image right now, "
                         "so I can't look for it.", None, None, len(seen))
             try:
-                uv = _vlm_locate(frame, description)
+                uv = _locate(frame, description, f"search{offset}")
             except Exception as e:
                 return (f"I couldn't analyse the camera image (vision model error: "
                         f"{type(e).__name__}). Try again in a moment.", None, None, len(seen))
@@ -776,6 +851,8 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
         _say(bridge, state, f"The {name} isn't around here. I'll look from another spot."
              if spots == 1 else "Not here either. Trying another spot.")
         leg = bridge.reach_and_wait(round(vp[0], 2), round(vp[1], 2), round(vp[2], 1))
+        _trail("spot", description, to=(round(vp[0], 2), round(vp[1], 2)), ok=leg.get("ok"),
+               result=leg.get("result"), why=leg.get("why"))
         if leg.get("result") == "interrupted":
             return f"Stopped searching for the {name}."
         if not leg.get("ok"):
@@ -801,6 +878,9 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
         return (note + f"{where}, but I couldn't spot the {name} anywhere.")
 
     res, capture = _ground_retrying(bridge, description, uv, capture)
+    _o = res.get("object") or {}
+    _trail("ground", description, ok=res.get("ok"), reason=res.get("reason"), depth=res.get("depth_m"),
+           obj=(round(_o["x"], 2), round(_o["y"], 2), round(_o.get("z", 0), 2)) if "x" in _o else None)
     if not res.get("ok"):
         reason = res.get("reason", "unknown")
         if reason == "no_reply_from_jetson":
@@ -817,6 +897,9 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
         return (f"{drove_over}I can see the {name}, but I couldn't measure how "
                 f"far it is: {help_text}. I have not driven to it.")
 
+    res, capture = _closer_look(bridge, description, name, state, res, capture)
+    if bridge.motion_interrupted():
+        return f"Stopped going to the {name}."
     obj = res.get("object")
     if placed and obj and at_its_spot:
         moved = math.hypot(obj["x"] - placed["x"], obj["y"] - placed["y"])
@@ -824,6 +907,17 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
                 else f"It has moved about {moved:.1f} m since I last saw it. ")
 
     goal = res["goal"]
+    try:
+        cam_z = float((res.get("camera") or {}).get("t")[2])
+    except (TypeError, IndexError, ValueError):
+        cam_z = None
+    standoff = view_standoff((obj or {}).get("z"), cam_z)
+    pose = bridge.get_current_pose()
+    if standoff > _STANDOFF_M + 0.02 and obj and pose:
+        gx, gy, gyaw = compute_standoff_goal(pose[0], pose[1], obj["x"], obj["y"], standoff)
+        goal = {"x": gx, "y": gy, "yaw": math.radians(gyaw)}
+        _trail("standoff", description, metres=round(standoff, 2),
+               object_z=obj.get("z"), camera_z=cam_z)
     if job is not None:
         with _job_lock:
             if job["superseded"]:       # asked for something else meanwhile
@@ -837,6 +931,49 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
                              label=f"near the {name}")
     return (note + f"I can see the {name} — about {res['depth_m']:.1f} m away. "
             + _STARTED)
+
+
+# ── A closer look before the last metre (2026-11-18) ──────────────────────────
+# "go near the helmet", a helmet on the floor 1.9 m away: the vision model's box
+# was on the WALL above it (Gemma's x is good, its y is off by up to ~45 px, and
+# a far helmet is ~40 px tall). Depth inside that box was the wall, 0.7 m up; the
+# robot reached the helmet only because the wall was behind it. The earlier "go
+# near the helmet" drove to a black bag. So a far find is a DIRECTION: drive to
+# CLOSER_LOOK_TO_M short of where it was measured, look again -- the thing is
+# twice the size in the photo -- and measure again. Not found the second time:
+# the first measurement stands (the arrival check still runs at the end).
+CLOSER_LOOK_BEYOND_M = float(os.environ.get("LANGROBO_CLOSER_LOOK_BEYOND_M", "1.5"))
+CLOSER_LOOK_TO_M = 1.0
+
+
+def _closer_look(bridge, description: str, name: str, state, res: dict, capture):
+    """(res, capture): a fresh, closer measurement of a far find, or the old one."""
+    obj, pose = res.get("object") or {}, bridge.get_current_pose()
+    if not (res.get("ok") and "x" in obj and pose and CLOSER_LOOK_BEYOND_M > 0):
+        return res, capture
+    far = math.hypot(obj["x"] - pose[0], obj["y"] - pose[1])
+    if far <= CLOSER_LOOK_BEYOND_M:
+        return res, capture
+    gx, gy, gyaw = compute_standoff_goal(pose[0], pose[1], obj["x"], obj["y"], CLOSER_LOOK_TO_M)
+    _trail("closer", description, from_m=round(far, 2), to=(round(gx, 2), round(gy, 2)))
+    _say(bridge, state, f"I see the {name}. Getting closer to check.")
+    leg = bridge.reach_and_wait(round(gx, 2), round(gy, 2), round(gyaw, 1))
+    if not leg.get("ok"):
+        return res, capture             # couldn't get closer: drive on the first measurement
+    frame, fresh = _capture(bridge, source="closer")
+    if frame is None:
+        return res, capture
+    try:
+        uv = _locate(frame, description, "closer")
+    except Exception:
+        return res, capture
+    if uv is None:
+        return res, capture
+    res2, fresh = _ground_retrying(bridge, description, uv, fresh)
+    o2 = res2.get("object") or {}
+    _trail("ground2", description, ok=res2.get("ok"), depth=res2.get("depth_m"),
+           obj=(round(o2["x"], 2), round(o2["y"], 2), round(o2.get("z", 0), 2)) if "x" in o2 else None)
+    return (res2, fresh) if res2.get("ok") else (res, capture)
 
 
 def arrival_check(description: str) -> str:
@@ -857,7 +994,7 @@ def arrival_check(description: str) -> str:
         frame, capture = _capture(bridge, source="arrival")
         if frame is None:
             return ""
-        uv = _vlm_locate(frame, description)
+        uv = _locate(frame, description, "arrival")
         if uv is None:
             return (f" But I can't see the {name} in front of me now -- it may have "
                     f"moved, or I may be facing away from it.")

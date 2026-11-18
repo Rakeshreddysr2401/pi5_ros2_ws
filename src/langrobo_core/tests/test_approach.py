@@ -151,3 +151,80 @@ def test_approach_admits_a_dead_camera(monkeypatch):
 def test_list_saved_locations():
     out = list_saved_locations.invoke({})
     assert "kitchen" in out or "No locations saved" in out
+
+
+# ── Park where the camera still sees it (2026-11-18) ──────────────────────────
+
+def test_view_standoff_backs_off_for_things_above_or_below_the_lens():
+    assert ap.view_standoff(None, 0.175) == ap._STANDOFF_M
+    assert ap.view_standoff(0.18, 0.175) == ap._STANDOFF_M          # level with the lens
+    assert ap.view_standoff(0.45, 0.175) > 0.8                       # on a shelf
+    assert ap.view_standoff(5.0, 0.175) == ap._MAX_VIEW_STANDOFF_M   # capped
+
+
+def _drive_to(monkeypatch, object_z):
+    monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5, source="search": (b"jpeg", None))
+    monkeypatch.setattr(ap, "_vlm_locate", lambda frame, desc: (100.0, 50.0))
+    monkeypatch.setattr(_bridge.get(), "get_current_pose", lambda: (0.0, 0.0, 0.0))
+    goals = []
+    monkeypatch.setattr(_bridge.get(), "ground_pixel",
+                        lambda u, v, timeout=4.0, stamp=None, box=None, what=None: {
+                            "ok": True, "depth_m": 2.0,
+                            "object": {"x": 2.0, "y": 0.0, "z": object_z},
+                            "camera": {"t": [0.16, 0.0, 0.175]},
+                            "goal": {"x": 1.55, "y": 0.0, "yaw": 0.0}})
+    monkeypatch.setattr(_bridge.get(), "start_nav_to_pose", lambda *a, **k: goals.append(a))
+    approach_described_object.invoke({"description": "blue bottle", "state": dict(VOICE_STATE)})
+    assert goals
+    return goals[-1]
+
+
+def test_approach_parks_farther_back_from_a_thing_up_on_a_shelf(monkeypatch):
+    x, y, yaw = _drive_to(monkeypatch, object_z=0.5)[:3]
+    assert x == pytest.approx(2.0 - ap.view_standoff(0.5, 0.175), abs=0.01)
+    assert x < 1.3 and y == pytest.approx(0.0) and yaw == pytest.approx(0.0)
+
+
+def test_approach_keeps_the_jetson_goal_for_a_thing_at_lens_height(monkeypatch):
+    x, y, _ = _drive_to(monkeypatch, object_z=0.17)[:3]
+    assert (x, y) == pytest.approx((1.55, 0.0))
+
+
+# ── A closer look before the last metre (2026-11-18) ──────────────────────────
+
+def _far_find(monkeypatch, second_box, leg=None):
+    shots = iter([(100.0, 50.0, None), second_box])
+    monkeypatch.setattr(ap, "_capture", lambda b, settle_s=2.5, source="search": (b"jpeg", None))
+    monkeypatch.setattr(ap, "_vlm_locate", lambda frame, desc: next(shots))
+    monkeypatch.setattr(_bridge.get(), "get_current_pose", lambda: (0.0, 0.0, 0.0))
+    legs, goals = [], []
+    monkeypatch.setattr(_bridge.get(), "reach_and_wait",
+                        lambda x, y, yaw, timeout=240.0: legs.append((x, y)) or (leg or {"ok": True}))
+    measured = iter([
+        {"ok": True, "depth_m": 2.5, "object": {"x": 2.5, "y": 0.0, "z": 0.18},
+         "goal": {"x": 2.05, "y": 0.0, "yaw": 0.0}},            # first, far: the wall
+        {"ok": True, "depth_m": 1.0, "object": {"x": 2.0, "y": 0.3, "z": 0.18},
+         "goal": {"x": 1.6, "y": 0.25, "yaw": 0.0}},            # closer: the thing itself
+    ])
+    monkeypatch.setattr(_bridge.get(), "ground_pixel",
+                        lambda u, v, timeout=4.0, stamp=None, box=None, what=None: next(measured))
+    monkeypatch.setattr(_bridge.get(), "start_nav_to_pose", lambda *a, **k: goals.append(a))
+    out = approach_described_object.invoke({"description": "helmet", "state": dict(VOICE_STATE)})
+    return out, legs, goals
+
+
+def test_a_far_find_is_looked_at_again_from_closer_and_driven_on_the_new_measurement(monkeypatch):
+    out, legs, goals = _far_find(monkeypatch, (120.0, 60.0, None))
+    assert legs == [(1.5, 0.0)]                        # 1.0 m short of the first measurement
+    assert goals and goals[-1][:2] == (1.6, 0.25)      # the closer measurement's goal
+
+
+def test_not_found_from_closer_keeps_the_first_measurement(monkeypatch):
+    out, legs, goals = _far_find(monkeypatch, None)
+    assert legs and goals[-1][:2] == (2.05, 0.0)
+
+
+def test_a_close_find_needs_no_closer_look(monkeypatch):
+    monkeypatch.setattr(ap, "CLOSER_LOOK_BEYOND_M", 5.0)
+    out, legs, goals = _far_find(monkeypatch, (120.0, 60.0, None))
+    assert legs == [] and goals[-1][:2] == (2.05, 0.0)
