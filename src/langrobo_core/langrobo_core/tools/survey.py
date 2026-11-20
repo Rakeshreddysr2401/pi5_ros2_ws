@@ -100,6 +100,7 @@ _cv = threading.Condition()
 _paused = 0
 _thread: threading.Thread | None = None
 _busy_probe = lambda: False       # noqa: E731 -- set by agent_node
+server_slots: int | None = None   # llama.cpp --parallel, as agent_node probed it (fit_slot)
 stats = {"photos": 0, "objects": 0, "skipped": 0, "errors": 0, "yielded": 0,
          "last_error": None, "last_photo_at": None}
 
@@ -130,8 +131,9 @@ def fit_slot(total_slots: int | None, agent_vision_slot: int | None) -> int | No
       * locate/approach, which the user is waiting on, use local_agent's slot
         (the pre-2026-09-29 behaviour: it works, at the cost of that cache).
     A failed probe (None) leaves everything as configured."""
-    global VISION_TOOL_SLOT, _agent_vision_slot
+    global VISION_TOOL_SLOT, _agent_vision_slot, server_slots
     _agent_vision_slot = agent_vision_slot
+    server_slots = total_slots
     if total_slots and VISION_TOOL_SLOT is not None and VISION_TOOL_SLOT >= total_slots:
         VISION_TOOL_SLOT = None
     return VISION_TOOL_SLOT

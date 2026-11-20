@@ -230,12 +230,129 @@ def _trail(step: str, description: str, frame: bytes | None = None,
         logger.debug("find trail failed: %s", e)
 
 
-def _locate(frame: bytes, description: str, step: str) -> tuple | None:
-    """_vlm_locate, with the find trail."""
+def _locate(frame: bytes, description: str, step: str, check: tuple | None = None) -> tuple | None:
+    """_vlm_locate, with the find trail. check = (bridge, capture, avoid): measure
+    a find at once and drop it if it cannot be the thing (_implausible) -- the
+    search then goes on to its next view instead of driving to it."""
     uv = _vlm_locate(frame, description)
-    _trail(step, description, frame, uv,
-           found=uv is not None, at=None if uv is None else (round(uv[0]), round(uv[1])))
-    return uv
+    why = None
+    if uv is not None and check is not None:
+        why = _implausible(check[0], uv, check[1], description, check[2], frame)
+    _trail(step, description, frame, None if why else uv, found=uv is not None and not why,
+           at=None if uv is None else (round(uv[0]), round(uv[1])), rejected=why)
+    return None if why else uv
+
+
+# ── A find that cannot be the thing (2026-11-18) ──────────────────────────────
+# "go near the black bottle on the floor": a view "found" it as an 18 x 18 px box
+# at 0.48 m -- 4 cm across, a scrap at the foot of a shelf. The robot drove there
+# and the arrival check saw no bottle. A find is now measured at once (depth at the
+# photo, as the drive would be) and dropped when it is under MIN_FIND_M across, or
+# where an earlier drive for the same thing found nothing (`avoid`, the re-search
+# after a failed arrival check). Depth failing is NOT a reason: that is reported
+# by the main path as before.
+MIN_FIND_M = float(os.environ.get("LANGROBO_MIN_FIND_M", "0.05"))
+_measured = None            # (key, result): the last find _implausible measured
+_FLOOR_FINDS = os.environ.get("LANGROBO_FLOOR_FINDS", "0") == "1"
+_FOCAL_PX = 225.0           # D555 colour at 448 x 252 (camera_info fx = fy = 225)
+_AVOID_M = 0.35
+
+
+def _implausible(bridge, uv: tuple, capture: dict | None, description: str, avoid,
+                 frame: bytes | None = None) -> str | None:
+    """Why this find cannot be the thing, or None. Its measurement is kept for
+    the very next _ground of the same find, so a kept find costs no second query."""
+    global _measured
+    box = uv[2] if len(uv) > 2 else None
+    try:
+        res = _ground(bridge, uv, capture, description)
+    except Exception:
+        return None
+    u, v = uv[0], uv[1]
+    _measured = ((u, v, tuple(box) if box else None, (capture or {}).get("stamp"), description,
+                  id(capture)), res)
+    if not res.get("ok"):
+        return None
+    obj, depth = res.get("object") or {}, res.get("depth_m")
+    # Nothing in the box stands above the floor (the Jetson's FLOOR_Z, 4 cm):
+    # "the black bottle on the floor" was boxed on a marble vein, twice, and the
+    # arrival check agreed -- a false success (2026-11-18). The price: a thing
+    # lying flatter than 4 cm cannot be a target (LANGROBO_FLOOR_FINDS=1 allows it).
+    if box and res.get("region") is False and not _FLOOR_FINDS:
+        _measured = None
+        return "only_floor_in_the_box"
+    if box and depth:
+        size = max(box[2] - box[0], box[3] - box[1]) * depth / _FOCAL_PX
+        if size < MIN_FIND_M:
+            _measured = None
+            return f"{size * 100:.0f}cm_across"
+    if "x" in obj:
+        for ax, ay in avoid or ():
+            if math.hypot(obj["x"] - ax, obj["y"] - ay) < _AVOID_M:
+                _measured = None
+                return "already_checked_there"
+    if box and frame is not None and not _crop_says_yes(frame, box, description):
+        _measured = None
+        return "not_it_up_close"
+    return None
+
+
+# ── A second look, zoomed in (2026-11-19) ─────────────────────────────────────
+# The search judges a spot in a whole-room photo: a cable plug and a detergent
+# pack were each "the black bottle on the floor" (floor test 2026-11-19). The box,
+# cropped with a margin and enlarged, is asked "is this <description>?". It runs on
+# VERIFY_SLOT, the voice filter's slot (idle since 2026-10-12): on the vision-tool
+# slot a one-photo prompt would throw out the photo log's cache (photo_recall,
+# THE REWIND LIMIT). No such slot on the server, or the call fails: no check.
+VERIFY_SLOT = 4
+VERIFY = os.environ.get("LANGROBO_VERIFY_FINDS", "1") != "0"
+_CROP_MIN_PX = 112
+
+
+def crop_for_check(frame: bytes, box) -> bytes:
+    """The box with half its size again around it (at least _CROP_MIN_PX), enlarged
+    to ~448 px wide, as JPEG. Pure."""
+    import io
+
+    from PIL import Image
+    im = Image.open(io.BytesIO(frame)).convert("RGB")
+    x0, y0, x1, y1 = box
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    half = max(_CROP_MIN_PX, 1.5 * max(x1 - x0, y1 - y0)) / 2
+    c = im.crop((max(0, cx - half), max(0, cy - half), min(im.width, cx + half), min(im.height, cy + half)))
+    scale = 448 / max(c.width, c.height)
+    if scale > 1:
+        c = c.resize((round(c.width * scale), round(c.height * scale)), Image.LANCZOS)
+    out = io.BytesIO()
+    c.save(out, "JPEG", quality=90)
+    return out.getvalue()
+
+
+def _crop_says_yes(frame: bytes, box, description: str) -> bool:
+    """True unless the zoomed-in check clearly says no."""
+    if not VERIFY or not (_survey.server_slots and _survey.server_slots > VERIFY_SLOT):
+        return True
+    import base64
+
+    from langchain_core.messages import HumanMessage
+
+    from ..services.llm import get_llm
+    from ..utils.speech_stream import strip_thought_residue
+    try:
+        jpeg = crop_for_check(frame, box)
+        llm = get_llm("local_agent", slot=VERIFY_SLOT, streaming=False, max_tokens=4)
+        reply = llm.invoke([HumanMessage(content=[
+            {"type": "text", "text": (f'Is the object in the middle of this picture "{description}"? '
+                                      "Answer only yes or no.")},
+            {"type": "image_url", "image_url": {
+                "url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()}},
+        ])], config={"run_name": "verify_find", "tags": ["verify_find"]})
+        said = strip_thought_residue(str(reply.content)).strip().lower()
+    except Exception as e:
+        logger.warning("zoomed check failed (%s): kept the find", e)
+        return True
+    _trail("zoomed", description, jpeg, None, said=said[:10])
+    return not said.startswith("no")
 
 
 def _capture(bridge, settle_s: float = 2.5, source: str = "search") -> tuple:
@@ -315,6 +432,11 @@ def _ground(bridge, uv: tuple, capture: dict | None, what: str | None = None) ->
     u, v, *rest = uv
     box = rest[0] if rest else None
     stamp = (capture or {}).get("stamp")
+    global _measured
+    key = (u, v, tuple(box) if box else None, stamp, what, id(capture))
+    kept, _measured = _measured, None
+    if kept is not None and kept[0] == key:
+        return kept[1]                  # measured a moment ago by _implausible: same find
     res = bridge.ground_pixel(u, v, stamp=stamp, box=box, what=what)
     if stamp and not res.get("ok") and res.get("reason") in _REGROUND_REASONS:
         then, now = capture.get("pose"), bridge.get_current_pose()
@@ -560,7 +682,9 @@ def _already_after(bridge, name: str) -> str | None:
     return None
 
 
-def _start_search(bridge, description: str, name: str, state: dict, then: str) -> str:
+def _start_search(bridge, description: str, name: str, state: dict, then: str,
+                  **extra) -> str:
+    """extra: job fields for _approach -- retry=True, avoid=[(x, y)] (arrival_check)."""
     global _job
     with _job_lock:
         prev = _job
@@ -572,7 +696,7 @@ def _start_search(bridge, description: str, name: str, state: dict, then: str) -
         job = {"name": name, "description": description, "then": then, "state": dict(state or {}),
                "requester": _notices.requester_of(state), "since": time.time(),
                "superseded": False, "detached": False, "done": threading.Event(),
-               "result": None, "prev": prev}
+               "result": None, "prev": prev, **extra}
         job["thread"] = threading.Thread(target=_run_search, args=(job,), daemon=True,
                                          name=f"search:{name[:20]}")
         _job = job
@@ -662,9 +786,14 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
     #   b) not seen from here -- far away, hidden, an old photo: DRIVE to a
     #      viewpoint in front of where it was and look there; still not
     #      there -> search AROUND THAT SPOT (step 2 runs there).
+    # A re-search after a failed arrival check (arrival_check): the photos and
+    # memory just led to the wrong place, so straight to looking around, and
+    # never back to the spot that was checked.
+    avoid = list((job or {}).get("avoid") or [])
+    retry = bool((job or {}).get("retry"))
     last_seen = None     # the photo-log answer
     try:
-        last_seen = _recall.ask(f"where is {description}?")
+        last_seen = None if retry else _recall.ask(f"where is {description}?")
     except Exception:
         last_seen = None # the vision model failed: the search still works
     if not (last_seen and last_seen.get("ok") and last_seen.get("photo") is not None):
@@ -674,7 +803,7 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
     # shape as the photo answer, so the same steps follow: face it or drive to a
     # viewpoint, and LOOK before going near.
     from_memory = None
-    if last_seen is None:
+    if last_seen is None and not retry:
         last_seen, from_memory = _from_memory(bridge, description)
     placed = (last_seen or {}).get("placed")
     _trail("recall", description, source="memory" if from_memory else ("photos" if last_seen else "none"),
@@ -701,7 +830,7 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
                     return ("My camera feed isn't giving me a fresh image right now, "
                             "so I can't look for it.")
                 try:
-                    uv = _locate(frame, description, "from_here")
+                    uv = _locate(frame, description, "from_here", check=(bridge, capture, avoid))
                 except Exception as e:
                     return (f"I couldn't analyse the camera image (vision model error: "
                             f"{type(e).__name__}). Try again in a moment.")
@@ -744,7 +873,7 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
                     return ("My camera feed isn't giving me a fresh image right now, "
                             "so I can't look for it.")
                 try:
-                    uv = _locate(frame, description, "at_its_spot")
+                    uv = _locate(frame, description, "at_its_spot", check=(bridge, capture, avoid))
                 except Exception as e:
                     return (f"I couldn't analyse the camera image (vision model error: "
                             f"{type(e).__name__}). Try again in a moment.")
@@ -816,7 +945,7 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
                 return ("My camera feed isn't giving me a fresh image right now, "
                         "so I can't look for it.", None, None, len(seen))
             try:
-                uv = _locate(frame, description, f"search{offset}")
+                uv = _locate(frame, description, f"search{offset}", check=(bridge, capture, avoid))
             except Exception as e:
                 return (f"I couldn't analyse the camera image (vision model error: "
                         f"{type(e).__name__}). Try again in a moment.", None, None, len(seen))
@@ -865,6 +994,14 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
         if uv is not None:
             capture = found_capture
 
+    target = description                # what the drive and its arrival check look for
+    if uv is None and not retry:
+        found = _by_simpler_words(bridge, description, avoid)
+        if found is not None:
+            target, uv, capture = found
+            note = (f"I couldn't find a {name}, but I found a {target}, so I'm going to "
+                    f"that. ")
+            name = target
     if uv is None and spots == 1 and cut_short:
         return (note + f"I couldn't turn either way to keep looking for the {name} "
                 f"({cut_short[0]}). It isn't in the {cut_short[1]} view(s) I checked.")
@@ -877,9 +1014,9 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
                     f"couldn't find it -- someone may have moved it.")
         return (note + f"{where}, but I couldn't spot the {name} anywhere.")
 
-    res, capture = _ground_retrying(bridge, description, uv, capture)
+    res, capture = _ground_retrying(bridge, target, uv, capture)
     _o = res.get("object") or {}
-    _trail("ground", description, ok=res.get("ok"), reason=res.get("reason"), depth=res.get("depth_m"),
+    _trail("ground", target, ok=res.get("ok"), reason=res.get("reason"), depth=res.get("depth_m"),
            obj=(round(_o["x"], 2), round(_o["y"], 2), round(_o.get("z", 0), 2)) if "x" in _o else None)
     if not res.get("ok"):
         reason = res.get("reason", "unknown")
@@ -897,11 +1034,11 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
         return (f"{drove_over}I can see the {name}, but I couldn't measure how "
                 f"far it is: {help_text}. I have not driven to it.")
 
-    res, capture = _closer_look(bridge, description, name, state, res, capture)
+    res, capture = _closer_look(bridge, target, name, state, res, capture, avoid)
     if bridge.motion_interrupted():
         return f"Stopped going to the {name}."
     obj = res.get("object")
-    if placed and obj and at_its_spot:
+    if placed and obj and at_its_spot and target == description:
         moved = math.hypot(obj["x"] - placed["x"], obj["y"] - placed["y"])
         note = ("It's still where I saw it. " if moved <= object_memory.SAME_OBJECT_M
                 else f"It has moved about {moved:.1f} m since I last saw it. ")
@@ -916,7 +1053,7 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
     if standoff > _STANDOFF_M + 0.02 and obj and pose:
         gx, gy, gyaw = compute_standoff_goal(pose[0], pose[1], obj["x"], obj["y"], standoff)
         goal = {"x": gx, "y": gy, "yaw": math.radians(gyaw)}
-        _trail("standoff", description, metres=round(standoff, 2),
+        _trail("standoff", target, metres=round(standoff, 2),
                object_z=obj.get("z"), camera_z=cam_z)
     if job is not None:
         with _job_lock:
@@ -925,7 +1062,10 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
             then = job["then"]          # errands added while it searched
     # Nav completion arrives minutes later as a [SYSTEM] turn — remember who
     # asked so a Telegram-initiated approach reports back to that chat.
-    _mv.remember_requester(state, then, target=description)
+    if job is not None and obj:
+        job["found_at"] = (obj["x"], obj["y"])   # for a re-search if it is not there
+        job["target"] = target
+    _mv.remember_requester(state, then, target=target)
     bridge.start_nav_to_pose(round(goal["x"], 2), round(goal["y"], 2),
                              round(math.degrees(goal["yaw"]), 1),
                              label=f"near the {name}")
@@ -946,7 +1086,7 @@ CLOSER_LOOK_BEYOND_M = float(os.environ.get("LANGROBO_CLOSER_LOOK_BEYOND_M", "1.
 CLOSER_LOOK_TO_M = 1.0
 
 
-def _closer_look(bridge, description: str, name: str, state, res: dict, capture):
+def _closer_look(bridge, description: str, name: str, state, res: dict, capture, avoid=()):
     """(res, capture): a fresh, closer measurement of a far find, or the old one."""
     obj, pose = res.get("object") or {}, bridge.get_current_pose()
     if not (res.get("ok") and "x" in obj and pose and CLOSER_LOOK_BEYOND_M > 0):
@@ -964,7 +1104,7 @@ def _closer_look(bridge, description: str, name: str, state, res: dict, capture)
     if frame is None:
         return res, capture
     try:
-        uv = _locate(frame, description, "closer")
+        uv = _locate(frame, description, "closer", check=(bridge, fresh, avoid))
     except Exception:
         return res, capture
     if uv is None:
@@ -975,6 +1115,62 @@ def _closer_look(bridge, description: str, name: str, state, res: dict, capture)
            obj=(round(o2["x"], 2), round(o2["y"], 2), round(o2.get("z", 0), 2)) if "x" in o2 else None)
     return (res2, fresh) if res2.get("ok") else (res, capture)
 
+
+
+# ── Misheard words (2026-11-18) ───────────────────────────────────────────────
+# "go near the white chair", transcribed "the life chair": every view of the
+# search asked for "the life chair", the vision model rightly found none -- with
+# the white chair in the middle of the second photo. After a search finds
+# nothing, the simpler words -- the colours and the kind of thing, the rest
+# dropped ("life chair" -> "chair", "black bottle on the floor" -> "black
+# bottle") -- are asked over the photos already taken (no more turning), and
+# the person is told what was found instead.
+def simpler_words(description: str) -> str | None:
+    """The colours + the kind of thing, or None when that is all there is. Pure."""
+    tokens = object_memory._tokens(description)
+    head = object_memory._head(tokens)
+    if not head:
+        return None
+    keep = [t for t in tokens if t in object_memory._COLOURS] + [head]
+    return " ".join(keep) if len(keep) < len(tokens) else None
+
+
+def _by_simpler_words(bridge, description: str, avoid) -> tuple | None:
+    """(simpler words, uv, capture) for a find in the photos, or None."""
+    simple = simpler_words(description)
+    if not simple:
+        return None
+    try:
+        r = _recall.ask(f"where is the {simple}?")
+    except Exception:
+        return None
+    rec = _photos.get(r.get("photo")) if r.get("ok") and r.get("photo") is not None else None
+    box = r.get("box")
+    if rec is None or not box:
+        _trail("simpler", simple, found=False)
+        return None
+    uv = ((box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0, box)
+    capture = {"stamp": rec.get("stamp"), "pose": rec.get("pose"), "when": rec.get("when")}
+    why = _implausible(bridge, uv, capture, simple, avoid, rec.get("jpeg"))
+    _trail("simpler", simple, rec.get("jpeg"), None if why else uv,
+           found=not why, photo=rec["n"], instead_of=description, rejected=why)
+    return None if why else (simple, uv, capture)
+
+
+# ── Not there on arrival: look around once more (2026-11-18) ─────────────────
+# The arrival check saw no black bottle -- the search had found a scrap -- and the
+# robot just said so and stopped. Now it searches again from where it is, once,
+# skipping the spot it drove to; the result is reported as any search's is.
+def _search_again(bridge, description: str) -> bool:
+    job = _job
+    if not (job and not job.get("retry") and job.get("found_at")
+            and (job.get("target") or job["description"]) == description
+            and _notices.available()):
+        return False
+    _trail("research", description, avoid=job["found_at"])
+    _start_search(bridge, description, _short_name(description), job["state"], job["then"],
+                  retry=True, avoid=list(job.get("avoid") or []) + [job["found_at"]])
+    return True
 
 def arrival_check(description: str) -> str:
     """Is the object really in front of the robot now that it has arrived?
@@ -994,8 +1190,11 @@ def arrival_check(description: str) -> str:
         frame, capture = _capture(bridge, source="arrival")
         if frame is None:
             return ""
-        uv = _locate(frame, description, "arrival")
+        uv = _locate(frame, description, "arrival", check=(bridge, capture, ()))
         if uv is None:
+            if _search_again(bridge, description):
+                return (f" But I can't see the {name} in front of me now, so I'm "
+                        f"looking around here once more.")
             return (f" But I can't see the {name} in front of me now -- it may have "
                     f"moved, or I may be facing away from it.")
         res = _ground(bridge, uv, capture, description)
