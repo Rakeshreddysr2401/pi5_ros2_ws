@@ -1,0 +1,48 @@
+#!/bin/zsh
+# kmem -- KINO's frame memory on the Mac mini: EmbeddingGemma 2 (llama-server, CPU, :8093) + kino_memory (:8094).
+#
+#   kmem          start both (after e12b5, after a power-on; nothing starts at login, like e12b5)
+#   kmem stop     stop both
+#   kmem status   up?, frames, queue, embed time, RAM
+#   kmem log      follow the service log
+#
+# Why CPU: measured 2026-11-21 -- 0.45 s per image, Gemma 4's replies unchanged while it embeds
+# (photo 1.86 -> 1.95 s, text 2.36 -> 2.34 s); the GPU stays Gemma's. Design: Pi 5 ~/ros2_ws
+# docs/plans/FRAME_MEMORY.md.
+set -u
+H=$HOME/kino-memory
+B=$HOME/llama.cpp-embed/llama-b11753
+M=$HOME/llm_models/embeddinggemma-2
+LOG=$HOME/Library/Logs
+
+up() { curl -sf "localhost:$1/$2" >/dev/null; }
+
+start() {
+  if ! up 8093 health; then
+    "$B/llama-server" -m "$M/embeddinggemma-2-Q8_0.gguf" --mmproj "$M/mmproj-Q8_0.gguf" --embedding --pooling mean \
+      --image-min-tokens 70 --image-max-tokens 70 -c 4096 -ub 2048 -b 2048 -ngl 0 --no-mmproj-offload -t 4 -np 1 \
+      --host 127.0.0.1 --port 8093 > "$LOG/kmem-eg2.log" 2>&1 &
+    for i in {1..60}; do up 8093 health && break; sleep 1; done
+  fi
+  up 8093 health || { echo "EmbeddingGemma 2 did not start: $LOG/kmem-eg2.log"; return 1; }
+  if ! up 8094 status; then
+    "$H/venv/bin/python" "$H/kino_memory.py" >> "$LOG/kmem.log" 2>&1 &
+    for i in {1..60}; do up 8094 status && break; sleep 1; done
+  fi
+  up 8094 status || { echo "kino_memory did not start: $LOG/kmem.log"; return 1; }
+  status
+}
+
+stop() { pkill -f "kino_memory.py"; pkill -f "llama-server.*--port 8093"; echo stopped; }
+
+status() {
+  echo "EmbeddingGemma 2 :8093  $(up 8093 health && echo up || echo DOWN)"
+  echo "kino_memory     :8094  $(curl -sf localhost:8094/status || echo DOWN)"
+  ps -o rss=,command= -p $(pgrep -f "port 8093|kino_memory.py" | tr '\n' ',' | sed 's/,$//') 2>/dev/null \
+    | awk '{printf "  %5.0f MB  %s\n", $1/1024, $2}'
+}
+
+case "${1:-start}" in
+  start) start ;; stop) stop ;; status) status ;; log) tail -f "$LOG/kmem.log" ;;
+  *) echo "kmem [start|stop|status|log]" ;;
+esac
