@@ -53,3 +53,14 @@ def _teleop_reads_auto(request, monkeypatch):
         return
     from langrobo_core.tools import movement
     monkeypatch.setattr(movement, "teleop_is_manual", lambda: False)
+
+
+@pytest.fixture(autouse=True)
+def _no_live_frame_memory(request, monkeypatch):
+    """approach.py asks the LIVE frame memory on the Mac first (tools/frame_memory.py). On the robot it is
+    up, so 26 tests took other paths -- they found the real helmet (2026-11-21). Every test sees it off --
+    except test_frame_memory.py, which tests it with its own fakes."""
+    if request.module.__name__.endswith("test_frame_memory"):
+        return
+    from langrobo_core.tools import frame_memory
+    monkeypatch.setattr(frame_memory, "ENABLED", False)

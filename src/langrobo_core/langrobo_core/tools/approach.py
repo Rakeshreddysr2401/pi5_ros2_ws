@@ -35,6 +35,7 @@ from langgraph.prebuilt import InjectedState
 from ..services import notices as _notices
 from ..services import object_memory
 from . import _bridge
+from . import frame_memory as _frame_memory
 from . import memory_lookup as _memory_lookup
 from . import movement as _mv
 from . import photo_recall as _recall
@@ -792,12 +793,22 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
     avoid = list((job or {}).get("avoid") or [])
     retry = bool((job or {}).get("retry"))
     last_seen = None     # the photo-log answer
-    try:
-        last_seen = None if retry else _recall.ask(f"where is {description}?")
-    except Exception:
-        last_seen = None # the vision model failed: the search still works
-    if not (last_seen and last_seen.get("ok") and last_seen.get("photo") is not None):
-        last_seen = None
+    # 0. EVERYTHING the robot has seen (frame memory, 2026-11-21: docs/plans/FRAME_MEMORY.md): every
+    # keyframe on the Jetson, searched on the Mac (EmbeddingGemma 2 -> OWLv2 -> check -> Gemma only when
+    # unsure), placed on THAT frame's own depth and pose. Same shape as the photo answer, so the same
+    # steps follow (face it or drive to a viewpoint, and LOOK before going near). Measured on the owner's
+    # room: every accepted box on the right thing, 0/8 absent things "found".
+    from_frames = None
+    if not retry:
+        last_seen, _fm_raw = _frame_memory.sighting(bridge, description)
+        from_frames = last_seen
+    if last_seen is None:
+        try:
+            last_seen = None if retry else _recall.ask(f"where is {description}?")
+        except Exception:
+            last_seen = None # the vision model failed: the search still works
+        if not (last_seen and last_seen.get("ok") and last_seen.get("photo") is not None):
+            last_seen = None
     # Not in the photos of this session: long-term object memory (seen hours or days
     # ago, before a power-off; matched by meaning -- tools/memory_lookup.py). The same
     # shape as the photo answer, so the same steps follow: face it or drive to a
@@ -806,7 +817,8 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
     if last_seen is None and not retry:
         last_seen, from_memory = _from_memory(bridge, description)
     placed = (last_seen or {}).get("placed")
-    _trail("recall", description, source="memory" if from_memory else ("photos" if last_seen else "none"),
+    _trail("recall", description, source="frames" if from_frames else (
+               "memory" if from_memory else ("photos" if last_seen else "none")),
            photo=(last_seen or {}).get("photo"), dist=(last_seen or {}).get("distance_m"),
            bearing=(last_seen or {}).get("bearing_deg"),
            placed=None if not placed else (round(placed["x"], 2), round(placed["y"], 2)),
