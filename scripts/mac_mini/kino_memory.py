@@ -44,6 +44,7 @@ STORE = os.path.join(HOME, 'store')
 EG2 = os.environ.get('KMEM_EG2', 'http://127.0.0.1:8093')
 PORT = int(os.environ.get('KMEM_PORT', '8094'))
 SPREAD_M, SPREAD_DEG, SPREAD_S = 0.30, 15.0, 4.0    # one hit per place and moment
+RECENT_MIN = 0.03                                   # "matches the words at all" (half the maybe-line)
 NEWEST_TOL = 0.02                                   # within this of a place's best score, the newest frame wins
 QUERY_PREFIX = 'task: search result | query: '
 
@@ -175,7 +176,7 @@ def _place(m):
     return m.get('origin'), b.get('x', 0.0), b.get('y', 0.0), b.get('yaw_deg', 0.0), m['stamp_ns'] / 1e9
 
 
-def search(words, k=10):
+def search(words, k=10, recent=False):
     if not len(metas):
         return {'ok': True, 'hits': [], 'frames': 0}
     t = time.time()
@@ -203,12 +204,22 @@ def search(words, k=10):
         twins = [j for j in range(len(M)) if same_place(places[j], places[i]) and score[j] >= score[i] - NEWEST_TOL]
         i = max(twins, key=lambda j: places[j][4])
         taken.append(places[i])
-        m = M[i]
-        hits.append({'id': m['id'], 'score': round(float(score[i]), 4), 'margin': round(float(score[i]) - base, 4),
-                     'tile': ['whole', 'top-left', 'top-right', 'bottom-left', 'bottom-right'][int(best_tile[i])],
-                     'age_s': round(now - places[i][4], 1), 'stamp_ns': m['stamp_ns'], 'origin': m.get('origin'),
-                     'room': m.get('room'), 'base_odom': m.get('base_odom'), 'cam_odom': m.get('cam_odom'),
-                     'map_odom': m.get('map_odom'), 'K': m.get('K'), 'trigger': m.get('trigger')})
+        pick = [i]
+        if recent:
+            # "Where is it NOW": also the NEWEST frame of this place that matches the words at all. A parked
+            # robot makes every frame "this place"; the best-scoring one can be from before the thing was
+            # moved (live 2026-11-21: the bottle moved 0.5 m, the 4 new frames were never checked).
+            fresh = [j for j in range(len(M)) if same_place(places[j], places[i]) and score[j] - base >= RECENT_MIN]
+            newest = max(fresh, key=lambda j: places[j][4]) if fresh else i
+            if newest != i:
+                pick.append(newest)
+        for i in pick:
+            m = M[i]
+            hits.append({'id': m['id'], 'score': round(float(score[i]), 4), 'margin': round(float(score[i]) - base, 4),
+                         'tile': ['whole', 'top-left', 'top-right', 'bottom-left', 'bottom-right'][int(best_tile[i])],
+                         'age_s': round(now - places[i][4], 1), 'stamp_ns': m['stamp_ns'], 'origin': m.get('origin'),
+                         'room': m.get('room'), 'base_odom': m.get('base_odom'), 'cam_odom': m.get('cam_odom'),
+                         'map_odom': m.get('map_odom'), 'K': m.get('K'), 'trigger': m.get('trigger')})
         if len(hits) >= k:
             break
     return {'ok': True, 'query': words, 'frames': len(M), 'baseline': round(base, 4),
@@ -243,7 +254,8 @@ class H(BaseHTTPRequestHandler):
         try:
             if u.path == '/search':
                 p = parse_qs(u.query)
-                return self._send(200, search(p['q'][0], int(p.get('k', ['10'])[0])))
+                return self._send(200, search(p['q'][0], int(p.get('k', ['10'])[0]),
+                                              p.get('recent', ['0'])[0] == '1'))
             if u.path.startswith('/frame/') and u.path.endswith('.jpg'):
                 fid = int(u.path[len('/frame/'):-4])
                 return self._send(200, raw=open(os.path.join(STORE, 'frames', f'{fid}.jpg'), 'rb').read(),

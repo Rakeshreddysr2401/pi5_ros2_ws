@@ -202,7 +202,7 @@ def find(words, n_frames=6, enough=2):
     # match at all, and check them NEWEST first, so the first one confirmed is the latest sighting.
     # (Live 2026-11-21: best-match-first went to a 6 h old view; then with only the top 6, hundreds of
     # older helmet frames crowded out the one from minutes ago.)
-    hits = _get('/search?' + urllib.parse.urlencode({'q': words, 'k': CANDIDATES}))['hits']
+    hits = _get('/search?' + urllib.parse.urlencode({'q': words, 'k': CANDIDATES, 'recent': 1}))['hits']
     hits = [h for h in hits if h['margin'] >= MAYBE / 2]
     hits.sort(key=lambda h: h['stamp_ns'], reverse=True)
     hits = hits[:n_frames]
