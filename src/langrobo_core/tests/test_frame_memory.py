@@ -1,4 +1,7 @@
 """frame_memory: the Mac's find + the Jetson's placement -> approach.py's sighting shape. No network."""
+import json
+
+import pytest
 import langrobo_core.tools.frame_memory as fm
 
 
@@ -64,3 +67,30 @@ def test_switched_off(monkeypatch):
     monkeypatch.setattr(fm, 'ENABLED', False)
     monkeypatch.setattr(fm, '_find', lambda w: 1 / 0)
     assert fm.sighting(FakeBridge(PLACED), 'helmet') == (None, None)
+
+
+class _Resp:
+    def __init__(self, obj):
+        self.obj = obj
+
+    def read(self):
+        return json.dumps(self.obj).encode()
+
+
+def test_check_photo_found_and_not(monkeypatch):
+    replies = iter([{'ok': True, 'found': {'box': [10, 20, 30, 60], 'margin': 0.2, 'decided_by': 'embedding'}},
+                    {'ok': True, 'found': None, 'why_not': 'box_match_too_weak'}])
+    monkeypatch.setattr(fm.urllib.request, 'urlopen', lambda req, timeout=0: _Resp(next(replies)))
+    assert fm.check_photo(b'jpeg', 'the dustbin') == (20.0, 40.0, (10, 20, 30, 60))
+    assert fm.check_photo(b'jpeg', 'the dustbin') is None
+
+
+def test_check_photo_raises_when_the_mac_cannot_answer(monkeypatch):
+    def down(req, timeout=0):
+        raise OSError('no route')
+    monkeypatch.setattr(fm.urllib.request, 'urlopen', down)
+    with pytest.raises(OSError):
+        fm.check_photo(b'jpeg', 'dustbin')
+    monkeypatch.setattr(fm, 'ENABLED', False)
+    with pytest.raises(RuntimeError):
+        fm.check_photo(b'jpeg', 'dustbin')

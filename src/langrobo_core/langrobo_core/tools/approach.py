@@ -235,10 +235,21 @@ def _locate(frame: bytes, description: str, step: str, check: tuple | None = Non
     """_vlm_locate, with the find trail. check = (bridge, capture, avoid): measure
     a find at once and drop it if it cannot be the thing (_implausible) -- the
     search then goes on to its next view instead of driving to it."""
-    uv = _vlm_locate(frame, description)
+    # The checked chain first (frame memory's /find_in on the Mac, 2026-11-21: on the 36 labelled cases
+    # 15/20 found with every box right and 0/16 made up; this Gemma-only look made up 11/16 and, live,
+    # rejected a half-hidden dustbin the memory had right). Its own close-up check replaces
+    # _crop_says_yes; the depth checks below still run. Mac not reachable -> the old look.
+    checked_by_chain = False
+    try:
+        uv = _frame_memory.check_photo(frame, description)
+        checked_by_chain = True
+    except Exception as e:
+        logger.info("find: checked look unavailable (%s), looking the old way", e)
+        uv = _vlm_locate(frame, description)
     why = None
     if uv is not None and check is not None:
-        why = _implausible(check[0], uv, check[1], description, check[2], frame)
+        why = _implausible(check[0], uv, check[1], description, check[2],
+                           None if checked_by_chain else frame)
     _trail(step, description, frame, None if why else uv, found=uv is not None and not why,
            at=None if uv is None else (round(uv[0]), round(uv[1])), rejected=why)
     return None if why else uv

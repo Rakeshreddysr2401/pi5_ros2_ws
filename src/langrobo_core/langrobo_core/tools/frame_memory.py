@@ -89,3 +89,27 @@ def sighting(bridge, description: str) -> tuple:
         logger.info('frame memory: %r found in frame %s but not placed: %s', words, hit['id'],
                     (g or {}).get('reason'))
     return None, raw
+
+
+# ── the same check on a LIVE photo (the robot's fresh look) ──────────────────
+LOOK_TIMEOUT_S = float(os.environ.get('LANGROBO_FRAME_MEMORY_LOOK_TIMEOUT_S', '30'))
+
+
+def check_photo(jpeg: bytes, description: str):
+    """Is `description` in this photo? The Mac's checked chain (OWLv2 -> EmbeddingGemma 2 -> Gemma close-up
+    only when unsure; on the 36 labelled cases: 15/20 found, every box right, 0/16 made up -- the old
+    Gemma-only look made up 11/16). Returns (u, v, box) like approach._vlm_locate, or None (not there).
+    Raises when the Mac cannot be asked -- the caller then looks the old way."""
+    import base64
+    if not ENABLED:
+        raise RuntimeError('frame memory off')
+    body = json.dumps({'words': clean_words(description), 'jpeg': base64.b64encode(jpeg).decode()}).encode()
+    req = urllib.request.Request(URL + '/find_in', body, {'Content-Type': 'application/json'})
+    r = json.load(urllib.request.urlopen(req, timeout=LOOK_TIMEOUT_S))
+    if not r.get('ok'):
+        raise RuntimeError(r.get('reason') or 'find_in failed')
+    f = r.get('found')
+    if not f:
+        return None
+    x0, y0, x1, y1 = f['box']
+    return ((x0 + x1) / 2, (y0 + y1) / 2, (x0, y0, x1, y1))

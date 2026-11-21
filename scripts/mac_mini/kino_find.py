@@ -14,6 +14,8 @@ HTTP, port 8095:
     -> {"ok", "words", "found": [ {frame id, stamp_ns, age_s, box [x0,y0,x1,y1] px, margin, decided_by,
                                    frame_score, room, base_odom} ... newest first ],
         "checked": [...every frame looked at, and why it was not used...], "ms"}
+  POST /find_in {"words": "a dustbin", "jpeg": "<base64>"}     the SAME check on one live photo (the robot's
+    -> {"ok", "found": {"box", "margin", "decided_by", "owl"} | null, "near": {...} | null, "ms"}   fresh look)
   GET /status
 
 The position is NOT computed here: the caller (the Pi brain) asks the Jetson's pixel_to_goal with the
@@ -46,6 +48,7 @@ GIVE_UP_AFTER = 3           # frames in a row with no box even in the unsure ban
 COLOURS = re.compile(r'\b(red|orange|yellow|green|blue|purple|violet|pink|brown|black|white|grey|gray|silver|golden|gold|steel|transparent|dark|light)\b', re.I)
 IDLE_UNLOAD_S = 180.0
 OWL_NAME = 'google/owlv2-base-patch16-ensemble'
+GEMMA_SLOT = int(os.environ.get('KFIND_GEMMA_SLOT', '4'))   # the brain's agents use slots 0-3 of 5
 
 _owl, _owl_used, _owl_lock = None, 0.0, threading.Lock()
 stats = {'finds': 0, 'gemma_asked': 0, 'owl_loads': 0}
@@ -121,7 +124,7 @@ def gemma_yes(im, box, words):
                                   + ('Its colour must match too. ' if COLOURS.search(words) else
                                      'Judge only what kind of thing it is, not its colour or contents. ')
                                   + 'Answer only "yes" or "no".')}]}],
-            'max_tokens': 5, 'temperature': 0}
+            'max_tokens': 5, 'temperature': 0, 'id_slot': GEMMA_SLOT}
     stats['gemma_asked'] += 1
     a = _post(GEMMA + '/v1/chat/completions', body)['choices'][0]['message']['content'].strip().lower()
     return a.startswith('yes'), a
@@ -139,9 +142,55 @@ def gemma_name(im, box):
     body = {'messages': [{'role': 'user', 'content': [
         {'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,' + base64.b64encode(b.getvalue()).decode()}},
         {'type': 'text', 'text': 'Name the main thing in this close-up in 2 to 5 words, with its colour. Only the name.'}]}],
-            'max_tokens': 16, 'temperature': 0}
+            'max_tokens': 16, 'temperature': 0, 'id_slot': GEMMA_SLOT}
     stats['gemma_asked'] += 1
     return _post(GEMMA + '/v1/chat/completions', body)['choices'][0]['message']['content'].strip().strip('.').lower()
+
+
+def judge_image(im, words, verify, gemma_left):
+    """The bake-off's decision on ONE photo. verify(box) -> EG2 margin.
+    Returns (pick, by, best_margin, why_not, near): pick = (margin, box, owl) or None; near = the best
+    candidate Gemma said no to (margin, box) or None."""
+    scored = sorted(((verify(box), box, owl_score) for box, owl_score in owl_boxes(im, words, OWL_TOP)),
+                    key=lambda x: -x[0])
+    if not scored:
+        return None, None, None, 'no_boxes', None
+    if scored[0][0] >= ACCEPT:
+        return scored[0], 'embedding', scored[0][0], None, None
+    why_not, near = None, None
+    for cand in [c for c in scored if c[0] >= MAYBE][:2]:          # the best two unsure boxes
+        if gemma_left[0] <= 0:
+            why_not = 'gemma_budget_used'
+            break
+        gemma_left[0] -= 1
+        yes, ans = gemma_yes(im, cand[1], words)
+        if yes:
+            return cand, 'gemma_closeup', scored[0][0], None, None
+        why_not = f'gemma_said_{ans[:10]}'
+        if near is None or cand[0] > near[0]:
+            near = (cand[0], cand[1])
+    return None, None, scored[0][0], (why_not or 'box_match_too_weak'), near
+
+
+def find_in(words, jpeg_b64):
+    """The same check on one live photo (the robot's fresh look)."""
+    t0 = time.time()
+    words = re.sub(r'\s+', ' ', words.strip())
+    im = Image.open(io.BytesIO(base64.b64decode(jpeg_b64))).convert('RGB')
+
+    def verify(box):
+        return _post(MEM + '/verify', {'jpeg': jpeg_b64, 'box': box, 'words': words})['margin']
+
+    pick, by, best, why_not, near = judge_image(im, words, verify, [2])
+    out = {'ok': True, 'words': words, 'found': None, 'near': None, 'best_margin': best, 'why_not': why_not}
+    if pick:
+        m, box, owl_score = pick
+        out['found'] = {'box': [round(v) for v in box], 'margin': round(m, 3), 'decided_by': by,
+                        'owl': round(owl_score, 3)}
+    elif near:
+        out['near'] = {'box': [round(v) for v in near[1]], 'margin': round(near[0], 3)}
+    out['ms'] = round((time.time() - t0) * 1000)
+    return out
 
 
 def find(words, n_frames=6, enough=2):
@@ -164,35 +213,21 @@ def find(words, n_frames=6, enough=2):
             continue
         jpeg = urllib.request.urlopen(f"{MEM}/frame/{h['id']}.jpg", timeout=30).read()
         im = Image.open(io.BytesIO(jpeg)).convert('RGB')
-        scored = []
-        for box, owl_score in owl_boxes(im, words, OWL_TOP):
-            m = _post(MEM + '/verify', {'id': h['id'], 'box': box, 'words': words})['margin']
-            scored.append((m, box, owl_score))
-        scored.sort(key=lambda x: -x[0])
-        if not scored:
+
+        def verify(box, fid=h['id']):
+            return _post(MEM + '/verify', {'id': fid, 'box': box, 'words': words})['margin']
+
+        pick, by, best, why_not, cand_near = judge_image(im, words, verify, gemma_left)
+        if cand_near and (near is None or cand_near[0] > near[0]):
+            near = (cand_near[0], h, cand_near[1], im)
+        if best is None:
             checked.append({'id': h['id'], 'why': 'no_boxes'})
             continue
-        pick, why_not = None, None
-        if scored[0][0] >= ACCEPT:
-            pick, by = scored[0], 'embedding'
-        else:
-            for cand in [c for c in scored if c[0] >= MAYBE][:2]:      # the best two unsure boxes
-                if gemma_left[0] <= 0:
-                    why_not = 'gemma_budget_used'
-                    break
-                gemma_left[0] -= 1
-                yes, ans = gemma_yes(im, cand[1], words)
-                if yes:
-                    pick, by = cand, 'gemma_closeup'
-                    break
-                why_not = f'gemma_said_{ans[:10]}'
-                if near is None or cand[0] > near[0]:
-                    near = (cand[0], h, cand[1], im)
         if pick is None:
-            weak = scored[0][0] < MAYBE
+            weak = best < MAYBE
             weak_run[0] = weak_run[0] + 1 if weak else 0
             checked.append({'id': h['id'], 'why': 'box_match_too_weak' if weak else why_not,
-                            'margin': round(scored[0][0], 3)})
+                            'margin': round(best, 3)})
             if weak_run[0] >= GIVE_UP_AFTER:
                 checked.append({'why': f'gave_up_after_{GIVE_UP_AFTER}_weak_frames'})
                 break
@@ -234,6 +269,8 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))))
+            if self.path.startswith('/find_in'):
+                return self._send(200, find_in(body['words'], body['jpeg']))
             if self.path.startswith('/find'):
                 return self._send(200, find(body['words'], int(body.get('frames', 6)), int(body.get('enough', 2))))
             self._send(404, {'ok': False})
