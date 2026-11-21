@@ -252,6 +252,26 @@ crashes); `e12b5 stop | status | log`. Source: `scripts/mac_mini/e12b5` (symlink
   no restart needed. Sleep is off on the Mac (`pmset sleep 0`); after a power cut
   the server stays down until someone runs `e12b5` there.
 
+## Mac Mini frame memory (`kmem`) -- "where is X?" over everything the robot saw
+
+Design and results: [plans/FRAME_MEMORY.md](plans/FRAME_MEMORY.md). Code: `scripts/mac_mini/kino_memory.py`,
+`kino_find.py`, `kmem` (copied to the Mac: `~/kino-memory/`, `~/.local/bin/kmem`).
+
+```
+kmem            # on the Mac, after a power-on (like e12b5; nothing starts at login)
+kmem status     # EmbeddingGemma 2 :8093, kino_memory :8094 (frames, queue), kino_find :8095
+kmem log        # the service log; kmem stop
+```
+
+- EmbeddingGemma 2 runs on the Mac's CPU (llama.cpp b11753, `~/llama.cpp-embed`): 0.45 s per image, Gemma 4
+  unaffected. OWLv2 also on the CPU, loaded only while used (on the GPU it pushed Gemma into swap).
+- The Jetson sends every kept frame (`./rover vlm` starts frame_capture + frame_uploader); Mac off = frames
+  wait on the Jetson and catch up.
+- The brain (`tools/frame_memory.py`): "go near X" looks in the memory first and every look uses the checked
+  chain (`/find_in`); "where is X?" -> `last_seen`. `LANGROBO_FRAME_MEMORY=0` turns it off;
+  `LANGROBO_FRAME_MEMORY_URL` (default `http://singireddys-mac-mini.local:8095`).
+- Check it by hand: `curl -s -XPOST -d '{"words":"a helmet"}' http://<mac>:8095/find`.
+
 ## Troubleshooting
 
 | Symptom | Likely cause → fix |

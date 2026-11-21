@@ -17,7 +17,7 @@ Code comments name these files without a path ("see OPERATIONS.md"): they are al
 ## By topic
 - `voice/`: the Pi 5 voice trio, wake word, speed and quality ([PI5_VOICE](voice/PI5_VOICE.md), [VOICE_ROADMAP](voice/VOICE_ROADMAP.md), [WAKE_WORD_INTEGRATION](voice/WAKE_WORD_INTEGRATION.md))
 - `mac/`: the Mac mini's LLM/VLM and STT ([MAC_MINI_TASKS](mac/MAC_MINI_TASKS.md), [LLAMA_CACHE_ISSUE](mac/LLAMA_CACHE_ISSUE.md))
-- `plans/`: why things were built and what is next ([INTEGRATION_GAPS](plans/INTEGRATION_GAPS.md), [FIND_AND_GO](plans/FIND_AND_GO.md), [FOLLOW_AND_FAST_EYES](plans/FOLLOW_AND_FAST_EYES.md), [INTENT_ROUTING_PLAN](plans/INTENT_ROUTING_PLAN.md), [KINO_2_PLAN](plans/KINO_2_PLAN.md))
+- `plans/`: why things were built and what is next ([INTEGRATION_GAPS](plans/INTEGRATION_GAPS.md), [FIND_AND_GO](plans/FIND_AND_GO.md), [FOLLOW_AND_FAST_EYES](plans/FOLLOW_AND_FAST_EYES.md), [INTENT_ROUTING_PLAN](plans/INTENT_ROUTING_PLAN.md), [KINO_2_PLAN](plans/KINO_2_PLAN.md), [FRAME_MEMORY](plans/FRAME_MEMORY.md) -- ask about anything seen, and go there)
 - `rl/`: the learned-driver plans on the brain's side
 - `reports/`: one dated test or audit each
 - `learn/`: learning robotics + RL from this robot

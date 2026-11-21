@@ -113,3 +113,38 @@ view; ways under ~50 cm are the nav work; dark rooms; glass and very dark/shiny 
 
 Hardware: the **left-back motor** -- the nudge gave L 1.3 / R 2.6 cm/s for 5.0 commanded and drives stalled
 ("turn stuck", "encoders read 0"). Owner checking.
+
+### Update 2026-11-21 afternoon -- tested with the robot parked (left-back motor fault)
+
+The owner placed, moved and removed things in front of the parked robot; answers through
+`perception/tools/memory_where.py` on the Jetson (rover; Mac /find -> pixel_to_goal -> the LiDAR within
++-3 deg as an independent check, valid for things that reach its plane, 25 cm up) and by voice.
+
+| test | result |
+|---|---|
+| orange bottle, blue (Colin) bottle, dustbin -- LiDAR check | 0-1 cm, 2-3 cm, ~10 cm (tapered bin) |
+| bottle moved ~0.5 m right, helmet moved closer | followed within seconds (after the two fixes below) |
+| helmet taken away | "last seen" = the frame with the owner's hand on it; not claimed in the newer frames |
+| colourful keyboard flat on the floor ~1.5 m away | NOT found (seen edge-on from the 17.5 cm camera) -- honest "not seen" |
+| black chair with a bottle in front of it | got the BOTTLE's distance (pixel_to_goal takes the nearest solid slab in the box) |
+| voice: "Kino, where is the blue bottle / my helmet?" | right side and about 1 m, 12-14 s; "have you seen a red carpet?" -> "haven't seen", 5 s |
+
+Fixed during the test: Pi d2f426f (24 search candidates, then newest first: older frames had crowded out
+today's view) and a4654cd (`/search?recent=1`: the newest matching frame of each place -- a parked robot
+makes every frame one "place", so new frames after a move were never checked). last_seen committed 5640691.
+
+### Open after the review (2026-11-21), most useful first
+
+| # | item | why |
+|---|---|---|
+| 1 | Mac services open to the LAN without a token (8094/8095) | anyone on the WiFi can browse home photos (owner: not today) |
+| 2 | `kmem` starts by hand; the Mac is a single point | Mac restarted/asleep or robot off home WiFi -> no memory (falls back to the old ways) |
+| 3 | Mac store grows forever and rewrites vecs.npy on every frame; the Jetson prunes depth at 5 GB without telling the Mac | slow at tens of thousands of frames; "found but not placed" for old frames. Plan: append-only vectors; one retention rule owned by the Jetson (all of the last 24 h, then the newest per viewpoint) + /forget to the Mac |
+| 4 | two memories: the Gemma photo survey (object memory) and the frame memory | the survey keeps Gemma busy (a find waited 56 s); answers can disagree. Feed confirmed finds into object memory, slow the survey |
+| 5 | every question re-runs the chain (5-40 s) | cache confirmed sightings as objects (position +- error, last seen) |
+| 6 | "place" = odom pose, which resets every power-on | group by the house map instead (stored with every frame) |
+| 7 | one frame per answer; nearest slab wins | combine sightings; main body for big furniture (the chair case) |
+| 8 | thresholds from one room (~60 cases) | a labelled whole-house set, re-run after every change |
+| 9 | Mac deploy by copying files | a deploy script from git that verifies |
+| 10 | frames saved while the robot is lifted | skip them (IMU tilt / wheels) |
+| 11 | "your left" for the robot's left; flat things on the floor; "this is MY bottle"; room names; what changed | as listed in "Left" above |

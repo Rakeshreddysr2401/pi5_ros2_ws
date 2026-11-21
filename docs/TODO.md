@@ -1,5 +1,12 @@
 # TODO — pending on-device work
 
+## 2026-11-21 — frame memory (live, branch `kino_0.3.0_frame-memory`)
+
+"Where is X?" / "go near X" over everything the robot saw (EmbeddingGemma 2 on the Mac): built, tested on
+the robot and by voice. Status, results and the open list: [plans/FRAME_MEMORY.md](plans/FRAME_MEMORY.md)
+section 5. Waiting on the owner: the **left-back motor** (nudge L 1.3 / R 2.6 cm/s for 5.0; drives stall),
+then the driving tests; `kmem` auto-start; delete `~/eg2_bench` (1.8 GB, the October bench).
+
 ## 2026-11-17 — Jetson <-> Pi 5 on the Ethernet cable (live)
 
 Robot traffic (ROS, domain 0) now runs on a direct cable, not WiFi: Jetson 10.0.0.1, Pi 5
