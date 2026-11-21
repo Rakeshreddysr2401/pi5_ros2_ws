@@ -149,15 +149,19 @@ def find(words, n_frames=6, enough=2):
     stats['finds'] += 1
     words = re.sub(r'\s+', ' ', words.strip())
     hits = _get('/search?' + urllib.parse.urlencode({'q': words, 'k': n_frames}))['hits']
+    # "Where is it?" means where it was LAST seen: check the best-matching frames NEWEST first, so the
+    # first one confirmed is the latest sighting (live 2026-11-21: best-match-first sent the robot to a
+    # 6 h old view although the 07:43 frames showed it; it had been moved 0.6 m).
+    hits.sort(key=lambda h: h['stamp_ns'], reverse=True)
     found, checked = [], []
     gemma_left, weak_run = [MAX_GEMMA], [0]
     near = None                                  # best candidate Gemma said no to: (margin, frame hit, box, im)
     for h in hits:
         if len(found) >= enough:
             break
-        if h['margin'] < MAYBE / 2:                  # the frame as a whole hardly matches: stop here
+        if h['margin'] < MAYBE / 2:                  # the frame as a whole hardly matches: skip it
             checked.append({'id': h['id'], 'why': 'frame_match_too_weak', 'frame_margin': h['margin']})
-            break
+            continue
         jpeg = urllib.request.urlopen(f"{MEM}/frame/{h['id']}.jpg", timeout=30).read()
         im = Image.open(io.BytesIO(jpeg)).convert('RGB')
         scored = []
