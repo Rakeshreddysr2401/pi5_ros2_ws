@@ -79,3 +79,37 @@ map since 2026-11-16).
 
 Known limits: camera 17.5 cm up (no tabletops until the pan-tilt head); hidden things need another
 view; ways under ~50 cm are the nav work; dark rooms; glass and very dark/shiny things.
+
+## 5. Status (2026-11-21 morning)
+
+### Done -- tested, live
+
+| part | where | commit | measured |
+|---|---|---|---|
+| Keep every keyframe: photo + aligned depth + camera pose AT THE STAMP + map <- odom + room; moved 0.40 m / turned 20 deg / scene changed / 30 s still | Jetson `perception/nodes/frame_capture.py`, `frame_store.py` (`./rover vlm` starts it) | rover 4a82fdc | depth matched at 0 ms; a helmet put in view saved within ~2 s; no false saves in 2 min still; 8 % of a core |
+| Send frames to the Mac (they wait on disk when it is off) | Jetson `perception/nodes/frame_uploader.py` | rover 3bb4570 | 97 frames overnight, all sent |
+| Memory: EmbeddingGemma 2 (768, whole + 4 quarters), search one frame per place, the newest of a place | Mac `kino_memory.py` :8094 (`kmem`) | Pi a9be328 | 3.0 s per frame on the CPU; search 35-50 ms; Gemma 4 unchanged |
+| Find chain: search -> OWLv2 (Mac CPU) -> EG2 crop check -> Gemma close-up only when unsure (own slot 4); newest sighting first; honest near miss ("maybe ...") | Mac `kino_find.py` :8095 `/find` | Pi 509d520, 0f020d6, 6b15387 | tour: 14/17 found, every box right, absent 8/8 refused |
+| The same check on a live photo (the robot's fresh look) | Mac `/find_in` | Pi 6b15387 | 36 labelled photos: 15/20 found, every box right, absent 16/16 refused (old Gemma-only look: 11/16 made up) |
+| Position from ANY remembered frame (its own depth, K, pose; earlier power-on through the house map) | Jetson `pixel_to_goal.py` | rover 72373af | a 13 min old frame: helmet / bottle placed; owner: positions "mostly correct" (one live check) |
+| "go near X": frame memory first, then this session's photos, object memory, search; every look uses the checked chain; Mac down -> the old ways | Pi `tools/frame_memory.py`, `tools/approach.py` | Pi 00dfd54, 6b15387 | live: "go near the helmet" -> memory 9.5 s, looked, drove (0.5 cm), arrival saw it |
+| "where is X?" without moving (`last_seen` tool, all three agents, prompts) | Pi `tools/frame_memory.py`, `tools/__init__.py`, `prompts.py` | **NOT COMMITTED** (owner said stop) | live: helmet / dustbin / bottle answered; red carpet -> "not sure, the closest was a brown cardboard box"; tests 783/783 |
+
+### Left
+
+| # | item | why | needs |
+|---|---|---|---|
+| 1 | Commit `last_seen` | only in the Pi working copy | owner's go |
+| 2 | Keep the distance in spoken answers; "my right" (the robot's) not "your right" | the brain rewords "1.4 m, ahead to my left" into "just ahead and to your right" | prompt change + live check |
+| 3 | Tape-measured position test: 5 objects, seen from 3 spots | the cm accuracy is proven only by one "mostly correct" | **left-back motor fixed**, owner + tape |
+| 4 | "go near the dustbin" again | the checked fresh look on the robot; the last run stopped on wheel stalls | **left-back motor fixed** |
+| 5 | "not seen" is slow (up to ~40 s) | it checks 6 frames + up to 4 Gemma close-ups before giving up | small: earlier stop |
+| 6 | Frames saved while the robot was LIFTED | its pose is wrong then -> wrong positions later | small: skip frames when the wheels/IMU say lifted |
+| 7 | One object from many sightings (average the positions, say "it moved") | accuracy, and "it was here at 6, it's gone now" | medium (object memory, job 3) |
+| 8 | "This is MY water bottle" -- remember by its look | Gemma never calls the owner's orange bottle a "water bottle" | medium (job 6) |
+| 9 | Room names ("go to the kitchen") | rooms by name on the house map | a house tour (job 5) |
+| 10 | What changed (job 4); facts by EG2 instead of bge-small (job 7) | memory stays current; one model | later |
+| 11 | SigLIP 2 vs EG2 again on a bigger tour | tied 15/17 on one room | a multi-room tour |
+
+Hardware: the **left-back motor** -- the nudge gave L 1.3 / R 2.6 cm/s for 5.0 commanded and drives stalled
+("turn stuck", "encoders read 0"). Owner checking.
