@@ -43,6 +43,7 @@ GEMMA = os.environ.get('KFIND_GEMMA', 'http://127.0.0.1:8080')
 PORT = int(os.environ.get('KFIND_PORT', '8095'))
 ACCEPT, MAYBE = 0.15, 0.06
 OWL_TOP = 4                 # boxes per frame checked by EmbeddingGemma 2
+CANDIDATES = 24             # frames from the search, before newest-first (one per place each)
 MAX_GEMMA = 4               # close-up questions per /find (each ~3-4 s)
 GIVE_UP_AFTER = 3           # frames in a row with no box even in the unsure band: stop
 COLOURS = re.compile(r'\b(red|orange|yellow|green|blue|purple|violet|pink|brown|black|white|grey|gray|silver|golden|gold|steel|transparent|dark|light)\b', re.I)
@@ -197,11 +198,14 @@ def find(words, n_frames=6, enough=2):
     t0 = time.time()
     stats['finds'] += 1
     words = re.sub(r'\s+', ' ', words.strip())
-    hits = _get('/search?' + urllib.parse.urlencode({'q': words, 'k': n_frames}))['hits']
-    # "Where is it?" means where it was LAST seen: check the best-matching frames NEWEST first, so the
-    # first one confirmed is the latest sighting (live 2026-11-21: best-match-first sent the robot to a
-    # 6 h old view although the 07:43 frames showed it; it had been moved 0.6 m).
+    # "Where is it?" means where it was LAST seen: take a WIDE set of matching frames, keep those that
+    # match at all, and check them NEWEST first, so the first one confirmed is the latest sighting.
+    # (Live 2026-11-21: best-match-first went to a 6 h old view; then with only the top 6, hundreds of
+    # older helmet frames crowded out the one from minutes ago.)
+    hits = _get('/search?' + urllib.parse.urlencode({'q': words, 'k': CANDIDATES}))['hits']
+    hits = [h for h in hits if h['margin'] >= MAYBE / 2]
     hits.sort(key=lambda h: h['stamp_ns'], reverse=True)
+    hits = hits[:n_frames]
     found, checked = [], []
     gemma_left, weak_run = [MAX_GEMMA], [0]
     near = None                                  # best candidate Gemma said no to: (margin, frame hit, box, im)
