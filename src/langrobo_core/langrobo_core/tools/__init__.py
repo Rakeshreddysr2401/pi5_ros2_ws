@@ -14,6 +14,7 @@ from .look import look
 from .look_toward import look_toward
 from .locate import locate_object
 from .photo_recall import ask_photos
+from .frame_memory import last_seen
 from .approach import (approach_described_object, list_saved_locations,
                        scan_surroundings)
 from .movement import (PAN_TILT_ENABLED, move_robot, navigate_to_pose,
@@ -55,7 +56,7 @@ FOLLOW_TOOLS = [follow_person] if FOLLOW_ENABLED else []
 # MEMORY_TOOLS: facts people TELL the robot, across reboots (tools/memory.py).
 # say_in_room: a Telegram sender's words said OUT LOUD (tools/room_voice.py) --
 # chat only: Telegram turns and every [SYSTEM] arrival turn enter here.
-CHAT_TOOLS = ([get_current_time, get_robot_status, ask_photos, handover] + WEB_TOOLS
+CHAT_TOOLS = ([get_current_time, get_robot_status, last_seen, ask_photos, handover] + WEB_TOOLS
               + TELEGRAM_TOOLS + [say_in_room] + AUDIO_TOOLS + REMINDER_TOOLS + LIST_TOOLS
               + MEMORY_TOOLS)
 
@@ -67,7 +68,7 @@ CHAT_TOOLS = ([get_current_time, get_robot_status, ask_photos, handover] + WEB_T
 # invention. It is read-only and never turns the robot -- driving to a
 # thing is navigate's job (approach_described_object).
 # ask_photos: something seen EARLIER, from every photo of the session, read-only.
-LOCAL_AGENT_TOOLS = [look, look_toward, locate_object, ask_photos, handover] + HEAD_TOOLS + TELEGRAM_TOOLS
+LOCAL_AGENT_TOOLS = [look, look_toward, locate_object, last_seen, ask_photos, handover] + HEAD_TOOLS + TELEGRAM_TOOLS
 
 # navigate — everything that moves the wheels.
 # get_robot_status: "where are you now?" / "did you get there?" right after a
@@ -80,7 +81,7 @@ LOCAL_AGENT_TOOLS = [look, look_toward, locate_object, ask_photos, handover] + H
 # remember_object: "remember the blue bottle" -- where a THING is (save_location: the robot).
 NAVIGATE_TOOLS = ([move_robot, navigate_to_pose, approach_described_object,
                   scan_surroundings, save_location, remember_object, list_saved_locations,
-                  get_robot_status, ask_photos, handover] + HEAD_TOOLS + FOLLOW_TOOLS
+                  get_robot_status, last_seen, ask_photos, handover] + HEAD_TOOLS + FOLLOW_TOOLS
                  + [send_telegram_photo])
 
 # The tools that MOVE the robot (wheels or the whole body), by name. While one

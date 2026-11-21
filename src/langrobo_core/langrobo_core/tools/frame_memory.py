@@ -113,3 +113,66 @@ def check_photo(jpeg: bytes, description: str):
         return None
     x0, y0, x1, y1 = f['box']
     return ((x0 + x1) / 2, (y0 + y1) / 2, (x0, y0, x1, y1))
+
+
+# ── "where is X?" answered from memory, without moving ───────────────────────
+def _direction(bearing_deg) -> str:
+    if bearing_deg is None:
+        return ''
+    b = float(bearing_deg)
+    side = 'left' if b > 0 else 'right'
+    a = abs(b)
+    if a < 15:
+        return 'straight ahead of me'
+    if a < 60:
+        return f'ahead, to my {side}'
+    if a < 120:
+        return f'to my {side}'
+    return f'behind me, on my {side}'
+
+
+def _age(seconds) -> str:
+    s = max(0, int(seconds or 0))
+    if s < 60:
+        return 'just now' if s < 10 else f'{s} seconds ago'
+    if s < 3600:
+        m = s // 60
+        return f'{m} minute{"s" if m != 1 else ""} ago'
+    h, m = s // 3600, s % 3600 // 60
+    return f'{h} hour{"s" if h != 1 else ""} {m} minutes ago' if m else f'{h} hour{"s" if h != 1 else ""} ago'
+
+
+def where_text(thing: str, ans: dict | None, raw: dict | None) -> str:
+    """The spoken answer. Never claims more than was checked."""
+    name = thing.strip().rstrip('?.!')
+    if ans:
+        d = ans.get('distance_m')
+        where = (f'about {d:.1f} m from here, {_direction(ans.get("bearing_deg"))}' if d is not None
+                 else _direction(ans.get('bearing_deg')) or 'but I could not measure where')
+        return (f'I last saw {name} {_age(ans.get("age_s"))}, {where}. '
+                'Things get moved, so I would check before going there.')
+    maybe = (raw or {}).get('maybe')
+    if maybe and maybe.get('looks_like'):
+        return (f"I'm not sure I've seen {name}. The closest thing I saw was {maybe['looks_like']}, "
+                f"{_age(maybe.get('age_s'))}. Is that it?")
+    if raw is None:
+        return "I can't reach my memory of what I've seen right now, so I can't say where it is."
+    return f"I haven't seen {name} in what I remember. I can go and look for it if you like."
+
+
+try:
+    from langchain_core.tools import tool
+except Exception:                                    # tests without langchain
+    def tool(f):
+        return f
+
+
+@tool
+def last_seen(thing: str) -> str:
+    """Where is something the robot has SEEN (on any day), without moving: how long ago, how far and which way
+    from here. Use for "where is my helmet?", "where did you see the keys?", "have you seen my bag?".
+    thing: the object as the person said it ("my helmet", "the black bag").
+    To actually go there, the navigate agent's approach_described_object does that."""
+    from . import _bridge
+    ans, raw = sighting(_bridge.get(), thing)
+    return where_text(thing, ans, raw)

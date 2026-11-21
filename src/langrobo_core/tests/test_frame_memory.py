@@ -94,3 +94,33 @@ def test_check_photo_raises_when_the_mac_cannot_answer(monkeypatch):
     monkeypatch.setattr(fm, 'ENABLED', False)
     with pytest.raises(RuntimeError):
         fm.check_photo(b'jpeg', 'dustbin')
+
+
+def test_where_text_found():
+    ans = {'distance_m': 1.42, 'bearing_deg': 31.0, 'age_s': 720}
+    t = fm.where_text('my helmet', ans, {})
+    assert t.startswith('I last saw my helmet 12 minutes ago, about 1.4 m from here, ahead, to my left.')
+    assert 'check' in t
+
+
+def test_where_text_directions():
+    assert fm._direction(5) == 'straight ahead of me'
+    assert fm._direction(-40) == 'ahead, to my right'
+    assert fm._direction(90) == 'to my left'
+    assert fm._direction(-150) == 'behind me, on my right'
+
+
+def test_where_text_near_miss_not_seen_and_down():
+    t = fm.where_text('the water bottle', None, {'maybe': {'looks_like': 'an orange rectangular bottle', 'age_s': 300}})
+    assert "not sure" in t and 'orange rectangular bottle' in t and '5 minutes ago' in t
+    assert "haven't seen" in fm.where_text('a red carpet', None, {'found': [], 'maybe': None})
+    assert "can't reach" in fm.where_text('the helmet', None, None)
+
+
+def test_last_seen_tool_uses_the_bridge(monkeypatch):
+    import langrobo_core.tools._bridge as br
+    monkeypatch.setattr(br, '_instance', FakeBridge(PLACED))
+    monkeypatch.setattr(fm, '_find', lambda w: {'found': [HIT]})
+    fn = getattr(fm.last_seen, 'func', fm.last_seen)
+    out = fn('my helmet')
+    assert out.startswith('I last saw my helmet') and '0.7 m' in out
