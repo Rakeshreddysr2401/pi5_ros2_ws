@@ -644,6 +644,15 @@ def approach_described_object(description: str,
 # refusals/cache hits; the existing notice path delivers every slower result.
 _QUICK_S = float(os.environ.get("LANGROBO_APPROACH_QUICK_S", "0.5"))
 _STARTED = "On my way; I'll say when I'm there."
+_NO_FRAME = ("My camera feed isn't giving me a fresh image right now, "
+             "so I can't look for it.")
+
+
+def _vision_failed(e: Exception) -> str:
+    return (f"I couldn't analyse the camera image (vision model error: "
+            f"{type(e).__name__}). Try again in a moment.")
+
+
 _job_lock = threading.Lock()
 _job: dict | None = None
 
@@ -758,6 +767,19 @@ def _run_search(job: dict) -> None:
 
 
 def _approach(description: str, state: dict, then: str = "", job: dict | None = None) -> str:
+    """Find `description` and start the drive to just in front of it; -> what to tell the user.
+
+    The steps (sections 1-3 below are marked with the same numbers):
+      0. refuse at once: a person by name only, a role without driving rights, manual driving
+      1. where it was SEEN: frame memory, then this session's photos, then long-term object
+         memory -- face it from here, or drive to a viewpoint in front of that spot, and LOOK
+      2. not there: look all around from here (45 degree turns, both ways if one is blocked)
+      3. still not: look from other open spots in the room (utils/viewpoints.py); last, a
+         simpler name for it ("the red mug" -> "a mug")
+      then ground the box in depth (where it is in the room), a closer look if far, and send
+      reach to the standoff goal. The arrival is reported later as a [SYSTEM] turn.
+    `job` (background search, start_search): its "avoid"/"retry" for a re-search after a
+    failed arrival check, and "superseded" when the user asked for something else meanwhile."""
     bridge = _bridge.get()
     description = description.strip()
     name = _short_name(description)
@@ -850,13 +872,11 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
                 if frame is None:
                     if bridge.motion_interrupted():
                         return f"Stopped looking for the {name}."
-                    return ("My camera feed isn't giving me a fresh image right now, "
-                            "so I can't look for it.")
+                    return _NO_FRAME
                 try:
                     uv = _locate(frame, description, "from_here", check=(bridge, capture, avoid))
                 except Exception as e:
-                    return (f"I couldn't analyse the camera image (vision model error: "
-                            f"{type(e).__name__}). Try again in a moment.")
+                    return _vision_failed(e)
                 looked_here = True
                 at_its_spot = uv is not None
 
@@ -893,13 +913,11 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
                 if frame is None:
                     if bridge.motion_interrupted():
                         return f"Stopped looking for the {name}."
-                    return ("My camera feed isn't giving me a fresh image right now, "
-                            "so I can't look for it.")
+                    return _NO_FRAME
                 try:
                     uv = _locate(frame, description, "at_its_spot", check=(bridge, capture, avoid))
                 except Exception as e:
-                    return (f"I couldn't analyse the camera image (vision model error: "
-                            f"{type(e).__name__}). Try again in a moment.")
+                    return _vision_failed(e)
                 if uv is None:
                     first_view = 1
                     note = (f"The {name} wasn't right where I saw it {age}, so I'm "
@@ -965,13 +983,11 @@ def _approach(description: str, state: dict, then: str = "", job: dict | None = 
             if frame is None:
                 if bridge.motion_interrupted():
                     return f"Stopped searching for the {name}.", None, None, len(seen)
-                return ("My camera feed isn't giving me a fresh image right now, "
-                        "so I can't look for it.", None, None, len(seen))
+                return _NO_FRAME, None, None, len(seen)
             try:
                 uv = _locate(frame, description, f"search{offset}", check=(bridge, capture, avoid))
             except Exception as e:
-                return (f"I couldn't analyse the camera image (vision model error: "
-                        f"{type(e).__name__}). Try again in a moment.", None, None, len(seen))
+                return _vision_failed(e), None, None, len(seen)
             seen.add(offset)
         return None, uv, capture, len(seen)
 
