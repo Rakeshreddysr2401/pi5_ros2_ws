@@ -304,7 +304,6 @@ def parse_objects(text: str, width: int, height: int) -> list:
 def list_objects(frame: bytes) -> list:
     """Ask the vision model what is in the photo: [(label, box px)].
     Raises Yielded if a turn starts while it is waiting on the model."""
-    import asyncio
     import base64
     import io
 

@@ -74,7 +74,7 @@ is the whole recovery. The Jetson's own STARTUP.md is the layer-by-layer version
 
 Each machine can still be driven on its own — the laptop's twin via `~/kino_sim/kino`,
 the Jetson via `~/rover/rover <layer>`. Reaches the other machines by mDNS name over
-passwordless ssh; DDS is plain multicast on domain 0 everywhere (NETWORKING.md).
+passwordless ssh. DDS is plain multicast on domain 0; since 2026-11-17 the Pi 5 <-> Jetson robot traffic runs on the direct Ethernet cable (scripts/fastdds_cable.xml, NETWORKING.md).
 
 ## Commands
 
